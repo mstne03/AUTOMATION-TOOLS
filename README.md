@@ -1,0 +1,237 @@
+# kb-seo
+
+Base de conocimiento local y vectorizada sobre SEO en redes sociales,
+posicionamiento y algoritmos de YouTube, TikTok e Instagram. Claude Desktop la
+consulta como herramienta MCP.
+
+Todo corre en local. Postgres solo escucha en `127.0.0.1`, los embeddings los
+genera Ollama en esta maquina y nada sale a internet salvo la descarga de las
+fuentes que tu le indiques.
+
+## Como funciona
+
+```
+sources.yaml  ->  ingesta  ->  Postgres + pgvector  ->  servidor MCP  ->  Claude Desktop
+                     |                                        |
+                 Ollama (bge-m3, 1024 dim)              rol kb_reader
+                                                        (solo SELECT)
+```
+
+- **`documents`**: una fila por fuente, con fecha de publicacion, plataformas y
+  un hash del contenido para no reingerir lo que no ha cambiado.
+- **`chunks`**: trozos de ~600 tokens con su embedding y su `tsvector`.
+- **Busqueda hibrida**: top 20 por similitud coseno + top 20 por full-text,
+  fusionados con Reciprocal Rank Fusion (k=60).
+
+## Requisitos
+
+| Que | Version | Para que |
+|---|---|---|
+| Docker Desktop | con backend WSL2 | Postgres 17 + pgvector |
+| Ollama | corriendo en `:11434` | embeddings |
+| uv | cualquiera reciente | entorno Python 3.12 |
+| Node.js | opcional | solo para MCP Inspector |
+
+## Puesta en marcha
+
+```bash
+cd ~/kb-seo
+
+# 1. Configuracion. El .env ya viene generado con contrasenas al azar.
+#    Si lo pierdes: copia .env.example y rellenalo.
+cat .env
+
+# 2. Levanta Postgres.
+docker compose up -d
+docker compose ps          # debe decir "healthy"
+
+# 3. Modelo de embeddings (1,2 GB, solo la primera vez).
+ollama pull bge-m3
+
+# 4. Entorno Python.
+uv sync --extra dev
+
+# 5. Comprueba que todo habla entre si.
+uv run pytest -q
+```
+
+Si `uv sync` se queja de `Missing expected target directory for Python minor
+version link`, es un bug conocido de uv en Windows. Apunta al interprete a
+mano:
+
+```bash
+uv sync --extra dev --python "$APPDATA/uv/python/cpython-3.12.14-windows-x86_64-none/python.exe"
+```
+
+## Anadir fuentes
+
+`sources.yaml` es la fuente de verdad. Dos formas de anadir cosas:
+
+**A mano**, editando el archivo:
+
+```yaml
+- url: https://ejemplo.com/guia-algoritmo-shorts
+  type: web                    # web | youtube | pdf | local
+  platforms: [youtube]         # youtube | tiktok | instagram | general
+  published_at: 2025-01-15     # importante: permite filtrar consejos viejos
+  author: Nombre del autor
+  topics: [retencion, ctr, shorts]
+```
+
+y luego:
+
+```bash
+uv run ingest all
+```
+
+**Desde la linea de comandos**, que ademas lo apunta en `sources.yaml`:
+
+```bash
+uv run ingest url https://www.youtube.com/watch?v=XXXXXXXXXXX \
+  --platform youtube --date 2025-03-02 --topic hooks --topic retencion
+```
+
+El `--type` se adivina de la URL; pasalo explicito si te equivoca.
+
+### Ver que hay dentro
+
+```bash
+uv run ingest stats
+```
+
+### Reingerir
+
+`uv run ingest all` es idempotente: compara el `content_hash` de cada fuente y
+se salta las que no han cambiado. Si una cambio, reemplaza sus chunks (es un
+reemplazo de filas en la base de datos, no borra ningun archivo tuyo).
+
+### Que hace con cada tipo
+
+| `type` | Extractor | Troceado |
+|---|---|---|
+| `web` | trafilatura | ~600 tokens respetando parrafos, 15% de solape |
+| `pdf` | pypdf | igual |
+| `local` | `.md` y `.txt` | igual |
+| `youtube` | youtube-transcript-api (espanol, si no ingles) | ventanas de tiempo con 15% de solape |
+
+Las transcripciones van por tiempo y no por parrafos porque no tienen parrafos
+ni puntuacion fiable. Cada chunk lleva su rango temporal en la cabecera para
+poder citarlo. Si un video no tiene transcripcion ni en espanol ni en ingles,
+la ingesta avisa y salta esa fuente sin tumbar el resto del lote.
+
+## Cambiar el esquema de la base de datos
+
+`sql/init.sql` **solo se ejecuta la primera vez que se crea el volumen**. Si ya
+tienes datos, editarlo no hace absolutamente nada. Los cambios posteriores van
+en `sql/migrate.sql` con sentencias idempotentes:
+
+```sql
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS notes TEXT;
+```
+
+y se aplican con:
+
+```bash
+uv run kb-migrate
+```
+
+## Conectar con Claude Desktop
+
+Anade esta entrada a `mcpServers` en
+`%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+"kb-seo": {
+  "command": "C:\\Users\\Pau\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uv.exe",
+  "args": ["run", "--directory", "C:\\Users\\Pau\\kb-seo", "kb-mcp"]
+}
+```
+
+Reinicia Claude Desktop del todo (que no quede en la bandeja del sistema).
+
+### Herramientas que expone
+
+| Herramienta | Que hace |
+|---|---|
+| `buscar_kb(query, plataforma, desde, k)` | Busqueda hibrida. Devuelve los fragmentos con titulo, URL y fecha para que Claude pueda citarlos. |
+| `listar_fuentes(plataforma)` | Que documentos hay ingeridos. |
+| `estado_kb()` | Totales y fecha de la fuente mas reciente por plataforma. |
+
+### Probar con MCP Inspector
+
+```bash
+npx @modelcontextprotocol/inspector uv run --directory ~/kb-seo kb-mcp
+```
+
+## Seguridad
+
+- Postgres escucha **solo** en `127.0.0.1:5433`. Nada expuesto a la red.
+- Dos roles: `kb_writer` (lectura y escritura, lo usa la ingesta) y `kb_reader`
+  (**solo SELECT**, lo usa el servidor MCP). El MCP no puede escribir en la base
+  ni aunque se lo pidan.
+- Las contrasenas viven en `.env`, que esta en `.gitignore`. Nunca en el codigo.
+- El repositorio es local, sin remoto.
+
+## Troubleshooting
+
+**`uv run ingest all` falla con "No se pudo obtener embeddings de Ollama"**
+
+Ollama no esta corriendo o no tiene el modelo:
+
+```bash
+curl http://localhost:11434/api/tags     # deberia responder
+ollama list                              # deberia aparecer bge-m3
+ollama pull bge-m3
+```
+
+**El puerto 5433 esta ocupado**
+
+```bash
+netstat -ano | findstr :5433             # mira que PID lo tiene
+```
+
+Si es otro Postgres tuyo, cambia `PGPORT` en `.env` y el mapeo de puertos en
+`docker-compose.yml` (manten el prefijo `127.0.0.1:`).
+
+**`buscar_kb` no aparece en Claude Desktop**
+
+1. Comprueba que el JSON es valido: una coma de mas rompe el archivo entero y
+   Claude Desktop no carga *ningun* servidor MCP.
+2. Cierra Claude Desktop del todo, incluida la bandeja del sistema. Un reinicio
+   de ventana no basta.
+3. Prueba el comando a mano. Deberia quedarse esperando sin imprimir nada, que
+   es lo normal en un servidor stdio:
+   ```bash
+   uv run --directory ~/kb-seo kb-mcp
+   ```
+4. Mira los logs en `%APPDATA%\Claude\logs\`.
+
+**`buscar_kb` responde pero sin resultados**
+
+Llama a `estado_kb()`. Si dice 0 documentos, la base esta vacia: anade fuentes
+a `sources.yaml` y ejecuta `uv run ingest all`.
+
+**El contenedor no arranca o se queda "unhealthy"**
+
+```bash
+docker compose logs db
+```
+
+Si cambiaste las contrasenas del `.env` despues de crear el volumen, los roles
+siguen con las viejas: `init.sql` ya no se vuelve a ejecutar. O revierte el
+`.env`, o cambia las contrasenas con `ALTER ROLE` via `sql/migrate.sql`.
+
+**Los tests se saltan solos**
+
+Es a proposito. Los tests que necesitan Postgres u Ollama se marcan como
+`skipped` si el servicio no responde, en vez de fallar. `uv run pytest -q -rs`
+te dice el motivo de cada salto.
+
+## Mejoras futuras (fuera de alcance por ahora)
+
+- **Exponer el MCP a claude.ai web/movil** mediante un tunel. Hoy el servidor es
+  stdio y solo funciona en esta maquina.
+- **Ingesta automatica de exports de YouTube Studio**, para cruzar la teoria de
+  la base de conocimiento con los datos reales de Candisito y Smooth.
+- **Re-ranking con un cross-encoder** despues del RRF, para afinar el orden de
+  los 8 resultados finales.
