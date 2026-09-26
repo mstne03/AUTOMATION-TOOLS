@@ -8,7 +8,7 @@ from mcp.server.mcpserver import MCPServer
 
 from kb import db, search as kb_search
 
-mcp = MCPServer("kb-seo")
+mcp = MCPServer("kb-seo", version="0.1.0")
 
 
 @mcp.tool()

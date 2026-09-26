@@ -160,7 +160,18 @@ Reinicia Claude Desktop del todo (que no quede en la bandeja del sistema).
 ### Probar con MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv run --directory ~/kb-seo kb-mcp
+npx @modelcontextprotocol/inspector .venv/Scripts/kb-mcp.exe
+```
+
+Pasale el ejecutable directamente y no `uv run --directory ...`: el Inspector se
+come el `--directory` como si fuera suyo y la conexion se cae con
+`{"error":{"code":"error","message":"Connection closed"}}`.
+
+En modo CLI, sin abrir el navegador:
+
+```bash
+npx @modelcontextprotocol/inspector --cli .venv/Scripts/kb-mcp.exe --method tools/list
+npx @modelcontextprotocol/inspector --cli .venv/Scripts/kb-mcp.exe --method tools/call --tool-name estado_kb
 ```
 
 ## Seguridad
@@ -183,6 +194,13 @@ curl http://localhost:11434/api/tags     # deberia responder
 ollama list                              # deberia aparecer bge-m3
 ollama pull bge-m3
 ```
+
+**Las busquedas tardan ~2 segundos en vez de ~25 ms**
+
+Mira que `OLLAMA_URL` en `.env` sea `http://127.0.0.1:11434` y no
+`http://localhost:11434`. `localhost` resuelve tambien a `::1`, Ollama solo
+escucha en IPv4, y cada conexion nueva se come unos 2 s esperando a que falle
+el intento por IPv6.
 
 **El puerto 5433 esta ocupado**
 
