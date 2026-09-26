@@ -4,11 +4,11 @@ Conecta con el rol kb_reader, que solo tiene SELECT. El servidor no puede
 escribir en la base de datos ni aunque se lo pidan.
 """
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from kb import db, search as kb_search
 
-mcp = FastMCP("kb-seo")
+mcp = MCPServer("kb-seo")
 
 
 @mcp.tool()
