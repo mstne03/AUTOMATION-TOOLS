@@ -1,5 +1,7 @@
 """Embeddings via Ollama (bge-m3, 1024 dimensiones, multilingue)."""
 
+import atexit
+import threading
 import time
 
 import httpx
@@ -9,6 +11,28 @@ from kb import config
 _BATCH_SIZE = 24          # dentro del rango 16-32 que pide la spec
 _MAX_RETRIES = 4
 _TIMEOUT = 180.0
+
+# Un cliente por proceso. Abrir uno nuevo cuesta una conexion TCP por llamada,
+# que en el servidor MCP se paga en cada busqueda.
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    with _client_lock:
+        if _client is None:
+            _client = httpx.Client(timeout=_TIMEOUT)
+        return _client
+
+
+@atexit.register
+def _close_client() -> None:
+    global _client
+    with _client_lock:
+        if _client is not None:
+            _client.close()
+            _client = None
 
 
 def embed(texts: list[str]) -> list[list[float]]:
@@ -20,11 +44,11 @@ def embed(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
+    client = _get_client()
     out: list[list[float]] = []
-    with httpx.Client(timeout=_TIMEOUT) as client:
-        for start in range(0, len(texts), _BATCH_SIZE):
-            batch = texts[start : start + _BATCH_SIZE]
-            out.extend(_embed_batch(client, batch))
+    for start in range(0, len(texts), _BATCH_SIZE):
+        batch = texts[start : start + _BATCH_SIZE]
+        out.extend(_embed_batch(client, batch))
     return out
 
 

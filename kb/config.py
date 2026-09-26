@@ -23,7 +23,10 @@ PGHOST = os.getenv("PGHOST", "127.0.0.1")
 PGPORT = int(os.getenv("PGPORT", "5433"))
 PGDATABASE = os.getenv("PGDATABASE", "kb_seo")
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+# 127.0.0.1 y no "localhost" a proposito: localhost resuelve tambien a ::1,
+# Ollama solo escucha en IPv4, y cada conexion nueva perdia ~2s esperando
+# a que fallara el intento IPv6.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
 

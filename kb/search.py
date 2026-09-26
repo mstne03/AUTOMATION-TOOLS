@@ -14,8 +14,8 @@ WITH filtered AS (
            d.title, d.url, d.author, d.published_at, d.platforms
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
-    WHERE (%(platform)s IS NULL OR d.platforms @> ARRAY[%(platform)s]::TEXT[])
-      AND (%(since)s IS NULL OR d.published_at >= %(since)s)
+    WHERE (%(platform)s::TEXT IS NULL OR d.platforms @> ARRAY[%(platform)s::TEXT])
+      AND (%(since)s::DATE IS NULL OR d.published_at >= %(since)s::DATE)
 ),
 vec AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %(qvec)s::vector) AS rank

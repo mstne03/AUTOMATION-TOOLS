@@ -1,34 +1,14 @@
 # Fuentes de la base de conocimiento. Este archivo es la fuente de verdad.
 # `uv run ingest all` procesa todas las entradas de aqui.
 # `uv run ingest url <url> ...` anade una entrada y la ingiere.
-#
-# Campos:
-#   url          (obligatorio) URL o ruta local
-#   type         web | youtube | pdf | local   (si se omite, se adivina)
-#   platforms    lista: youtube, tiktok, instagram, general
-#   published_at YYYY-MM-DD. Importante: los algoritmos cambian, y la busqueda
-#                permite filtrar por fecha minima.
-#   author       opcional
-#   topics       lista libre de etiquetas
-#
-# Plantilla (descomenta y copia):
-#
-# - url: https://ejemplo.com/guia-algoritmo-shorts
-#   type: web
-#   platforms: [youtube]
-#   published_at: 2025-01-15
-#   author: Nombre del autor
-#   topics: [retencion, ctr, shorts]
-#
-# - url: https://www.youtube.com/watch?v=XXXXXXXXXXX
-#   type: youtube
-#   platforms: [youtube, general]
-#   published_at: 2025-03-02
-#   topics: [hooks, retencion]
-#
-# - url: C:/Users/Pau/kb-seo/tests/fixtures/prueba.md
-#   type: local
-#   platforms: [general]
-#   topics: [prueba]
 
-[]
+- url: C:\Users\Pau\kb-seo\tests\fixtures\prueba.md
+  type: local
+  platforms:
+  - youtube
+  - general
+  published_at: '2025-01-15'
+  author: Fixture de prueba
+  topics:
+  - retencion
+  - ctr

@@ -90,7 +90,7 @@ def listar_fuentes(plataforma: str | None = None) -> str:
     """
     sql = (
         "SELECT title, url, published_at, platforms FROM documents "
-        "WHERE (%s IS NULL OR platforms @> ARRAY[%s]::TEXT[]) "
+        "WHERE (%s::TEXT IS NULL OR platforms @> ARRAY[%s::TEXT]) "
         "ORDER BY published_at DESC NULLS LAST, title"
     )
     try:
