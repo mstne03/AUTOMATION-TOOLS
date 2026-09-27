@@ -1,14 +1,139 @@
 # Fuentes de la base de conocimiento. Este archivo es la fuente de verdad.
 # `uv run ingest all` procesa todas las entradas de aqui.
 # `uv run ingest url <url> ...` anade una entrada y la ingiere.
+#
+# Campos:
+#   url          (obligatorio) URL o ruta local
+#   type         web | youtube | pdf | local   (si se omite, se adivina)
+#   platforms    lista: youtube, tiktok, instagram, general
+#   published_at YYYY-MM-DD. La busqueda permite filtrar por fecha minima.
+#   author       opcional
+#   topics       lista libre de etiquetas
+#
+# Convencion sobre fechas:
+#   Las paginas de documentacion oficial no tienen fecha de publicacion real
+#   (son documentos vivos que las plataformas van editando). trafilatura les
+#   saca la fecha del aviso de copyright del pie, que es basura (2005, 2009).
+#   Para esas se fija a mano la fecha de la ultima verificacion y se marcan con
+#   el topic `doc-oficial-viva`. Donde la fecha SI es real (posts de blog y de
+#   newsroom con fecha propia) se respeta la original.
+
+# ---------------------------------------------------------------- YouTube
+
+- url: https://www.youtube.com/howyoutubeworks/product-features/recommendations/
+  type: web
+  platforms: [youtube]
+  published_at: 2026-09-27
+  author: YouTube
+  topics: [algoritmo, recomendaciones, oficial, doc-oficial-viva]
+
+- url: https://support.google.com/youtube/answer/11914225?hl=es&co=YOUTUBE._YTVideoType%3Dshorts
+  type: web
+  platforms: [youtube]
+  published_at: 2026-09-27
+  author: YouTube
+  topics: [shorts, busqueda, descubrimiento, oficial, doc-oficial-viva]
+
+- url: https://support.google.com/youtube/answer/16089387?hl=es
+  type: web
+  platforms: [youtube]
+  published_at: 2026-09-27
+  author: YouTube
+  topics: [algoritmo, recomendaciones, oficial, doc-oficial-viva]
+
+- url: https://www.youtube.com/howyoutubeworks/product-features/search/
+  type: web
+  platforms: [youtube]
+  published_at: 2026-09-27
+  author: YouTube
+  topics: [busqueda, seo, oficial, doc-oficial-viva]
+
+- url: https://blog.youtube/inside-youtube/on-youtubes-recommendation-system/
+  type: web
+  platforms: [youtube]
+  published_at: 2021-09-15
+  author: YouTube
+  topics: [algoritmo, recomendaciones, oficial]
+
+- url: https://metricool.com/youtube-algorithm/
+  type: web
+  platforms: [youtube]
+  published_at: 2026-08-13
+  author: Metricool
+  topics: [algoritmo, ctr, retencion, miniaturas]
+
+# ---------------------------------------------------------------- TikTok
+
+- url: https://newsroom.tiktok.com/en-us/how-tiktok-recommends-videos-for-you
+  type: web
+  platforms: [tiktok]
+  published_at: 2020-06-18
+  author: TikTok Newsroom
+  topics: [algoritmo, fyp, senales, oficial]
+
+- url: https://blog.hootsuite.com/tiktok-algorithm/
+  type: web
+  platforms: [tiktok]
+  published_at: 2026-06-01
+  author: Hootsuite
+  topics: [algoritmo, fyp, retencion, hashtags]
+
+- url: https://sproutsocial.com/insights/tiktok-algorithm/
+  type: web
+  platforms: [tiktok]
+  published_at: 2026-02-06
+  author: Sprout Social
+  topics: [algoritmo, fyp, senales]
+
+- url: https://buffer.com/resources/tiktok-algorithm/
+  type: web
+  platforms: [tiktok]
+  published_at: 2025-12-17
+  author: Buffer
+  topics: [algoritmo, fyp, retencion, horarios]
+
+# ---------------------------------------------------------------- Instagram
+
+- url: https://about.instagram.com/blog/announcements/instagram-ranking-explained
+  type: web
+  platforms: [instagram]
+  published_at: 2023-05-31
+  author: Instagram
+  topics: [algoritmo, ranking, reels, explore, oficial]
+
+- url: https://creators.instagram.com/blog/tips-for-improving-your-reach
+  type: web
+  platforms: [instagram]
+  published_at: 2023-05-31
+  author: Instagram for Creators
+  topics: [alcance, reels, oficial]
+
+- url: https://blog.hootsuite.com/instagram-algorithm/
+  type: web
+  platforms: [instagram]
+  published_at: 2026-07-15
+  author: Hootsuite
+  topics: [algoritmo, reels, sends, ranking]
+
+- url: https://later.com/blog/how-instagram-algorithm-works/
+  type: web
+  platforms: [instagram]
+  published_at: 2026-04-21
+  author: Later
+  topics: [algoritmo, reels, senales]
+
+- url: https://sproutsocial.com/insights/instagram-algorithm/
+  type: web
+  platforms: [instagram]
+  published_at: 2026-01-28
+  author: Sprout Social
+  topics: [algoritmo, reels, ranking]
+
+# ---------------------------------------------------------------- Pruebas
 
 - url: C:\Users\Pau\kb-seo\tests\fixtures\prueba.md
   type: local
-  platforms:
-  - youtube
-  - general
+  platforms: [youtube, general]
   published_at: '2025-01-15'
   author: Fixture de prueba
-  topics:
-  - retencion
-  - ctr
+  topics: [retencion, ctr, prueba]
