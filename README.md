@@ -22,6 +22,8 @@ sources.yaml  ->  ingesta  ->  Postgres + pgvector  ->  servidor MCP  ->  Claude
 - **`chunks`**: trozos de ~600 tokens con su embedding y su `tsvector`.
 - **Busqueda hibrida**: top 20 por similitud coseno + top 20 por full-text,
   fusionados con Reciprocal Rank Fusion (k=60).
+- **`fuentes/`**: texto de paginas que solo se pueden leer con un navegador,
+  guardado a mano e ingerido como `local`.
 
 ## Requisitos
 
@@ -104,6 +106,18 @@ uv run ingest stats
 `uv run ingest all` es idempotente: compara el `content_hash` de cada fuente y
 se salta las que no han cambiado. Si una cambio, reemplaza sus chunks (es un
 reemplazo de filas en la base de datos, no borra ningun archivo tuyo).
+
+### Paginas que se renderizan por JavaScript
+
+trafilatura descarga HTML, no ejecuta JavaScript. Algunas paginas oficiales
+(Centro de Transparencia de Meta, centro de seguridad y ayuda de TikTok) solo
+devuelven el esqueleto y la ingesta las rechaza con "trafilatura no extrajo
+texto".
+
+La via para esas: abrirlas en un navegador, guardar el texto como `.md` en
+`fuentes/` e ingerirlo como `type: local`. Hay cuatro asi en `sources.yaml`.
+Ojo: **no se revisitan solas**. Si la plataforma actualiza la pagina, hay que
+volver a capturarla a mano.
 
 ### Que hace con cada tipo
 
@@ -238,6 +252,13 @@ docker compose logs db
 Si cambiaste las contrasenas del `.env` despues de crear el volumen, los roles
 siguen con las viejas: `init.sql` ya no se vuelve a ejecutar. O revierte el
 `.env`, o cambia las contrasenas con `ALTER ROLE` via `sql/migrate.sql`.
+
+**Los tests y tus datos**
+
+La suite ingiere una copia temporal del fixture con una url unica por ejecucion
+y la etiqueta con la plataforma `test-suite`. Ejecutar `pytest` no toca ninguna
+de tus fuentes. Hay un test de regresion (`test_no_toca_documentos_ajenos`) que
+lo comprueba.
 
 **Los tests se saltan solos**
 

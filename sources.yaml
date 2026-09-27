@@ -129,11 +129,37 @@
   author: Sprout Social
   topics: [algoritmo, reels, ranking]
 
-# ---------------------------------------------------------------- Pruebas
+# ---------------------------------------------------------------- Capturadas con navegador
+#
+# Estas cuatro paginas se renderizan por JavaScript y trafilatura solo ve el
+# esqueleto. Se abrieron con el navegador integrado, se guardo el texto en
+# fuentes/*.md y se ingieren como `local`. Si la plataforma actualiza la pagina
+# hay que volver a capturarla a mano: la ingesta no la revisita sola.
 
-- url: C:\Users\Pau\kb-seo\tests\fixtures\prueba.md
+- url: C:/Users/Pau/kb-seo/fuentes/tiktok-sistema-recomendacion.md
   type: local
-  platforms: [youtube, general]
-  published_at: '2025-01-15'
-  author: Fixture de prueba
-  topics: [retencion, ctr, prueba]
+  platforms: [tiktok]
+  published_at: 2026-09-27
+  author: TikTok
+  topics: [algoritmo, fyp, senales, prediccion, oficial, doc-oficial-viva]
+
+- url: C:/Users/Pau/kb-seo/fuentes/tiktok-como-recomienda-contenido.md
+  type: local
+  platforms: [tiktok]
+  published_at: 2026-09-27
+  author: TikTok
+  topics: [algoritmo, fyp, senales, busqueda, oficial, doc-oficial-viva]
+
+- url: C:/Users/Pau/kb-seo/fuentes/meta-instagram-reels-en-cadena.md
+  type: local
+  platforms: [instagram]
+  published_at: 2025-11-11
+  author: Meta (Centro de Transparencia)
+  topics: [algoritmo, reels, retencion, senales, prediccion, oficial]
+
+- url: C:/Users/Pau/kb-seo/fuentes/meta-instagram-recomendaciones-feed.md
+  type: local
+  platforms: [instagram]
+  published_at: 2026-06-29
+  author: Meta (Centro de Transparencia)
+  topics: [algoritmo, feed, senales, prediccion, oficial]
