@@ -167,9 +167,41 @@ Reinicia Claude Desktop del todo (que no quede en la bandeja del sistema).
 
 | Herramienta | Que hace |
 |---|---|
-| `buscar_kb(query, plataforma, desde, k)` | Busqueda hibrida. Devuelve los fragmentos con titulo, URL y fecha para que Claude pueda citarlos. |
+| `buscar_kb(query, plataforma, desde, fuente, max_chars, k)` | Busqueda hibrida. Devuelve bloques con titulo, fecha y URL para que Claude pueda citarlos. |
 | `listar_fuentes(plataforma)` | Que documentos hay ingeridos. |
 | `estado_kb()` | Totales y fecha de la fuente mas reciente por plataforma. |
+
+### Apuntar a documentos concretos y acortar la respuesta
+
+`buscar_kb` devolvia mucho texto por consulta. Tres parametros lo controlan:
+
+- **`fuente`**: limita la busqueda a documentos cuyo titulo o URL contengan ese
+  texto, sin distinguir mayusculas. Acepta una lista, y entonces basta con que
+  coincida uno. El filtro entra en el `WHERE` **antes** de las ramas vectorial y
+  full-text, asi que los candidatos se eligen ya solo dentro de esos documentos.
+
+  ```
+  buscar_kb("hashtags", fuente="buffer.com")
+  buscar_kb("etiquetas", fuente=["metricool", "howyoutubeworks"])
+  ```
+
+  `listar_fuentes()` muestra entre `<>` el identificador de cada documento,
+  listo para copiar y pegar como `fuente`.
+
+- **`max_chars`**: recorta cada bloque a esa longitud terminando en frase
+  completa.
+
+- **`k`**: cuenta **fragmentos antes de fusionar**, y por defecto es 3. Los
+  fragmentos contiguos de un mismo documento se unen en un solo bloque, asi que
+  puedes recibir menos bloques que `k`.
+
+Ademas la respuesta se compacta sola: cabecera de una linea (`titulo | fecha |
+URL`), sin la linea de autor y plataformas, y sin el bloque
+`[titulo | plataforma | fecha]` que la ingesta graba dentro de cada chunk. Ese
+bloque se sigue guardando en la base (sirve para que el chunk se entienda suelto
+en la busqueda); solo se oculta al mostrarlo.
+
+Medido contra la base real, el ahorro va del 64% al 97% segun la consulta.
 
 ### Probar con MCP Inspector
 

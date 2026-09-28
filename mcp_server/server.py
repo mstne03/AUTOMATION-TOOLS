@@ -4,9 +4,13 @@ Conecta con el rol kb_reader, que solo tiene SELECT. El servidor no puede
 escribir en la base de datos ni aunque se lo pidan.
 """
 
+import pathlib
+import re
+
 from mcp.server.mcpserver import MCPServer
 
-from kb import db, search as kb_search
+from kb import db, formatting
+from kb import search as kb_search
 
 mcp = MCPServer("kb-seo", version="0.1.0")
 
@@ -16,7 +20,9 @@ def buscar_kb(
     query: str,
     plataforma: str | None = None,
     desde: str | None = None,
-    k: int = 8,
+    fuente: str | list[str] | None = None,
+    max_chars: int | None = None,
+    k: int = 3,
 ) -> str:
     """Busca en la base de conocimiento local sobre SEO y algoritmos de redes sociales.
 
@@ -40,41 +46,76 @@ def buscar_kb(
             "general". Omitelo para buscar en todo.
         desde: Fecha minima de publicacion, formato "YYYY-MM-DD". Util para
             descartar consejos viejos (por ejemplo desde="2024-01-01").
-        k: Cuantos fragmentos devolver. 8 por defecto; sube a 15 o 20 para
-            preguntas amplias.
+        fuente: Limita la busqueda a documentos concretos. Se compara, sin
+            distinguir mayusculas, como subcadena del TITULO o de la URL.
+            Ejemplo: fuente="buffer.com" busca solo dentro del articulo de
+            Buffer. Acepta tambien una lista, y entonces vale con que coincida
+            una: fuente=["hootsuite.com/instagram", "later.com"]. Usa
+            listar_fuentes() para ver que hay y con que texto apuntar.
+            El filtro se aplica ANTES de la busqueda por similitud, asi que los
+            resultados salen de dentro de esos documentos, no de un top global.
+        max_chars: Recorta cada bloque a ese numero de caracteres, terminando
+            en frase completa. Ejemplo: max_chars=600 para respuestas breves
+            cuando solo necesitas confirmar un dato. Si lo omites, devuelve el
+            texto entero.
+        k: Cuantos FRAGMENTOS recuperar antes de fusionar. 3 por defecto. Los
+            fragmentos contiguos de un mismo documento se unen en un bloque, asi
+            que puedes recibir menos bloques que k. Sube a 8 o 15 para preguntas
+            amplias.
     """
     try:
-        results = kb_search.search(query, platform=plataforma, since=desde, k=k)
+        results = kb_search.search(
+            query, platform=plataforma, since=desde, sources=fuente, k=k
+        )
     except Exception as e:  # noqa: BLE001 - el cliente MCP necesita texto, no un traceback
         return f"Error al buscar en la base de conocimiento: {type(e).__name__}: {e}"
 
     if not results:
+        return _sin_resultados(query, plataforma, desde, fuente)
+
+    return formatting.formatear(results, query, max_chars=max_chars)
+
+
+def _sin_resultados(
+    query: str,
+    plataforma: str | None,
+    desde: str | None,
+    fuente: str | list[str] | None,
+) -> str:
+    """Mensaje util cuando no hay nada: dice por que y que hay disponible."""
+    filtros = []
+    if plataforma:
+        filtros.append(f"plataforma={plataforma}")
+    if desde:
+        filtros.append(f"desde={desde}")
+    if fuente:
+        filtros.append(f"fuente={fuente!r}")
+    sufijo = f" ({', '.join(filtros)})" if filtros else ""
+
+    if not fuente:
         return (
-            f'Sin resultados para "{query}"'
-            + (f" (plataforma={plataforma})" if plataforma else "")
-            + (f" (desde={desde})" if desde else "")
-            + ".\nLa base de conocimiento puede estar vacia: comprueba con estado_kb()."
+            f'Sin resultados para "{query}"{sufijo}.\n'
+            "Comprueba el estado con estado_kb()."
         )
 
-    lines = [f'{len(results)} fragmentos para "{query}":', ""]
-    for i, r in enumerate(results, 1):
-        lines.append(f"--- [{i}] {r['title'] or 'Sin titulo'}")
-        lines.append(f"    Fuente: {r['url']}")
-        meta = []
-        if r["published_at"]:
-            meta.append(f"Publicado: {r['published_at']}")
-        else:
-            meta.append("Publicado: fecha desconocida")
-        if r["author"]:
-            meta.append(f"Autor: {r['author']}")
-        if r["platforms"]:
-            meta.append("Plataformas: " + ", ".join(r["platforms"]))
-        lines.append("    " + " | ".join(meta))
-        lines.append("")
-        lines.append(r["content"])
-        lines.append("")
+    # Con `fuente` lo probable es que el texto no case con ningun documento.
+    try:
+        disponibles = kb_search.listar_titulos(platform=plataforma, since=desde)
+    except Exception:  # noqa: BLE001
+        disponibles = []
 
-    return "\n".join(lines)
+    if not disponibles:
+        return f'Sin resultados para "{query}"{sufijo}. No hay documentos con esos filtros.'
+
+    lineas = [
+        f'Ningun documento coincide con fuente={fuente!r}'
+        + (f" en plataforma={plataforma}" if plataforma else "")
+        + ". Disponibles:",
+        "",
+    ]
+    for titulo, url in disponibles:
+        lineas.append(f"- {titulo} | {url}")
+    return "\n".join(lineas)
 
 
 @mcp.tool()
@@ -103,15 +144,27 @@ def listar_fuentes(plataforma: str | None = None) -> str:
     if not rows:
         return "No hay ninguna fuente" + (f" para {plataforma}" if plataforma else "") + "."
 
-    lines = [f"{len(rows)} fuentes:", ""]
+    lines = [
+        f"{len(rows)} fuentes. El texto entre <> sirve como `fuente` en buscar_kb:",
+        "",
+    ]
     for title, url, published_at, platforms in rows:
-        lines.append(f"- {title or 'Sin titulo'}")
-        lines.append(f"  {url}")
+        lines.append(f"- <{_identificador(url)}> {title or 'Sin titulo'}")
         lines.append(
-            f"  Fecha: {published_at or 'desconocida'} | "
-            f"Plataformas: {', '.join(platforms or []) or 'ninguna'}"
+            f"  {published_at or 'sin fecha'} | "
+            f"{', '.join(platforms or []) or 'sin plataforma'} | {url}"
         )
     return "\n".join(lines)
+
+
+def _identificador(url: str) -> str:
+    """Trozo corto y distintivo de la url, para pasarselo a buscar_kb(fuente=...)."""
+    if not url.lower().startswith(("http://", "https://")):
+        return pathlib.Path(url).stem          # ruta local
+    limpio = re.sub(r"^https?://(www\.)?", "", url)
+    dominio, _, resto = limpio.partition("/")
+    primer_tramo = resto.split("/")[0].split("?")[0]
+    return f"{dominio}/{primer_tramo}" if primer_tramo else dominio
 
 
 @mcp.tool()
