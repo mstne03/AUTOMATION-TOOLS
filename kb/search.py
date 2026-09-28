@@ -1,5 +1,6 @@
 """Busqueda hibrida: vectorial + full-text, fusionadas con RRF."""
 
+import math
 from datetime import date
 
 from kb import db, embeddings
@@ -12,18 +13,32 @@ RRF_K = 60
 # vectorial y full-text. Asi los 20 candidatos de cada rama se eligen ya solo
 # entre los documentos pedidos, en vez de filtrar un top-20 global y quedarse
 # con las migajas.
-_SQL = """
-WITH filtered AS (
+#
+# `docs` saca la url original de los archivos locales capturados a mano: esta
+# en la linea `> Original: https://...` del chunk 0. Sirve para la cabecera del
+# resultado y para que `fuente` case tambien con esa url.
+_SQL = r"""
+WITH docs AS (
+    SELECT d.id, d.title, d.url, d.author, d.published_at, d.platforms,
+           CASE WHEN d.url !~* '^https?://' THEN (
+               SELECT substring(c0.content FROM '(?:^|\n)>[ \t]*Original:[ \t]*(\S+)')
+               FROM chunks c0
+               WHERE c0.document_id = d.id AND c0.chunk_index = 0
+           ) END AS url_original
+    FROM documents d
+),
+filtered AS (
     SELECT c.id, c.content, c.embedding, c.tsv, c.chunk_index, c.document_id,
-           d.title, d.url, d.author, d.published_at, d.platforms
+           d.title, d.url, d.author, d.published_at, d.platforms, d.url_original
     FROM chunks c
-    JOIN documents d ON d.id = c.document_id
+    JOIN docs d ON d.id = c.document_id
     WHERE (%(platform)s::TEXT IS NULL OR d.platforms @> ARRAY[%(platform)s::TEXT])
       AND (%(since)s::DATE IS NULL OR d.published_at >= %(since)s::DATE)
       AND (%(sources)s::TEXT[] IS NULL OR EXISTS (
               SELECT 1 FROM unnest(%(sources)s::TEXT[]) AS s
               WHERE d.title ILIKE '%%' || s || '%%'
                  OR d.url   ILIKE '%%' || s || '%%'
+                 OR d.url_original ILIKE '%%' || s || '%%'
           ))
 ),
 vec AS (
@@ -47,7 +62,8 @@ SELECT f.content, f.title, f.url, f.author, f.published_at, f.platforms,
        vec.rank AS vector_rank,
        fts.rank AS text_rank,
        f.document_id,
-       f.chunk_index
+       f.chunk_index,
+       f.url_original
 FROM filtered f
 LEFT JOIN vec ON vec.id = f.id
 LEFT JOIN fts ON fts.id = f.id
@@ -72,6 +88,7 @@ def search(
     since: str | date | None = None,
     sources: str | list[str] | None = None,
     k: int = 8,
+    qvec: list[float] | None = None,
 ) -> list[dict]:
     """Busca en la base de conocimiento.
 
@@ -83,15 +100,18 @@ def search(
             la url del documento. Sin distinguir mayusculas. Con una lista el
             criterio es OR: vale con que coincida uno.
         k: numero de fragmentos.
+        qvec: embedding de `query` ya calculado, para no pedirlo dos veces.
 
     Returns:
         Lista de dicts con content, title, url, author, published_at,
-        platforms, score, document_id y chunk_index.
+        platforms, score, document_id, chunk_index y url_original (la url de
+        la pagina de la que se capturo un archivo local, o None).
     """
     if not query.strip():
         return []
 
-    qvec = embeddings.embed([query])[0]
+    if qvec is None:
+        qvec = embeddings.embed([query])[0]
 
     params = {
         "qvec": str(qvec),
@@ -121,9 +141,27 @@ def search(
             "text_rank": r[8],
             "document_id": r[9],
             "chunk_index": r[10],
+            "url_original": r[11],
         }
         for r in rows
     ]
+
+
+def puntuador(qvec: list[float]):
+    """Puntua textos por similitud coseno con la consulta, para el recorte.
+
+    Una sola llamada a Ollama por bloque, con todos sus parrafos en lote.
+    """
+    qnorm = math.sqrt(sum(x * x for x in qvec)) or 1.0
+
+    def puntuar(textos: list[str]) -> list[float]:
+        out = []
+        for v in embeddings.embed(textos):
+            vnorm = math.sqrt(sum(x * x for x in v)) or 1.0
+            out.append(sum(a * b for a, b in zip(qvec, v)) / (qnorm * vnorm))
+        return out
+
+    return puntuar
 
 
 def listar_titulos(

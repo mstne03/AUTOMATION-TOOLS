@@ -186,10 +186,15 @@ Reinicia Claude Desktop del todo (que no quede en la bandeja del sistema).
   ```
 
   `listar_fuentes()` muestra entre `<>` el identificador de cada documento,
-  listo para copiar y pegar como `fuente`.
+  listo para copiar y pegar como `fuente`. En los archivos locales de
+  `fuentes/` vale tambien la url de la pagina original.
 
-- **`max_chars`**: recorta cada bloque a esa longitud terminando en frase
-  completa.
+- **`max_chars`**: tope para el texto de cada bloque (la linea de cabecera no
+  cuenta). Si el bloque es mas largo, el recorte se **centra en el parrafo mas
+  parecido a la consulta** (coseno con bge-m3, una llamada a Ollama en lote por
+  bloque) y se amplia hacia los lados en parrafos o frases completas. `[…]`
+  marca donde se ha quitado texto. Si Ollama falla en ese paso, recorta desde el
+  principio en vez de romper la busqueda.
 
 - **`k`**: cuenta **fragmentos antes de fusionar**, y por defecto es 3. Los
   fragmentos contiguos de un mismo documento se unen en un solo bloque, asi que
@@ -200,6 +205,12 @@ URL`), sin la linea de autor y plataformas, y sin el bloque
 `[titulo | plataforma | fecha]` que la ingesta graba dentro de cada chunk. Ese
 bloque se sigue guardando en la base (sirve para que el chunk se entienda suelto
 en la busqueda); solo se oculta al mostrarlo.
+
+Tampoco sale la cabecera del documento (el `# titulo` y el blockquote inicial
+con las notas de captura de los archivos de `fuentes/`). Para esos archivos, la
+cabecera del resultado muestra la url original sacada de la linea
+`> Original: ...` en vez de la ruta local. Todo esto es solo de salida: la base
+y el troceado no cambian, no hace falta reingerir.
 
 Medido contra la base real, el ahorro va del 64% al 97% segun la consulta.
 

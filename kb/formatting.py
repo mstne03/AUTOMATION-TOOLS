@@ -9,12 +9,23 @@ Tres problemas que resuelve, todos de ahorro de tokens:
   del mismo documento comparten texto de verdad. Si los dos entran en el top-k,
   se ve repetido.
 - La cabecera de cada resultado ocupaba tres lineas con autor y plataformas.
+
+Y uno de relevancia: con `max_chars`, el recorte se centra en el trozo del
+bloque que mas se parece a la consulta, no en su principio. Antes, un bloque que
+empezaba por el principio del documento gastaba el presupuesto en el titulo, las
+notas de captura y la introduccion.
 """
 
 import re
+from collections.abc import Callable
 
 _CABECERA = re.compile(r"^\[[^\]\n]*\](?:\s*\[[^\]\n]*\])?\s*\n")
+_ORIGINAL = re.compile(r"^>\s*Original:\s*(\S+)")
 _MAX_SOLAPE = 1200
+CORTE = "[…]"
+
+# Recibe textos y devuelve un score de parecido con la consulta por texto.
+Puntuador = Callable[[list[str]], list[float]]
 
 
 def quitar_cabecera(content: str) -> str:
@@ -34,23 +45,142 @@ def solape(anterior: str, siguiente: str) -> int:
     return 0
 
 
-def recortar(texto: str, max_chars: int | None) -> str:
-    """Recorta a `max_chars` terminando en frase completa cuando se puede."""
+def limpiar_inicio(texto: str) -> tuple[str, str | None]:
+    """Quita la cabecera del documento: el `# titulo` y el blockquote inicial.
+
+    Solo tiene sentido al principio del documento (chunk 0). En mitad del texto
+    un blockquote es contenido y no se toca. Devuelve el texto limpio y la url
+    de la linea `> Original: ...`, si la habia.
+    """
+    lineas = texto.split("\n")
+    i = 0
+
+    def saltar_vacias() -> None:
+        nonlocal i
+        while i < len(lineas) and not lineas[i].strip():
+            i += 1
+
+    saltar_vacias()
+    if i < len(lineas) and lineas[i].startswith("# "):
+        i += 1
+        saltar_vacias()
+
+    original = None
+    while i < len(lineas) and lineas[i].lstrip().startswith(">"):
+        m = _ORIGINAL.match(lineas[i].lstrip())
+        if m:
+            original = m.group(1)
+        i += 1
+
+    return "\n".join(lineas[i:]).strip(), original
+
+
+def recortar(
+    texto: str,
+    max_chars: int | None,
+    puntuar: Puntuador | None = None,
+) -> str:
+    """Recorta a `max_chars` alrededor de lo mas relevante, en unidades completas.
+
+    Parte el texto en parrafos (un titulo `#` va pegado al parrafo que le
+    sigue), elige el que `puntuar` considera mas parecido a la consulta y
+    amplia hacia los lados, anadiendo cada vez el vecino mas parecido que
+    quepa. Marca con `[…]` donde se ha quitado texto; la marca cuenta dentro de
+    `max_chars`. Sin `puntuar`, o si falla, parte del principio.
+    """
     if not max_chars or len(texto) <= max_chars:
         return texto
+    return _ventana(_parrafos(texto), "\n\n", max_chars, puntuar)
 
-    cortado = texto[:max_chars]
-    # Ultimo final de frase razonable dentro del recorte.
-    fin = max(cortado.rfind(". "), cortado.rfind(".\n"), cortado.rfind("! "),
-              cortado.rfind("? "), cortado.rfind(".\r"))
-    if fin >= max_chars * 0.4:
-        return cortado[: fin + 1].rstrip()
-    if cortado.endswith("."):
-        return cortado.rstrip()
-    # Sin frase utilizable: corta en palabra.
+
+def _parrafos(texto: str) -> list[str]:
+    bloques = [p.strip() for p in re.split(r"\n\s*\n", texto) if p.strip()]
+    unidades: list[str] = []
+    pendiente = ""
+    for b in bloques:
+        es_titulo = b.startswith("#") and "\n" not in b
+        if pendiente:
+            b = f"{pendiente}\n\n{b}"
+            pendiente = ""
+        if es_titulo:
+            pendiente = b
+        else:
+            unidades.append(b)
+    if pendiente:
+        unidades.append(pendiente)
+    return unidades
+
+
+def _frases(texto: str) -> list[str]:
+    return [f for f in re.split(r"(?<=[.!?:])\s+", texto) if f]
+
+
+def _ventana(
+    unidades: list[str],
+    sep: str,
+    max_chars: int,
+    puntuar: Puntuador | None,
+) -> str:
+    n = len(unidades)
+    scores: list[float] | None = None
+    if puntuar and n > 1:
+        try:
+            scores = list(puntuar(unidades))
+        except Exception:  # noqa: BLE001 - sin puntuacion se recorta desde el principio
+            scores = None
+    if not scores or len(scores) != n:
+        scores = [float(n - i) for i in range(n)]   # prefiere lo primero
+
+    def largo(a: int, b: int) -> int:
+        cuerpo = sum(len(u) for u in unidades[a : b + 1]) + len(sep) * (b - a)
+        marcas = (len(CORTE) + 1) * ((a > 0) + (b < n - 1))
+        return cuerpo + marcas
+
+    mejor = max(range(n), key=lambda i: scores[i])
+    a = b = mejor
+
+    if largo(a, b) > max_chars:
+        # La unidad sola no cabe: se baja a frases, y si es una frase, a palabras.
+        frases = _frases(unidades[mejor])
+        hueco = max_chars - (len(CORTE) + 1) * ((a > 0) + (b < n - 1))
+        if len(frases) > 1:
+            interior = _ventana(frases, " ", hueco, puntuar)
+        else:
+            interior = _cortar_en_palabra(unidades[mejor], hueco)
+        return _marcar(interior, a > 0, b < n - 1)
+
+    while True:
+        vecinos = [i for i in (a - 1, b + 1) if 0 <= i < n]
+        vecinos.sort(key=lambda i: scores[i], reverse=True)
+        for v in vecinos:
+            na, nb = min(a, v), max(b, v)
+            if largo(na, nb) <= max_chars:
+                a, b = na, nb
+                break
+        else:
+            break
+
+    return _marcar(sep.join(unidades[a : b + 1]), a > 0, b < n - 1)
+
+
+def _cortar_en_palabra(texto: str, limite: int) -> str:
+    """Ultimo recurso para una frase suelta mas larga que el limite."""
+    limite -= len(CORTE) + 1
+    if limite <= 0:
+        return CORTE
+    cortado = texto[:limite]
     espacio = cortado.rfind(" ")
-    base = cortado[:espacio] if espacio > max_chars * 0.5 else cortado
-    return base.rstrip() + " [...]"
+    if espacio > limite * 0.5:
+        cortado = cortado[:espacio]
+    return cortado.rstrip() + " " + CORTE
+
+
+def _marcar(texto: str, antes: bool, despues: bool) -> str:
+    if antes and not texto.startswith(CORTE):
+        texto = f"{CORTE} {texto}"
+    if despues and not texto.endswith(CORTE):
+        texto = f"{texto} {CORTE}"
+    return texto
 
 
 def agrupar(results: list[dict]) -> list[dict]:
@@ -94,12 +224,20 @@ def _fundir(fragmentos: list[dict]) -> dict:
     for siguiente in fragmentos[1:]:
         limpio = quitar_cabecera(siguiente["content"])
         n = solape(texto, limpio)
-        trozo = limpio[n:].lstrip()
-        if trozo:
-            texto = texto.rstrip() + ("" if n else "\n\n") + (" " if n else "") + trozo
+        if n:
+            # El solape es exacto: pegando el resto tal cual se conserva el
+            # separador original, incluido un salto de parrafo.
+            texto = texto + limpio[n:]
+        elif limpio:
+            texto = texto.rstrip() + "\n\n" + limpio
+
+    original = None
+    if fragmentos[0].get("chunk_index") == 0:
+        texto, original = limpiar_inicio(texto)
 
     fundido = dict(base)
     fundido["content"] = texto.strip()
+    fundido["url_original"] = base.get("url_original") or original
     fundido["fragmentos"] = len(fragmentos)
     fundido["chunk_index"] = fragmentos[0].get("chunk_index")
     return fundido
@@ -109,8 +247,13 @@ def formatear(
     results: list[dict],
     query: str,
     max_chars: int | None = None,
+    puntuar: Puntuador | None = None,
 ) -> str:
-    """Respuesta compacta: una linea de cabecera por bloque y el texto debajo."""
+    """Respuesta compacta: una linea de cabecera por bloque y el texto debajo.
+
+    La cabecera usa la url original cuando el documento es un archivo local
+    capturado a mano, y no cuenta para `max_chars`.
+    """
     grupos = agrupar(results)
 
     total = len(grupos)
@@ -119,8 +262,9 @@ def formatear(
 
     for i, g in enumerate(grupos, 1):
         fecha = g["published_at"] or "sin fecha"
-        lines.append(f"[{i}] {g['title'] or 'Sin titulo'} | {fecha} | {g['url']}")
-        lines.append(recortar(g["content"], max_chars))
+        url = g.get("url_original") or g["url"]
+        lines.append(f"[{i}] {g['title'] or 'Sin titulo'} | {fecha} | {url}")
+        lines.append(recortar(g["content"], max_chars, puntuar))
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

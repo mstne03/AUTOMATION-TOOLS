@@ -78,6 +78,24 @@ def test_devuelve_document_id_y_chunk_index():
 
 
 @requires_reader
+@requires_ollama
+def test_archivo_local_trae_url_original_y_se_filtra_por_ella():
+    url = "transparency.meta.com/features/explaining-ranking/ig-reels-chaining"
+    r = search.search("reels", sources=url, k=3)
+    assert r, "fuente con la url original deberia casar con el archivo local"
+    for x in r:
+        assert x["url"].endswith("meta-instagram-reels-en-cadena.md")
+        assert url in x["url_original"]
+
+
+@requires_reader
+@requires_ollama
+def test_las_fuentes_web_no_tienen_url_original():
+    r = search.search("hashtags", sources="buffer.com", k=3)
+    assert r and all(x["url_original"] is None for x in r)
+
+
+@requires_reader
 def test_listar_titulos():
     todos = search.listar_titulos()
     assert todos

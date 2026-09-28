@@ -9,7 +9,7 @@ import re
 
 from mcp.server.mcpserver import MCPServer
 
-from kb import db, formatting
+from kb import db, embeddings, formatting
 from kb import search as kb_search
 
 mcp = MCPServer("kb-seo", version="0.1.0")
@@ -51,21 +51,29 @@ def buscar_kb(
             Ejemplo: fuente="buffer.com" busca solo dentro del articulo de
             Buffer. Acepta tambien una lista, y entonces vale con que coincida
             una: fuente=["hootsuite.com/instagram", "later.com"]. Usa
-            listar_fuentes() para ver que hay y con que texto apuntar.
+            listar_fuentes() para ver que hay y con que texto apuntar. En las
+            fuentes capturadas a mano como archivo local tambien vale la url de
+            la pagina original (la que sale en la cabecera del resultado).
             El filtro se aplica ANTES de la busqueda por similitud, asi que los
             resultados salen de dentro de esos documentos, no de un top global.
-        max_chars: Recorta cada bloque a ese numero de caracteres, terminando
-            en frase completa. Ejemplo: max_chars=600 para respuestas breves
-            cuando solo necesitas confirmar un dato. Si lo omites, devuelve el
-            texto entero.
+        max_chars: Tope de caracteres para el TEXTO de cada bloque. La linea de
+            cabecera (titulo | fecha | url) no cuenta, y el titulo y las notas
+            de captura del principio del documento nunca se devuelven. Si el
+            bloque es mas largo, el recorte se CENTRA en el parrafo que mas se
+            parece a la consulta y se amplia hacia los lados en parrafos o
+            frases completas; "[…]" marca donde se ha quitado texto antes o
+            despues. Asi un max_chars pequeno sigue trayendo la parte
+            relevante, no el principio del documento. Ejemplo: max_chars=700
+            para confirmar un dato. Si lo omites, devuelve el bloque entero.
         k: Cuantos FRAGMENTOS recuperar antes de fusionar. 3 por defecto. Los
             fragmentos contiguos de un mismo documento se unen en un bloque, asi
             que puedes recibir menos bloques que k. Sube a 8 o 15 para preguntas
             amplias.
     """
     try:
+        qvec = embeddings.embed([query])[0] if query.strip() else None
         results = kb_search.search(
-            query, platform=plataforma, since=desde, sources=fuente, k=k
+            query, platform=plataforma, since=desde, sources=fuente, k=k, qvec=qvec
         )
     except Exception as e:  # noqa: BLE001 - el cliente MCP necesita texto, no un traceback
         return f"Error al buscar en la base de conocimiento: {type(e).__name__}: {e}"
@@ -73,7 +81,8 @@ def buscar_kb(
     if not results:
         return _sin_resultados(query, plataforma, desde, fuente)
 
-    return formatting.formatear(results, query, max_chars=max_chars)
+    puntuar = kb_search.puntuador(qvec) if max_chars else None
+    return formatting.formatear(results, query, max_chars=max_chars, puntuar=puntuar)
 
 
 def _sin_resultados(
