@@ -6,6 +6,7 @@ escribir en la base de datos ni aunque se lo pidan.
 
 import pathlib
 import re
+import sys
 
 from mcp.server.mcpserver import MCPServer
 
@@ -13,6 +14,15 @@ from kb import db, embeddings, formatting
 from kb import search as kb_search
 
 mcp = MCPServer("kb-seo", version="0.1.0")
+
+
+def _error(contexto: str, e: Exception) -> str:
+    """Texto para el cliente MCP sin detalles de conexion (host, usuario, DSN).
+
+    El detalle completo va a stderr, que es donde Claude Desktop guarda los logs.
+    """
+    print(f"[kb-seo] {contexto}: {type(e).__name__}: {e}", file=sys.stderr)
+    return f"{contexto}: {type(e).__name__}. Detalle en los logs del servidor MCP."
 
 
 @mcp.tool()
@@ -76,7 +86,7 @@ def buscar_kb(
             query, platform=plataforma, since=desde, sources=fuente, k=k, qvec=qvec
         )
     except Exception as e:  # noqa: BLE001 - el cliente MCP necesita texto, no un traceback
-        return f"Error al buscar en la base de conocimiento: {type(e).__name__}: {e}"
+        return _error("Error al buscar en la base de conocimiento", e)
 
     if not results:
         return _sin_resultados(query, plataforma, desde, fuente)
@@ -148,7 +158,7 @@ def listar_fuentes(plataforma: str | None = None) -> str:
             cur.execute(sql, (plataforma, plataforma))
             rows = cur.fetchall()
     except Exception as e:  # noqa: BLE001
-        return f"Error al listar fuentes: {type(e).__name__}: {e}"
+        return _error("Error al listar fuentes", e)
 
     if not rows:
         return "No hay ninguna fuente" + (f" para {plataforma}" if plataforma else "") + "."
@@ -200,8 +210,8 @@ def estado_kb() -> str:
             last_ingest = cur.fetchone()[0]
     except Exception as e:  # noqa: BLE001
         return (
-            f"No se pudo consultar la base de conocimiento: {type(e).__name__}: {e}\n"
-            "Comprueba que el contenedor esta levantado: docker compose ps"
+            _error("No se pudo consultar la base de conocimiento", e)
+            + "\nComprueba que el contenedor esta levantado: docker compose ps"
         )
 
     lines = [

@@ -112,12 +112,15 @@ def cmd_url(args) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
-    append_source(source)
+    apuntada = append_source(source)
     if result["skipped"]:
         print(f"Sin cambios: {args.url}")
     else:
         print(f"Ingerida: {args.url} ({result['chunks']} chunks)")
-    print(f"Apuntada en {SOURCES_PATH}")
+    if apuntada:
+        print(f"Apuntada en {SOURCES_PATH}")
+    else:
+        print(f"Ya estaba apuntada en {SOURCES_PATH}; sus metadatos no se han tocado.")
     return 0
 
 
@@ -159,7 +162,7 @@ def ingest_one(source: dict) -> dict:
 
     platforms = source.get("platforms") or ["general"]
     topics = source.get("topics") or []
-    extracted = extract(source_type, location)
+    extracted = extract(source_type, resolve_location(source_type, location))
 
     content_hash = hashlib.sha256(extracted.text.encode("utf-8")).hexdigest()
 
@@ -236,20 +239,43 @@ def load_sources() -> list[dict]:
     return data
 
 
-def append_source(source: dict) -> None:
-    sources = load_sources()
-    for existing in sources:
-        if existing.get("url") == source["url"]:
-            existing.update(source)
-            break
-    else:
-        sources.append(source)
+def append_source(source: dict) -> bool:
+    """Anade la fuente al final de sources.yaml sin tocar el resto del archivo.
 
-    body = yaml.safe_dump(sources, allow_unicode=True, sort_keys=False, default_flow_style=False)
-    SOURCES_PATH.write_text(_HEADER + body, encoding="utf-8")
+    Reescribir el archivo entero con `yaml.safe_dump` se llevaba por delante
+    todos los comentarios (secciones, convenciones de fechas), asi que solo se
+    anade texto al final. Si la url ya esta apuntada, no se toca nada y se
+    devuelve False: edita la entrada a mano si quieres cambiar sus metadatos.
+    """
+    sources = load_sources()
+    if any(existing.get("url") == source["url"] for existing in sources):
+        return False
+
+    entrada = yaml.safe_dump(
+        [source], allow_unicode=True, sort_keys=False, default_flow_style=False
+    )
+    actual = SOURCES_PATH.read_text(encoding="utf-8") if SOURCES_PATH.exists() else _HEADER
+    separador = "" if actual.endswith("\n\n") else ("\n" if actual.endswith("\n") else "\n\n")
+    SOURCES_PATH.write_text(actual + separador + entrada, encoding="utf-8")
+    return True
 
 
 # ---------------------------------------------------------------- utilidades
+
+
+def resolve_location(source_type: str, location: str) -> str:
+    """Ruta real de una fuente local. Las relativas cuelgan de la raiz del repo.
+
+    `sources.yaml` guarda rutas relativas (`fuentes/x.md`) para que el archivo
+    sirva en cualquier maquina; la url que se guarda en la base de datos es esa
+    misma cadena relativa.
+    """
+    if source_type not in {"local", "pdf"} or location.lower().startswith(("http://", "https://")):
+        return location
+    path = Path(location)
+    if path.is_absolute():
+        return location
+    return str(PROJECT_ROOT / path)
 
 
 def guess_type(location: str) -> str:

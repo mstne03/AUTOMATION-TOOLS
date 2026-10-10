@@ -86,7 +86,8 @@ y luego:
 uv run ingest all
 ```
 
-**Desde la linea de comandos**, que ademas lo apunta en `sources.yaml`:
+**Desde la linea de comandos**, que ademas lo apunta al final de `sources.yaml`
+sin tocar el resto del archivo (si la url ya estaba, no se modifica):
 
 ```bash
 uv run ingest url https://www.youtube.com/watch?v=XXXXXXXXXXX \
@@ -115,7 +116,9 @@ devuelven el esqueleto y la ingesta las rechaza con "trafilatura no extrajo
 texto".
 
 La via para esas: abrirlas en un navegador, guardar el texto como `.md` en
-`fuentes/` e ingerirlo como `type: local`. Hay cuatro asi en `sources.yaml`.
+`fuentes/` e ingerirlo como `type: local` con ruta **relativa a la raiz del
+repo** (`url: fuentes/pagina.md`), para que `sources.yaml` sirva en cualquier
+maquina. Hay cuatro asi en `sources.yaml`.
 Ojo: **no se revisitan solas**. Si la plataforma actualiza la pagina, hay que
 volver a capturarla a mano.
 
@@ -124,7 +127,7 @@ volver a capturarla a mano.
 | `type` | Extractor | Troceado |
 |---|---|---|
 | `web` | trafilatura | ~600 tokens respetando parrafos, 15% de solape |
-| `pdf` | pypdf | igual |
+| `pdf` | pypdf (ruta local o URL `https://...pdf`, que se descarga) | igual |
 | `local` | `.md` y `.txt` | igual |
 | `youtube` | youtube-transcript-api (espanol, si no ingles) | ventanas de tiempo con 15% de solape |
 
@@ -156,10 +159,12 @@ Anade esta entrada a `mcpServers` en
 
 ```json
 "kb-seo": {
-  "command": "C:\\Users\\Pau\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uv.exe",
-  "args": ["run", "--directory", "C:\\Users\\Pau\\kb-seo", "kb-mcp"]
+  "command": "C:\\Users\\<usuario>\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uv.exe",
+  "args": ["run", "--directory", "C:\\ruta\\al\\repo\\kb-seo", "kb-mcp"]
 }
 ```
+
+La ruta de `uv.exe` sale de `(Get-Command uv).Source` en PowerShell.
 
 Reinicia Claude Desktop del todo (que no quede en la bandeja del sistema).
 

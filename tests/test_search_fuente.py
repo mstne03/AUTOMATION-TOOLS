@@ -6,6 +6,20 @@ from kb import search
 from tests.conftest import requires_ollama, requires_reader
 
 
+@pytest.fixture(autouse=True)
+def _necesita_fuentes_reales():
+    """Estos tests consultan documentos concretos de sources.yaml, no el fixture.
+
+    Con la base vacia o recien creada no tienen sentido: se saltan en vez de fallar.
+    """
+    try:
+        urls = {url for _, url in search.listar_titulos()}
+    except Exception:  # noqa: BLE001 - sin BD, los markers de arriba ya saltan
+        return
+    if not any("buffer.com" in u for u in urls):
+        pytest.skip("sources.yaml no esta ingerido (uv run ingest all)")
+
+
 @requires_reader
 @requires_ollama
 def test_filtra_por_subcadena_de_url():

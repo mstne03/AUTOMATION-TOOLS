@@ -94,13 +94,31 @@ def _youtube(url: str) -> Extracted:
 
 
 def _pdf(location: str) -> Extracted:
+    import io
+
     from pypdf import PdfReader
 
-    path = Path(location)
-    if not path.exists():
-        raise ExtractionError(f"No existe el PDF {location}")
+    if location.lower().startswith(("http://", "https://")):
+        import httpx
 
-    reader = PdfReader(str(path))
+        try:
+            r = httpx.get(location, follow_redirects=True, timeout=60.0)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise ExtractionError(f"No se pudo descargar el PDF {location}: {e}") from e
+        origen = io.BytesIO(r.content)
+        stem = Path(location.split("?")[0]).stem
+    else:
+        path = Path(location)
+        if not path.exists():
+            raise ExtractionError(f"No existe el PDF {location}")
+        origen = str(path)
+        stem = path.stem
+
+    try:
+        reader = PdfReader(origen)
+    except Exception as e:  # pypdf lanza varias clases distintas
+        raise ExtractionError(f"{location}: no es un PDF legible ({type(e).__name__})") from e
     pages = [(p.extract_text() or "").strip() for p in reader.pages]
     text = "\n\n".join(p for p in pages if p)
     if not text.strip():
@@ -109,7 +127,7 @@ def _pdf(location: str) -> Extracted:
     info = reader.metadata or {}
     return Extracted(
         text=text,
-        title=(info.get("/Title") or path.stem) or None,
+        title=(info.get("/Title") or stem) or None,
         author=info.get("/Author") or None,
     )
 

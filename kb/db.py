@@ -11,8 +11,11 @@ from kb import config
 
 @contextmanager
 def connect(dsn: str):
-    """Abre una conexion con el tipo vector ya registrado."""
-    with psycopg.connect(dsn) as conn:
+    """Abre una conexion con el tipo vector ya registrado.
+
+    connect_timeout: una tool MCP no puede quedarse colgada si Postgres no esta.
+    """
+    with psycopg.connect(dsn, connect_timeout=5) as conn:
         register_vector(conn)
         yield conn
 

@@ -15,9 +15,13 @@ from kb import config
 
 
 def _ollama_up() -> bool:
+    """Ollama responde Y tiene el modelo de embeddings: sin modelo, /api/embed da 404."""
     try:
         r = httpx.get(f"{config.OLLAMA_URL}/api/tags", timeout=3.0)
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False
+        nombres = {m.get("name", "") for m in r.json().get("models", [])}
+        return any(n == config.EMBED_MODEL or n.startswith(config.EMBED_MODEL + ":") for n in nombres)
     except Exception:
         return False
 
@@ -31,7 +35,8 @@ def _db_up(dsn: str) -> bool:
 
 
 requires_ollama = pytest.mark.skipif(
-    not _ollama_up(), reason=f"Ollama no responde en {config.OLLAMA_URL}"
+    not _ollama_up(),
+    reason=f"Ollama no responde en {config.OLLAMA_URL} o falta el modelo {config.EMBED_MODEL}",
 )
 
 
