@@ -6,6 +6,7 @@ import sys
 from mcp.server.mcpserver import MCPServer
 
 from youtube_mcp.auth import AuthError, YouTubeAuth
+from youtube_mcp.secrets import KeyringSecretStore
 from youtube_mcp.utils.quota import QuotaTracker
 
 mcp = MCPServer(
@@ -13,10 +14,12 @@ mcp = MCPServer(
     instructions="Comprehensive MCP server for YouTube Data API, Analytics API, and Reporting API",
 )
 
-# Shared state
+# Shared state. YOUTUBE_MCP_SECRETS=keyring guarda tokens y client_secret en el
+# Credential Manager (DPAPI) en vez de JSON en claro; el producto lo activa siempre.
 auth = YouTubeAuth(
     client_secret_path=os.environ.get("YOUTUBE_MCP_CLIENT_SECRET"),
     config_dir=os.environ.get("YOUTUBE_MCP_CONFIG_DIR"),
+    store=KeyringSecretStore() if os.environ.get("YOUTUBE_MCP_SECRETS") == "keyring" else None,
 )
 quota = QuotaTracker(state_path=auth.config_dir / "quota.json")
 

@@ -34,6 +34,7 @@ dependencies = [
     "faster-whisper>=1.1.0",
     # faster-whisper 1.2.1 calls av.open(metadata_errors=...), which PyAV 19 removed.
     "av>=11,<19",
+    "keyring>=25.7.0",
 ]
 
 [project.optional-dependencies]

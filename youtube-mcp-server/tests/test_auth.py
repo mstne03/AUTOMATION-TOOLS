@@ -8,6 +8,27 @@ import pytest
 
 from youtube_mcp.auth import AuthError, YouTubeAuth
 
+CLIENT_SECRET = json.dumps({"installed": {"client_id": "id", "client_secret": "s"}})
+
+
+class DictStore:
+    """SecretStore en memoria para los tests."""
+
+    def __init__(self):
+        self.data: dict[str, str] = {}
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
+
+    def delete(self, key):
+        self.data.pop(key, None)
+
+    def keys(self):
+        return sorted(self.data)
+
 
 def test_default_config_dir(monkeypatch):
     monkeypatch.delenv("YOUTUBE_MCP_PROFILE", raising=False)
@@ -77,14 +98,14 @@ def test_refresh_failure_is_reported_not_swallowed(tmp_path):
 
 def test_force_consent_ignores_saved_token(tmp_path):
     secret = tmp_path / "client_secret.json"
-    secret.write_text("{}")
+    secret.write_text(CLIENT_SECRET)
     yt_auth = YouTubeAuth(config_dir=tmp_path, client_secret_path=secret)
     nuevo = MagicMock(valid=True)
     nuevo.to_json.return_value = "{}"
     with patch.object(yt_auth, "_load_token") as load, patch(
         "youtube_mcp.auth.InstalledAppFlow"
     ) as flow:
-        flow.from_client_secrets_file.return_value.run_local_server.return_value = nuevo
+        flow.from_client_config.return_value.run_local_server.return_value = nuevo
         assert yt_auth.authenticate(interactive=True, force_consent=True) is nuevo
     load.assert_not_called()
 
@@ -146,3 +167,41 @@ def test_build_disables_discovery_cache(tmp_path, method):
     with patch("youtube_mcp.auth.build") as mock_build:
         getattr(yt_auth, method)()
     assert mock_build.call_args.kwargs["cache_discovery"] is False
+
+
+class TestInjectedStore:
+    def test_token_roundtrip_and_profiles(self, tmp_path):
+        store = DictStore()
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=store)
+        creds = MagicMock()
+        creds.to_json.return_value = json.dumps({"token": "t", "refresh_token": "r"})
+        yt_auth._save_token(creds)
+        yt_auth.use_profile("smooth")
+        yt_auth._save_token(creds)
+        assert store.keys() == ["token:default", "token:smooth"]
+        assert not list(tmp_path.glob("*.json"))  # nada en disco
+        assert yt_auth.profiles() == ["default", "smooth"]
+        assert yt_auth.status()["store"] == "DictStore"
+        yt_auth.delete_token("smooth")
+        assert yt_auth.profiles() == ["default"]
+
+    def test_client_secret_from_store_used_in_flow(self, tmp_path):
+        store = DictStore()
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=store)
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        assert yt_auth.has_client_secret()
+        nuevo = MagicMock(valid=True)
+        nuevo.to_json.return_value = "{}"
+        with patch("youtube_mcp.auth.InstalledAppFlow") as flow:
+            flow.from_client_config.return_value.run_local_server.return_value = nuevo
+            yt_auth.authenticate(interactive=True)
+        flow.from_client_config.assert_called_once()
+        assert flow.from_client_config.call_args.args[0]["installed"]["client_id"] == "id"
+        assert store.get("token:default") == "{}"
+
+    def test_import_client_secret_rejects_garbage(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        with pytest.raises(AuthError, match="'installed' or 'web'"):
+            yt_auth.import_client_secret("{}")
+        with pytest.raises(AuthError, match="not valid JSON"):
+            yt_auth.import_client_secret("{nope")
