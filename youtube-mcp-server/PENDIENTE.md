@@ -32,8 +32,18 @@ informe completo esta en `..\INFORME-producto-exe-2026-10-10.md`.
 - `mcp` migrado a 2.x (`MCPServer`) el 2026-10-11, misma version que `kb-seo`.
 - Suite: 153 tests.
 
-Queda para la Fase 1: tokens en `keyring` (hoy JSON en claro), gate de
-aprobacion en la UI para toda escritura, nivel de riesgo por tool.
+### Fase 1 (HECHO 2026-10-11)
+
+- `youtube_mcp/secrets.py`: `SecretStore` inyectable en `YouTubeAuth(store=...)`.
+  `FileSecretStore` conserva el layout de siempre; `KeyringSecretStore` usa el
+  Credential Manager troceando en 1000 caracteres (CredWrite admite 2560 bytes
+  UTF-16 y un token de Google con 6 scopes puede pasarse). `YOUTUBE_MCP_SECRETS=keyring`
+  lo activa en la fachada MCP; `app-backend` lo activa siempre. `client_secret.json`
+  tambien va al almacen (`import_client_secret`).
+- `youtube_mcp/utils/progress.py`: ContextVar de progreso que usan la subida y la
+  transcripcion; la cola de jobs de `app-backend` lo fija antes de llamar a la tool.
+- Nivel de riesgo, coste de cuota y gate de aprobacion viven en `app-backend/registry.py`
+  y `agent.py`, no aqui: este repo sigue siendo una fachada MCP sin politica.
 
 ---
 
