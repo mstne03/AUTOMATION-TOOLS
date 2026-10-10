@@ -1,7 +1,8 @@
 # Handoff: Fase 1 del producto `.exe` (backend local unificado)
 
 Pega este documento entero como primer mensaje de la nueva sesión, abierta en
-`C:\Users\Marc\Documents\PROJECTS\AUTOMATION TOOLS`.
+`C:\Users\Marc\Documents\PROJECTS\AUTOMATION TOOLS`, que desde el 2026-10-11 es un **monorepo git**
+(rama `main`) con `kb-seo/` y `youtube-mcp-server/` como subdirectorios y todo su historial.
 
 ---
 
@@ -32,7 +33,7 @@ Ambos usan `uv` (instalado por winget; en shells abiertos antes del 2026-10-10 n
 PATH: ruta `%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\uv.exe`),
 `.python-version` = 3.12, `uv sync --extra dev`, `uv run pytest -q`.
 
-**`youtube-mcp-server`** (git, 4 commits, 153 tests):
+**`youtube-mcp-server/`** (153 tests):
 - `mcp` acotado a `<2`; usa `FastMCP` de 1.x. `kb-seo` ya usa `MCPServer` de 2.x.
   **Unificar en 2.x es parte de esta fase.**
 - `src/youtube_mcp/auth.py`: `YouTubeAuth(profile=...)`, `authenticate(interactive=False,
@@ -48,7 +49,7 @@ PATH: ruta `%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_Microsoft.Wing
   desde `youtube_mcp.server` (estado global, hay que romper esa dependencia al reutilizarlas).
 - `PENDIENTE.md` sección 0 resume la Fase 0.
 
-**`kb-seo`** (git, 10 commits, 54 tests + 26 que se saltan sin Postgres/`bge-m3`):
+**`kb-seo/`** (54 tests + 26 que se saltan sin Postgres/`bge-m3`):
 - `mcp_server/server.py`: tres tools (`buscar_kb`, `listar_fuentes`, `estado_kb`) con
   helper `_error()` que no filtra DSN. `kb/search.py::search()` es la búsqueda híbrida.
 - `kb/db.py` con `connect_timeout=5`. Rol `kb_reader` solo SELECT.
@@ -58,8 +59,9 @@ PATH: ruta `%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_Microsoft.Wing
 
 ## Alcance de la Fase 1 (del informe, sección 6)
 
-Paquete nuevo `app-backend/` (repo propio, hermano de los otros dos, con `uv`) que importa
-`youtube_mcp` y `kb` como dependencias locales (`[tool.uv.sources]` con `path`).
+Paquete nuevo `app-backend/` (subdirectorio del monorepo, con su propio `pyproject` y `uv`)
+que importa `youtube_mcp` y `kb` como dependencias locales (`[tool.uv.sources]` con
+`path = "../youtube-mcp-server"` y `path = "../kb-seo"`). Commits en la raíz del monorepo.
 
 1. **FastAPI en `127.0.0.1`, puerto aleatorio, token por arranque** en cabecera
    `Authorization` (lo generará Tauri en Fase 3; ahora lo imprime el proceso al arrancar).
