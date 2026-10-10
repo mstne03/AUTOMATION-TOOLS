@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from youtube_mcp.server import mcp
+from youtube_mcp.utils import progress
 from youtube_mcp.utils.paths import AccessDeniedError, resolve_allowed
 
 WHISPER_MODEL = os.environ.get("YOUTUBE_MCP_WHISPER_MODEL", "small")
@@ -207,7 +208,9 @@ def _ejecutar(modelo, audio, idioma: str | None) -> tuple[list[dict], object]:
     # transcribe() devuelve un generador: el trabajo (y los errores de GPU) ocurre al iterar.
     generador, info = modelo.transcribe(audio, language=idioma, vad_filter=True)
     segmentos = []
+    total = len(audio) / _SAMPLE_RATE or 1.0
     for s in generador:
+        progress.report(s.end / total)
         texto = s.text.strip()
         if texto:
             segmentos.append({

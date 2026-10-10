@@ -11,6 +11,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from youtube_mcp.server import auth, mcp, quota
+from youtube_mcp.utils import progress
 from youtube_mcp.utils.paths import AccessDeniedError, resolve_allowed
 
 PRIVACY = ("private", "public", "unlisted")
@@ -51,7 +52,9 @@ def _subir_con_reintentos(request) -> dict:
     intentos = 0
     while response is None:
         try:
-            _progreso, response = request.next_chunk()
+            progreso, response = request.next_chunk()
+            if progreso is not None:
+                progress.report(progreso.progress())
             intentos = 0
         except HttpError as e:
             if e.resp.status not in _RETRIABLE_STATUS or intentos >= UPLOAD_MAX_RETRIES:
