@@ -6,8 +6,24 @@ Reports are generated daily and available for 60 days.
 """
 
 import urllib.request
+from urllib.parse import urlsplit
 
 from youtube_mcp.server import auth, mcp
+
+# El token OAuth solo viaja a Google. Una URL inyectada en la conversacion no debe
+# poder llevarse el Bearer a otro sitio.
+_ALLOWED_HOST_SUFFIX = ".googleapis.com"
+
+
+def _url_permitida(url: str) -> str | None:
+    partes = urlsplit(url)
+    host = (partes.hostname or "").lower()
+    if partes.scheme != "https" or not host.endswith(_ALLOWED_HOST_SUFFIX):
+        return (
+            f"Refusing to send credentials to '{url}': only https://*{_ALLOWED_HOST_SUFFIX} "
+            "download URLs from youtube_reporting_list_reports are allowed."
+        )
+    return None
 
 
 @mcp.tool()
@@ -114,6 +130,8 @@ def youtube_reporting_download(download_url: str) -> dict:
     Args:
         download_url: Download URL from youtube_reporting_list_reports
     """
+    if error := _url_permitida(download_url):
+        return {"error": error}
     credentials = auth.credentials
     headers = {"Authorization": f"Bearer {credentials.token}"}
 

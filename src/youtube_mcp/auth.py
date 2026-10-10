@@ -1,11 +1,19 @@
 """OAuth 2.0 authentication for YouTube APIs.
 
 Users must provide their own client_secret.json from their Google Cloud project.
-On first use, a browser-based OAuth consent flow runs and stores the token locally.
+The browser consent flow only runs when the `youtube_auth` tool is called
+explicitly (`interactive=True`): no other tool may open a browser from inside
+the server process. If a token cannot be refreshed, the tools get a clear
+AuthError telling the user to re-authorise.
+
+Profiles: one token per YouTube channel. The default profile stores its token in
+``token.json``; profile ``smooth`` uses ``token-smooth.json``, and so on. Pick the
+startup profile with ``YOUTUBE_MCP_PROFILE`` and switch at runtime with
+``youtube_auth(profile=...)``.
 """
 
-import json
 import os
+import re
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -25,7 +33,8 @@ SCOPES = [
 ]
 
 DEFAULT_CONFIG_DIR = Path.home() / ".youtube-mcp"
-TOKEN_FILE = "token.json"
+DEFAULT_PROFILE = "default"
+_PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 class AuthError(Exception):
@@ -39,11 +48,11 @@ class YouTubeAuth:
         self,
         client_secret_path: str | Path | None = None,
         config_dir: str | Path | None = None,
-        api_key: str | None = None,
+        profile: str | None = None,
     ):
         self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
-        self.token_path = self.config_dir / TOKEN_FILE
         self._credentials: Credentials | None = None
+        self.use_profile(profile or os.environ.get("YOUTUBE_MCP_PROFILE") or DEFAULT_PROFILE)
 
         # Resolve client_secret.json path
         if client_secret_path:
@@ -55,31 +64,62 @@ class YouTubeAuth:
             else:
                 self.client_secret_path = self.config_dir / "client_secret.json"
 
-        # API key fallback for public-only operations
-        self.api_key = api_key or os.environ.get("YOUTUBE_API_KEY")
+    # ---------------------------------------------------------------- perfiles
+
+    def use_profile(self, profile: str) -> None:
+        """Switch the active channel profile. Drops in-memory credentials."""
+        profile = (profile or "").strip().lower()
+        if not _PROFILE_RE.match(profile):
+            raise AuthError(
+                f"Invalid profile name '{profile}': use letters, digits, '-' or '_' (max 32)."
+            )
+        self.profile = profile
+        self.token_path = self.config_dir / (
+            "token.json" if profile == DEFAULT_PROFILE else f"token-{profile}.json"
+        )
+        self._credentials = None
+
+    def profiles(self) -> list[str]:
+        """Profiles that already have a saved token."""
+        if not self.config_dir.is_dir():
+            return []
+        nombres = []
+        for p in sorted(self.config_dir.glob("token*.json")):
+            if p.name == "token.json":
+                nombres.append(DEFAULT_PROFILE)
+            elif p.name.startswith("token-"):
+                nombres.append(p.stem[len("token-"):])
+        return sorted(nombres, key=lambda n: (n != DEFAULT_PROFILE, n))
+
+    # ------------------------------------------------------------------- token
 
     def _load_token(self) -> Credentials | None:
         """Load saved credentials from token file."""
         if not self.token_path.exists():
             return None
         try:
-            creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
-            return creds
+            return Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
         except Exception:
             return None
 
     def _save_token(self, creds: Credentials):
         """Save credentials to token file."""
+        # TODO Fase 1: keyring (Windows Credential Manager) en vez de JSON en claro.
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.token_path.write_text(creds.to_json())
 
-    def authenticate(self) -> Credentials:
-        """Get valid credentials, running OAuth flow if needed.
+    def authenticate(self, interactive: bool = False, force_consent: bool = False) -> Credentials:
+        """Return valid credentials for the active profile.
 
-        Returns valid credentials. Raises AuthError if client_secret.json
-        is missing or the flow fails.
+        - Reuses the saved token, refreshing it if expired.
+        - `interactive=True` (only the `youtube_auth` tool) may open the browser
+          consent flow when there is no usable token.
+        - `force_consent=True` ignores the saved token and runs the flow again
+          (needed when scopes change or the token was revoked).
+
+        Raises AuthError when not interactive and no valid token is available.
         """
-        creds = self._load_token()
+        creds = None if force_consent else self._load_token()
 
         if creds and creds.valid:
             self._credentials = creds
@@ -92,10 +132,17 @@ class YouTubeAuth:
                 self._credentials = creds
                 return creds
             except Exception as e:
-                # Refresh failed, need to re-auth
-                pass
+                if not interactive:
+                    raise AuthError(
+                        f"Token refresh failed for profile '{self.profile}' "
+                        f"({type(e).__name__}: {e}). Run youtube_auth to re-authorise."
+                    ) from e
 
-        # Need to run the OAuth flow
+        if not interactive:
+            raise AuthError(
+                f"Not authenticated for profile '{self.profile}'. Run youtube_auth first."
+            )
+
         if not self.client_secret_path.exists():
             raise AuthError(
                 f"client_secret.json not found at {self.client_secret_path}. "
@@ -117,10 +164,12 @@ class YouTubeAuth:
 
     @property
     def credentials(self) -> Credentials:
-        """Get current credentials, authenticating if needed."""
+        """Current credentials, refreshed if needed. Never opens a browser."""
         if self._credentials and self._credentials.valid:
             return self._credentials
-        return self.authenticate()
+        return self.authenticate(interactive=False)
+
+    # ---------------------------------------------------------------- clientes
 
     def build_youtube_service(self):
         """Build a YouTube Data API v3 service client."""
@@ -138,19 +187,13 @@ class YouTubeAuth:
             "youtubereporting", "v1", credentials=self.credentials, cache_discovery=False
         )
 
-    def build_public_youtube_service(self):
-        """Build a YouTube Data API client using API key only (public data)."""
-        if not self.api_key:
-            raise AuthError(
-                "No API key available. Set YOUTUBE_API_KEY env var for public-only access."
-            )
-        return build("youtube", "v3", developerKey=self.api_key, cache_discovery=False)
-
     def status(self) -> dict:
         """Return current auth status."""
+        base = {"profile": self.profile, "profiles": self.profiles()}
         creds = self._load_token()
         if creds and creds.valid:
             return {
+                **base,
                 "authenticated": True,
                 "scopes": creds.scopes or [],
                 "token_path": str(self.token_path),
@@ -158,12 +201,14 @@ class YouTubeAuth:
             }
         if creds and creds.expired:
             return {
+                **base,
                 "authenticated": False,
                 "expired": True,
                 "has_refresh_token": bool(creds.refresh_token),
                 "token_path": str(self.token_path),
             }
         return {
+            **base,
             "authenticated": False,
             "token_exists": self.token_path.exists(),
             "client_secret_exists": self.client_secret_path.exists(),

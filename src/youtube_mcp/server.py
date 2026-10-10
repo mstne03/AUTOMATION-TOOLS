@@ -5,7 +5,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from youtube_mcp.auth import YouTubeAuth
+from youtube_mcp.auth import AuthError, YouTubeAuth
 from youtube_mcp.utils.quota import QuotaTracker
 
 mcp = FastMCP(
@@ -17,31 +17,39 @@ mcp = FastMCP(
 auth = YouTubeAuth(
     client_secret_path=os.environ.get("YOUTUBE_MCP_CLIENT_SECRET"),
     config_dir=os.environ.get("YOUTUBE_MCP_CONFIG_DIR"),
-    api_key=os.environ.get("YOUTUBE_API_KEY"),
 )
-quota = QuotaTracker()
+quota = QuotaTracker(state_path=auth.config_dir / "quota.json")
 
 
 # --- Auth tools ---
 
 
 @mcp.tool()
-def youtube_auth() -> dict:
-    """Initiate OAuth 2.0 authentication flow.
+def youtube_auth(profile: str | None = None, reauthorize: bool = False) -> dict:
+    """Authenticate with Google, or switch the active channel profile.
 
-    Opens a browser window for Google OAuth consent. Required before using
-    any tools that access private channel data or analytics.
+    This is the ONLY tool allowed to open the browser consent flow. Every other
+    tool reuses the saved token and fails with a clear error if it is missing or
+    cannot be refreshed.
+
+    Args:
+        profile: Channel profile to activate ("default", "smooth", ...). One token
+            per profile; see youtube_auth_status for the profiles already saved.
+        reauthorize: Ignore the saved token and run the consent flow again
+            (needed after a scope change or if Google revoked the token).
     """
     try:
-        auth.authenticate()
+        if profile:
+            auth.use_profile(profile)
+        auth.authenticate(interactive=True, force_consent=reauthorize)
         return {"status": "authenticated", "detail": auth.status()}
-    except Exception as e:
+    except AuthError as e:
         return {"status": "error", "detail": str(e)}
 
 
 @mcp.tool()
 def youtube_auth_status() -> dict:
-    """Check current authentication status and quota usage."""
+    """Check current authentication status, active profile and quota usage."""
     return {
         "auth": auth.status(),
         "quota": quota.status(),
@@ -51,15 +59,17 @@ def youtube_auth_status() -> dict:
 # --- Register tool modules ---
 # Import tool modules so their @mcp.tool() decorators run
 
-from youtube_mcp.tools import channel  # noqa: E402, F401
-from youtube_mcp.tools import search  # noqa: E402, F401
-from youtube_mcp.tools import transcripts  # noqa: E402, F401
-from youtube_mcp.tools import local_transcribe  # noqa: E402, F401
-from youtube_mcp.tools import analytics  # noqa: E402, F401
-from youtube_mcp.tools import publishing  # noqa: E402, F401
-from youtube_mcp.tools import playlists  # noqa: E402, F401
-from youtube_mcp.tools import comments  # noqa: E402, F401
-from youtube_mcp.tools import reporting  # noqa: E402, F401
+from youtube_mcp.tools import (  # noqa: E402
+    analytics,  # noqa: F401
+    channel,  # noqa: F401
+    comments,  # noqa: F401
+    local_transcribe,  # noqa: F401
+    playlists,  # noqa: F401
+    publishing,  # noqa: F401
+    reporting,  # noqa: F401
+    search,  # noqa: F401
+    transcripts,  # noqa: F401
+)
 
 
 def _aislar_stdin_windows() -> None:

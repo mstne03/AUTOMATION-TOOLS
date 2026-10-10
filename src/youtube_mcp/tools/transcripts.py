@@ -39,7 +39,7 @@ def youtube_list_captions(video_id: str) -> dict:
     Args:
         video_id: YouTube video ID
     """
-    quota.consume("list")
+    quota.consume("caption_list")
     youtube = auth.build_youtube_service()
 
     response = youtube.captions().list(part="snippet", videoId=video_id).execute()
@@ -126,20 +126,20 @@ def _mensaje_final(propio: bool, motivo_propietario: str | None, intentos: list[
 
 # ---------------------------------------------------------------- propiedad
 
-_mi_canal_id: str | None = None
+_mi_canal_por_perfil: dict[str, str] = {}
 
 
 def _mi_canal() -> str | None:
-    """ID del canal autenticado. Se cachea: no cambia durante la sesion."""
-    global _mi_canal_id
-    if _mi_canal_id is None:
+    """ID del canal autenticado. Se cachea por perfil: cambiar de perfil cambia de canal."""
+    perfil = auth.profile
+    if perfil not in _mi_canal_por_perfil:
         quota.consume("list")
         youtube = auth.build_youtube_service()
         resp = youtube.channels().list(part="id", mine=True).execute()
         items = resp.get("items", [])
         if items:
-            _mi_canal_id = items[0].get("id")
-    return _mi_canal_id
+            _mi_canal_por_perfil[perfil] = items[0].get("id")
+    return _mi_canal_por_perfil.get(perfil)
 
 
 def _es_video_propio(video_id: str) -> tuple[bool, str | None]:
@@ -175,7 +175,7 @@ def _get_transcript_official(video_id: str, language: str) -> dict:
     youtube = auth.build_youtube_service()
 
     try:
-        quota.consume("list")
+        quota.consume("caption_list")
         response = youtube.captions().list(part="snippet", videoId=video_id).execute()
     except HttpError as e:
         return {"video_id": video_id, "error": _http_message(e), "source": "official_api"}
@@ -196,7 +196,7 @@ def _get_transcript_official(video_id: str, language: str) -> dict:
     snippet = track.get("snippet", {})
 
     try:
-        quota.consume("list")
+        quota.consume("caption_download")
         raw = youtube.captions().download(id=track["id"], tfmt="srt").execute()
     except HttpError as e:
         return {"video_id": video_id, "error": _http_message(e), "source": "official_api"}

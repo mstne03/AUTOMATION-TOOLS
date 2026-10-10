@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestListTypes:
     @patch("youtube_mcp.tools.reporting.auth")
@@ -110,7 +112,9 @@ class TestDownload:
         mock_resp.read.return_value = csv_content.encode("utf-8")
         mock_urlopen.return_value = mock_resp
 
-        result = youtube_reporting_download("https://example.com/report.csv")
+        result = youtube_reporting_download(
+            "https://youtubereporting.googleapis.com/v1/media/CHANNEL/job/report?alt=media"
+        )
         assert result["row_count"] == 2
         assert result["truncated"] is False
         assert "date,views,watch_time" in result["content"]
@@ -124,5 +128,24 @@ class TestDownload:
         mock_creds.token = "test-token"
         mock_auth.credentials = mock_creds
 
-        result = youtube_reporting_download("https://example.com/report.csv")
+        result = youtube_reporting_download("https://youtubereporting.googleapis.com/r.csv")
         assert "error" in result
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/report.csv",
+            "http://youtubereporting.googleapis.com/report.csv",
+            "https://googleapis.com.evil.net/report.csv",
+            "https://evil.net/?u=youtubereporting.googleapis.com",
+        ],
+    )
+    @patch("youtube_mcp.tools.reporting.auth")
+    @patch("youtube_mcp.tools.reporting.urllib.request.urlopen")
+    def test_token_never_leaves_google(self, mock_urlopen, mock_auth, url):
+        """El Bearer solo viaja a *.googleapis.com por https, venga de donde venga la URL."""
+        from youtube_mcp.tools.reporting import youtube_reporting_download
+
+        result = youtube_reporting_download(url)
+        assert "Refusing to send credentials" in result["error"]
+        mock_urlopen.assert_not_called()

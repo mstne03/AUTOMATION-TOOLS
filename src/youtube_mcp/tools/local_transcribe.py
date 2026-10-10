@@ -5,38 +5,22 @@ is no use for a video that is not up yet. This tool reads the file straight from
 disk and returns the same shape `youtube_get_transcript` does, so the rest of the
 flow (title, description, tags) does not change.
 
-Only these folders may be read:
-
-- ``C:\\Ferguson`` -> Smooth, English. Files are named ``videoNNN.mp4``.
-- ``C:\\Adobe``    -> Candisito, Spanish. Files are ``tiktokNNN.mp4`` / ``youtubeNN.mp4``.
-- ``C:\\Kanye``    -> language autodetected. Files are ``kanyeNNN.mp4``.
+Only files inside the allowed folders (YOUTUBE_MCP_ALLOWED_DIRS) can be read. Each
+folder may declare a default language (``C:/Videos/Smooth=en``); without one the
+language is autodetected.
 
 The Whisper model is loaded lazily on the first call and kept in memory.
 """
 
 import os
-import re
 import threading
 import time
 from pathlib import Path
 
 from youtube_mcp.server import mcp
+from youtube_mcp.utils.paths import AccessDeniedError, resolve_allowed
 
 WHISPER_MODEL = os.environ.get("YOUTUBE_MCP_WHISPER_MODEL", "small")
-
-# Carpeta permitida -> idioma por defecto del canal.
-_CARPETAS = {
-    Path(r"C:\Ferguson"): "en",  # Smooth
-    Path(r"C:\Adobe"): "es",  # Candisito
-    Path(r"C:\Kanye"): None,  # sin idioma fijo: autodetecta
-}
-
-# Nombre corto -> carpeta. Se acepta con o sin la extension .mp4.
-_NOMBRES = [
-    (re.compile(r"^video\d+$", re.IGNORECASE), Path(r"C:\Ferguson")),
-    (re.compile(r"^(tiktok|youtube)\d+$", re.IGNORECASE), Path(r"C:\Adobe")),
-    (re.compile(r"^kanye\d+$", re.IGNORECASE), Path(r"C:\Kanye")),
-]
 
 _EXTENSIONES = {
     ".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi",
@@ -68,13 +52,10 @@ def transcribe_local(file: str, language: str | None = None) -> dict:
     "local_whisper"), plus file and duration_total in seconds.
 
     Args:
-        file: Absolute path, or just the video name:
-            "videoNNN" -> C:\\Ferguson\\videoNNN.mp4 (Smooth channel, English);
-            "tiktokNNN" or "youtubeNN" -> C:\\Adobe\\<name>.mp4 (Candisito channel,
-            Spanish); "kanyeNNN" -> C:\\Kanye\\<name>.mp4 (language autodetected).
-            Only files inside C:\\Ferguson, C:\\Adobe and C:\\Kanye can be read.
+        file: Absolute path inside an allowed folder, or a bare file name
+            ("video137" or "video137.mp4") searched in the allowed folders.
         language: Language code ("en", "es", ...). Leave empty to use the folder's
-            default (Ferguson = en, Adobe = es, Kanye = autodetect).
+            default language, or autodetect if the folder has none.
     """
     try:
         ruta, idioma_defecto = _resolver_ruta(file)
@@ -89,53 +70,17 @@ def transcribe_local(file: str, language: str | None = None) -> dict:
 
 
 def _resolver_ruta(file: str) -> tuple[Path, str | None]:
-    """Nombre corto o ruta absoluta -> (ruta real, idioma por defecto)."""
-    texto = (file or "").strip().strip('"').strip("'")
-    if not texto:
-        raise _ErrorLocal("No file given. Pass a video name like 'video137' or a full path.")
-
-    candidata = Path(texto)
-    if not candidata.is_absolute():
-        nombre = candidata.stem if candidata.suffix.lower() == ".mp4" else candidata.name
-        carpeta = next((c for patron, c in _NOMBRES if patron.match(nombre)), None)
-        if carpeta is None or candidata.parent != Path("."):
-            raise _ErrorLocal(
-                f"'{file}' is not a known video name. Use 'videoNNN' (C:\\Ferguson), "
-                "'tiktokNNN' or 'youtubeNN' (C:\\Adobe), 'kanyeNNN' (C:\\Kanye), "
-                "or a full path inside one of "
-                "those folders."
-            )
-        candidata = carpeta / f"{nombre}.mp4"
-
-    # resolve() sigue enlaces y '..', asi no se puede escapar de las carpetas.
-    ruta = candidata.resolve()
-    carpeta = _carpeta_permitida(ruta)
-    if carpeta is None:
-        raise _ErrorLocal(
-            f"Access denied: '{ruta}' is outside the allowed folders. "
-            "Only files inside C:\\Ferguson, C:\\Adobe and C:\\Kanye can be transcribed."
-        )
-    if not ruta.is_file():
-        raise _ErrorLocal(f"File not found: {ruta}")
+    """Nombre o ruta -> (ruta real dentro de una carpeta permitida, idioma por defecto)."""
+    try:
+        ruta, idioma = resolve_allowed(file)
+    except AccessDeniedError as e:
+        raise _ErrorLocal(str(e)) from None
     if ruta.suffix.lower() not in _EXTENSIONES:
         raise _ErrorLocal(
             f"Unsupported format '{ruta.suffix or '(no extension)'}'. "
             f"Supported: {', '.join(sorted(_EXTENSIONES))}."
         )
-    # None => autodetectar (carpeta permitida sin idioma asignado).
-    return ruta, _CARPETAS.get(carpeta)
-
-
-def _carpeta_permitida(ruta: Path) -> Path | None:
-    destino = os.path.normcase(str(ruta))
-    for carpeta in _CARPETAS:
-        base = os.path.normcase(str(carpeta.resolve()))
-        try:
-            if os.path.commonpath([destino, base]) == base:
-                return carpeta
-        except ValueError:  # distinta unidad
-            continue
-    return None
+    return ruta, idioma
 
 
 # ------------------------------------------------------------------- audio

@@ -126,7 +126,7 @@ Add to your MCP settings:
       "command": "youtube-studio-mcp",
       "env": {
         "YOUTUBE_MCP_CLIENT_SECRET": "/path/to/client_secret.json",
-        "YOUTUBE_API_KEY": "your-api-key-for-public-data"
+        "YOUTUBE_MCP_ALLOWED_DIRS": "C:\\Videos\\Smooth=en;C:\\Videos\\Candisito=es"
       }
     }
   }
@@ -135,7 +135,27 @@ Add to your MCP settings:
 
 ## First Run
 
-On first use, the server will open a browser window for Google OAuth consent. Sign in with the account that owns your YouTube channel and grant the requested permissions. The token is saved to `~/.youtube-mcp/token.json` and auto-refreshes.
+Call the `youtube_auth` tool once. It opens a browser window for Google OAuth consent: sign in with the account that owns your YouTube channel and grant the requested permissions. The token is saved to `~/.youtube-mcp/token.json` and auto-refreshes.
+
+`youtube_auth` is the **only** tool that may open the browser. Every other tool reuses the saved token and, if it is missing or cannot be refreshed (revoked, scopes changed), returns a clear error asking you to run `youtube_auth` again. Use `youtube_auth(reauthorize=True)` to force a new consent flow.
+
+### Multiple channels (profiles)
+
+One token per channel. The default profile uses `token.json`; profile `smooth` uses `token-smooth.json`, and so on.
+
+- Pick the startup profile with `YOUTUBE_MCP_PROFILE=smooth`.
+- Switch at runtime with `youtube_auth(profile="smooth")` (runs the consent flow the first time for that profile).
+- `youtube_auth_status` lists the profiles that already have a token.
+
+### Allowed folders (required for uploads and local transcription)
+
+The model decides which files to upload, so the server only reads files inside the folders you list in `YOUTUBE_MCP_ALLOWED_DIRS` (separated by `;` on Windows). Each entry may carry a default language for `transcribe_local`:
+
+```
+YOUTUBE_MCP_ALLOWED_DIRS=C:\Videos\Smooth=en;C:\Videos\Candisito=es;D:\Thumbnails
+```
+
+`youtube_upload_video`, `youtube_set_thumbnail` and `transcribe_local` accept an absolute path inside one of those folders, or a bare file name (`video137` or `video137.mp4`) that is searched in all of them. Anything else is refused before any quota is spent.
 
 ## Tools Reference
 
@@ -143,22 +163,22 @@ On first use, the server will open a browser window for Google OAuth consent. Si
 
 | Tool | Description |
 |------|-------------|
-| `youtube_auth` | Initiate OAuth 2.0 flow |
-| `youtube_auth_status` | Check auth state and quota usage |
+| `youtube_auth` | Run the OAuth 2.0 consent flow, switch profile (`profile=`), or force re-consent (`reauthorize=True`) |
+| `youtube_auth_status` | Auth state, active profile, saved profiles and quota usage per bucket |
 
 ### Channel & Video (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `youtube_get_channel` | Get channel details by ID, handle, or `mine=True` |
-| `youtube_list_videos` | List videos from a channel or playlist |
+| `youtube_list_videos` | List videos from a channel or playlist, with `playlist_item_id` and `next_page_token` for paging |
 | `youtube_get_video` | Get detailed video metadata and stats |
 
 ### Search & SEO (4 tools)
 
 | Tool | Description |
 |------|-------------|
-| `youtube_search` | Search YouTube (100 quota units per call) |
+| `youtube_search` | Search YouTube (own quota bucket: 100 calls/day) |
 | `youtube_search_suggestions` | Get autocomplete suggestions (no quota cost) |
 | `youtube_trending` | Get trending videos by region/category |
 | `youtube_get_categories` | List video categories for a region |
@@ -178,12 +198,10 @@ right after an upload. `transcribe_local` reads the file from disk instead. Use 
 **before** `youtube_upload_video`: write the final title, description and tags from
 the transcript, then upload once with everything set (including `publish_at`).
 
-- `file`: a full path, or just the video name:
-  - `videoNNN` → `C:\Ferguson\videoNNN.mp4` (Smooth, default language `en`)
-  - `tiktokNNN` / `youtubeNN` → `C:\Adobe\<name>.mp4` (Candisito, default language `es`)
-  - `kanyeNNN` → `C:\Kanye\<name>.mp4` (language autodetected)
-- `language`: optional; empty means the folder's default.
-- Only files inside `C:\Ferguson`, `C:\Adobe` and `C:\Kanye` can be read; anything else returns an error.
+- `file`: an absolute path inside an allowed folder, or a bare file name (`video137` or
+  `video137.mp4`) searched in every allowed folder (see `YOUTUBE_MCP_ALLOWED_DIRS`).
+- `language`: optional; empty means the folder's default language, or autodetect if the
+  folder has none.
 - Output has the same shape as `youtube_get_transcript` (`video_id: null`,
   `source: "local_whisper"`, `full_text`, `segments` with `text/start/duration`), plus
   `file`, `duration_total`, and `model` / `device` / `compute_type` / `elapsed_seconds`.
@@ -235,10 +253,10 @@ uses an `av.open()` argument that PyAV 19 removed.
 
 | Tool | Description |
 |------|-------------|
-| `youtube_upload_video` | Upload a video (1,600 quota units) |
-| `youtube_update_video` | Update video metadata |
-| `youtube_set_thumbnail` | Upload custom thumbnail |
-| `youtube_delete_video` | Delete a video |
+| `youtube_upload_video` | Resumable upload with retries; validates `publish_at` (ISO 8601 with timezone, private only) and the 500-char tag limit. Own quota bucket: 100 uploads/day |
+| `youtube_update_video` | Update metadata, privacy and `publish_at` (reschedule) |
+| `youtube_set_thumbnail` | Upload custom thumbnail (max 2 MB) |
+| `youtube_delete_video` | Delete a video. Irreversible: does nothing unless `confirm=True` |
 
 ### Playlists (4 tools)
 
@@ -265,27 +283,32 @@ uses an `av.open()` argument that PyAV 19 removed.
 | `youtube_reporting_create_job` | Schedule a daily report job |
 | `youtube_reporting_list_jobs` | List active reporting jobs |
 | `youtube_reporting_list_reports` | List generated reports for a job |
-| `youtube_reporting_download` | Download a report CSV |
+| `youtube_reporting_download` | Download a report CSV (only `https://*.googleapis.com` URLs: the OAuth token never goes anywhere else) |
 
 ## Quota Management
 
-The YouTube Data API v3 has a default daily quota of **10,000 units**. This server tracks quota usage client-side and **hard-fails** when the quota is exhausted.
+Google splits the YouTube Data API v3 quota into three independent per-project, per-day buckets ([official table](https://developers.google.com/youtube/v3/determine_quota_cost)):
 
-Key costs:
-- Most read operations: **1 unit**
-- Search: **100 units**
-- Write operations: **50 units**
-- Video upload: **1,600 units**
+| Bucket | Default limit | What draws from it |
+|---|---|---|
+| `general` | 10,000 units/day | Everything else: reads 1 unit, writes 50, `captions.list` 50, `captions.insert` 400, `captions.update` 450 |
+| `search` | 100 calls/day | `search.list` (`youtube_search`) |
+| `video_insert` | 100 calls/day | `videos.insert` (`youtube_upload_video`) |
 
-Use `youtube_auth_status` to check current quota usage.
+The Analytics and Reporting APIs do not consume this quota.
+
+This server tracks usage client-side, **before** each call, and hard-fails when a bucket is exhausted. The counters are persisted in `<config dir>/quota.json`, so they survive restarts, and they reset at midnight Pacific Time like Google's. `captions.download` is not listed in Google's table; it is counted as 50 units.
+
+Use `youtube_auth_status` to check current usage per bucket.
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `YOUTUBE_MCP_CLIENT_SECRET` | Path to `client_secret.json` |
-| `YOUTUBE_MCP_CONFIG_DIR` | Config directory (default: `~/.youtube-mcp`) |
-| `YOUTUBE_API_KEY` | API key for public-only operations |
+| `YOUTUBE_MCP_CONFIG_DIR` | Config directory for tokens and `quota.json` (default: `~/.youtube-mcp`) |
+| `YOUTUBE_MCP_PROFILE` | Channel profile to load at startup (default: `default`) |
+| `YOUTUBE_MCP_ALLOWED_DIRS` | Folders the server may read files from, `path[=lang]` separated by `;` (required for uploads, thumbnails and `transcribe_local`) |
 | `YOUTUBE_MCP_WHISPER_MODEL` | Whisper model for `transcribe_local` (default: `small`) |
 
 ## Development

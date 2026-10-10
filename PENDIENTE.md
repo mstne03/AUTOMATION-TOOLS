@@ -1,6 +1,40 @@
 # Pendiente
 
-Estado a 2026-09-28. Lo que quedo sin hacer, por que, y como retomarlo.
+Estado a 2026-10-10. Lo que quedo sin hacer, por que, y como retomarlo.
+
+---
+
+## 0. Fase 0 del producto `.exe` (HECHO 2026-10-10)
+
+Saneamiento previo a convertir este servidor en el backend del producto. El
+informe completo esta en `..\INFORME-producto-exe-2026-10-10.md`.
+
+- Repositorio git inicializado; `.gitignore` excluye `token*.json`,
+  `client_secret*.json`, `quota.json` y `.env`.
+- **Seguridad**: `youtube_reporting_download` solo envia el Bearer a
+  `https://*.googleapis.com`; subida, miniatura y `transcribe_local` solo leen
+  dentro de `YOUTUBE_MCP_ALLOWED_DIRS` (sustituye las carpetas fijas
+  `C:\Ferguson`, `C:\Adobe`, `C:\Kanye`); `youtube_delete_video` exige
+  `confirm=True`; el refresco fallido del token ya no abre el navegador en
+  silencio: solo `youtube_auth` puede abrirlo.
+- **Cuota**: tres cubos como la tabla oficial de Google (`general` 10.000
+  unidades, `search` 100 llamadas, `video_insert` 100 llamadas), persistida en
+  `quota.json`, reinicio a medianoche del Pacifico. `captions.list` cuesta 50.
+  `captions.download` no figura en la tabla: se asume 50.
+- **Perfiles por canal**: `YOUTUBE_MCP_PROFILE` y `youtube_auth(profile=...)`;
+  el ID de canal cacheado en `transcripts.py` va por perfil.
+- **Subida reanudable** con bucle `next_chunk()`, trozos de 8 MB y reintentos
+  con backoff ante 5xx o cortes de red. `publish_at` se valida (ISO 8601 con
+  zona, solo `private`) en vez de descartarse en silencio.
+- `youtube_update_video` acepta `publish_at`; `youtube_list_videos` devuelve
+  `playlist_item_id` y pagina con `page_token`.
+- `YOUTUBE_API_KEY` y `build_public_youtube_service` eliminados: nadie los usaba.
+- `mcp` acotado a `<2` (el codigo usa `FastMCP` de 1.x). La migracion a 2.x se
+  hara en la Fase 1 junto con `kb-seo`, que ya esta en 2.x.
+- Suite: 153 tests.
+
+Queda para la Fase 1: tokens en `keyring` (hoy JSON en claro), gate de
+aprobacion en la UI para toda escritura, nivel de riesgo por tool.
 
 ---
 

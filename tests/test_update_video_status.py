@@ -8,8 +8,6 @@ pero cambio hecho en YouTube.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 ACTUAL = {
     "items": [
         {

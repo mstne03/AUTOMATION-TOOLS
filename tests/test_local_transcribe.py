@@ -1,5 +1,6 @@
 """Tests for transcribe_local path rules and output shape (no real model)."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,11 +9,12 @@ import numpy as np
 import pytest
 
 from youtube_mcp.tools import local_transcribe as lt
+from youtube_mcp.utils import paths
 
 
 @pytest.fixture
-def carpetas(tmp_path):
-    """Sustituye C:\\Ferguson, C:\\Adobe y C:\\Kanye por carpetas temporales."""
+def carpetas(tmp_path, monkeypatch):
+    """Tres carpetas permitidas: Ferguson=en, Adobe=es, Kanye sin idioma (autodetecta)."""
     ferguson = tmp_path / "Ferguson"
     adobe = tmp_path / "Adobe"
     kanye = tmp_path / "Kanye"
@@ -26,12 +28,10 @@ def carpetas(tmp_path):
     ):
         f.write_bytes(b"x")
     (ferguson / "notas.txt").write_text("x")
-    with patch.object(lt, "_CARPETAS", {ferguson: "en", adobe: "es", kanye: None}), patch.object(
-        lt,
-        "_NOMBRES",
-        [(lt._NOMBRES[0][0], ferguson), (lt._NOMBRES[1][0], adobe), (lt._NOMBRES[2][0], kanye)],
-    ):
-        yield ferguson, adobe
+    monkeypatch.setenv(
+        paths.ENV_VAR, os.pathsep.join([f"{ferguson}=en", f"{adobe}=es", str(kanye)])
+    )
+    yield ferguson, adobe
 
 
 class TestResolverRuta:
@@ -71,7 +71,7 @@ class TestResolverRuta:
             lt._resolver_ruta(str(ferguson / ".." / "secreto.mp4"))
 
     def test_nombre_desconocido(self, carpetas):
-        with pytest.raises(lt._ErrorLocal, match="not a known video name"):
+        with pytest.raises(lt._ErrorLocal, match="File not found"):
             lt._resolver_ruta("clip5")
 
     def test_no_encontrado(self, carpetas):
@@ -125,7 +125,8 @@ class TestTranscribeLocal:
         assert visto["language"] == "en"
         assert visto["vad_filter"] is True
 
-    def test_error_legible_sin_traza(self):
+    def test_error_legible_sin_traza(self, monkeypatch):
+        monkeypatch.delenv(paths.ENV_VAR, raising=False)
         r = lt.transcribe_local(str(Path("C:/Windows/win.ini")))
         assert "error" in r and "Traceback" not in r["error"]
         assert r["source"] == "local_whisper"

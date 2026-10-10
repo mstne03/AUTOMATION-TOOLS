@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _make_mock_youtube():
     """Create a mock YouTube Data API service."""
