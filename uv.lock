@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1490,6 +1490,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tzdata"
+version = "2026.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/68/f1b440335057bfce71b6e50a9d09445aa2ecbd08359a337976627b8409e7/tzdata-2026.5.tar.gz", hash = "sha256:8cc73c0a0bfca7dbfa59235d60b2eff82231dee33f53d206db1acd9173cfc0a7", size = 200404, upload-time = "2026-10-03T09:23:14.143Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/21/1e5995a1c920cce14e4bffae20c665ec10e7ed03ab25e006cd741092b718/tzdata-2026.5-py2.py3-none-any.whl", hash = "sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac", size = 347996, upload-time = "2026-10-03T09:23:12.535Z" },
+]
+
+[[package]]
 name = "uritemplate"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1532,6 +1541,7 @@ dependencies = [
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
     { name = "mcp" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "youtube-transcript-api" },
 ]
 
@@ -1553,11 +1563,12 @@ requires-dist = [
     { name = "google-auth", specifier = ">=2.23.0" },
     { name = "google-auth-httplib2", specifier = ">=0.1.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.1.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'win32' and extra == 'gpu'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "youtube-transcript-api", specifier = ">=1.0.0" },
 ]
 provides-extras = ["gpu", "dev"]
