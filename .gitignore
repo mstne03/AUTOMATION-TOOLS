@@ -1,0 +1,11 @@
+# Monorepo del producto .exe. Cada subproyecto tiene su propio .gitignore.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.sonar/
+.env
+secrets/
+token*.json
+client_secret*.json
