@@ -1,0 +1,16 @@
+.idea
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.ruff_cache/
+secrets/
+# Credenciales y estado local: nunca al repositorio
+token*.json
+client_secret*.json
+*.secret.json
+.env
+quota.json
