@@ -1,14 +1,14 @@
-"""YouTube MCP Server — FastMCP entry point."""
+"""YouTube MCP Server — MCPServer (mcp 2.x) entry point."""
 
 import os
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from youtube_mcp.auth import AuthError, YouTubeAuth
 from youtube_mcp.utils.quota import QuotaTracker
 
-mcp = FastMCP(
+mcp = MCPServer(
     "YouTube MCP Server",
     instructions="Comprehensive MCP server for YouTube Data API, Analytics API, and Reporting API",
 )

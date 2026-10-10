@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp>=1.0.0,<2",
+    "mcp>=2.0",
     "tzdata; sys_platform == 'win32'",
     "google-api-python-client>=2.100.0",
     "google-auth>=2.23.0",

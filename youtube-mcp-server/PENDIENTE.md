@@ -29,8 +29,7 @@ informe completo esta en `..\INFORME-producto-exe-2026-10-10.md`.
 - `youtube_update_video` acepta `publish_at`; `youtube_list_videos` devuelve
   `playlist_item_id` y pagina con `page_token`.
 - `YOUTUBE_API_KEY` y `build_public_youtube_service` eliminados: nadie los usaba.
-- `mcp` acotado a `<2` (el codigo usa `FastMCP` de 1.x). La migracion a 2.x se
-  hara en la Fase 1 junto con `kb-seo`, que ya esta en 2.x.
+- `mcp` migrado a 2.x (`MCPServer`) el 2026-10-11, misma version que `kb-seo`.
 - Suite: 153 tests.
 
 Queda para la Fase 1: tokens en `keyring` (hoy JSON en claro), gate de
