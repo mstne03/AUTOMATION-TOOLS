@@ -316,8 +316,8 @@ Use `youtube_auth_status` to check current usage per bucket.
 ```bash
 git clone https://github.com/pauling-ai/youtube-studio-mcp.git
 cd youtube-studio-mcp
-uv venv && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -v
+uv sync --extra dev      # reproduces uv.lock exactly
+uv run pytest -q
 ```
 
 ## License
