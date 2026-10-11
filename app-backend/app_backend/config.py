@@ -13,6 +13,13 @@ Variables propias:
 - APP_BACKEND_TOKEN: token de la cabecera Authorization. Si falta se genera uno.
 - ANTHROPIC_API_KEY: respaldo para desarrollo; en el producto la clave va al almacen
   de secretos via PUT /settings y esta variable no se usa.
+- KB_UPDATE_URL: base HTTPS desde la que se descargan `manifest.json`,
+  `manifest.json.minisig` y el snapshot. Solo para desarrollo se admite http://127.0.0.1.
+
+Variables de `kb-seo` que este modulo fija ANTES de que se importe `kb.config`
+(que las lee al importarse): KB_BACKEND=sqlite, KB_SQLITE_PATH y
+KB_PRIVATE_SQLITE_PATH dentro del directorio de estado, y EMBED_CACHE_DIR para el
+modelo ONNX. Un `.env.local` con KB_BACKEND=postgres sigue valiendo para desarrollo.
 """
 
 import json
@@ -32,6 +39,21 @@ STATE_DIR = Path(
     or Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "seo-studio"
 )
 SETTINGS_PATH = STATE_DIR / "settings.json"
+
+# Base de conocimiento: snapshot publico firmado + KB privada, ambos dentro del
+# directorio de estado (nunca rutas que vengan de fuera).
+KB_DIR = STATE_DIR / "kb"
+KB_PUBLIC_PATH = KB_DIR / "kb-public.sqlite"
+KB_PRIVATE_PATH = KB_DIR / "kb-private.sqlite"
+KB_UPDATE_URL = (os.environ.get("KB_UPDATE_URL") or "https://kb.example.invalid/kb/").rstrip("/") + "/"
+# Clave publica minisign del VPS. Se genera alli y la privada nunca sale de alli.
+# Reemplazar al generar la clave real (paso 5 de la Fase 2).
+KB_MINISIGN_PUBKEY = os.environ.get("KB_MINISIGN_PUBKEY") or "RWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+os.environ.setdefault("KB_BACKEND", "sqlite")
+os.environ.setdefault("KB_SQLITE_PATH", str(KB_PUBLIC_PATH))
+os.environ.setdefault("KB_PRIVATE_SQLITE_PATH", str(KB_PRIVATE_PATH))
+os.environ.setdefault("EMBED_CACHE_DIR", str(STATE_DIR / "models"))
 
 MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 DEFAULTS = {"model": MODELS[0], "allowed_dirs": [], "profile": "default"}
