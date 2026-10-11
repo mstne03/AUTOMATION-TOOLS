@@ -133,3 +133,16 @@ async def test_chat_requires_api_key_then_streams(client):
     assert r.status_code == 200
     assert len(client.fake.requests[-1]["messages"]) == 5
     await client.put("/settings", headers=AUTH, json={"anthropic_api_key": ""})
+
+
+async def test_cors_solo_origenes_de_tauri(client):
+    pre = {"Origin": "http://tauri.localhost", "Access-Control-Request-Method": "GET",
+           "Access-Control-Request-Headers": "authorization"}
+    r = await client.options("/settings", headers=pre)
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "http://tauri.localhost"
+    r = await client.options("/settings", headers={**pre, "Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+    # Sin token sigue siendo 401 aunque el origen sea el bueno.
+    r = await client.get("/settings", headers={"Origin": "http://tauri.localhost"})
+    assert r.status_code == 401

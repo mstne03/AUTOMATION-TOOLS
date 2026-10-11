@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -28,6 +29,9 @@ from app_backend.approvals import Approvals
 from app_backend.jobs import Jobs
 
 _bearer = HTTPBearer(auto_error=False)
+
+# Origenes del WebView de Tauri 2 (produccion y `tauri dev`). Nada mas.
+CORS_ORIGINS = ["http://tauri.localhost", "https://tauri.localhost", "http://localhost:1420"]
 
 
 def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None = None) -> FastAPI:
@@ -48,6 +52,14 @@ def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None 
         await app.state.jobs.stop()
 
     app = FastAPI(title="app-backend", lifespan=lifespan)
+    # El WebView de Tauri tiene origen propio (tauri.localhost; localhost:1420 en desarrollo),
+    # asi que el navegador exige CORS. Solo esos origenes; el token sigue siendo obligatorio.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:  # noqa: B008
         if creds is None or not secrets.compare_digest(creds.credentials, token):
@@ -253,6 +265,9 @@ def main() -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))  # nunca 0.0.0.0: el sidecar es local
     port = sock.getsockname()[1]
+    # listen() antes de anunciar el puerto: las conexiones que lleguen mientras uvicorn
+    # termina de arrancar (varios segundos de imports) quedan en cola en vez de rechazarse.
+    sock.listen(128)
     print(json.dumps({"port": port, "token": token}), flush=True)
     app = create_app(token)
     uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=[sock])
