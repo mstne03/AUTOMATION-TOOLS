@@ -1,7 +1,9 @@
 """Servidor MCP (stdio) sobre la base de conocimiento.
 
-Conecta con el rol kb_reader, que solo tiene SELECT. El servidor no puede
-escribir en la base de datos ni aunque se lo pidan.
+Con KB_BACKEND=postgres conecta con el rol kb_reader, que solo tiene SELECT.
+Con KB_BACKEND=sqlite abre el snapshot en modo solo lectura (y la KB privada,
+si la hay). En ninguno de los dos casos el servidor puede escribir en la base
+de conocimiento ni aunque se lo pidan.
 """
 
 import pathlib
@@ -10,7 +12,7 @@ import sys
 
 from mcp.server.mcpserver import MCPServer
 
-from kb import db, embeddings, formatting
+from kb import config, db, embeddings, formatting, sqlite_kb
 from kb import search as kb_search
 
 mcp = MCPServer("kb-seo", version="0.1.0")
@@ -154,9 +156,12 @@ def listar_fuentes(plataforma: str | None = None) -> str:
         "ORDER BY published_at DESC NULLS LAST, title"
     )
     try:
-        with db.reader() as conn, conn.cursor() as cur:
-            cur.execute(sql, (plataforma, plataforma))
-            rows = cur.fetchall()
+        if config.KB_BACKEND == "sqlite":
+            rows = _sqlite_por_base(lambda conn: sqlite_kb.listar_fuentes(conn, plataforma))
+        else:
+            with db.reader() as conn, conn.cursor() as cur:
+                cur.execute(sql, (plataforma, plataforma))
+                rows = cur.fetchall()
     except Exception as e:  # noqa: BLE001
         return _error("Error al listar fuentes", e)
 
@@ -194,6 +199,8 @@ def estado_kb() -> str:
     reciente. Util para saber si la base esta desactualizada antes de fiarse de
     ella, o para diagnosticar si esta vacia.
     """
+    if config.KB_BACKEND == "sqlite":
+        return _estado_sqlite()
     try:
         with db.reader() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM documents")
@@ -228,6 +235,56 @@ def estado_kb() -> str:
     else:
         lines.append("")
         lines.append("  La base esta vacia. Anade fuentes a sources.yaml y ejecuta: uv run ingest all")
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------- sqlite
+
+
+def _bases_sqlite() -> list[tuple[str, str]]:
+    """(nombre, ruta) de los ficheros SQLite configurados que existen."""
+    out = []
+    for nombre, ruta in (("publica", config.KB_SQLITE_PATH), ("privada", config.KB_PRIVATE_SQLITE_PATH)):
+        if ruta and pathlib.Path(ruta).exists():
+            out.append((nombre, ruta))
+    return out
+
+
+def _sqlite_por_base(fn) -> list:
+    """Ejecuta `fn(conn)` en cada base SQLite y concatena los resultados."""
+    out: list = []
+    for _, ruta in _bases_sqlite():
+        conn = sqlite_kb.connect(ruta)
+        try:
+            out.extend(fn(conn))
+        finally:
+            conn.close()
+    return out
+
+
+def _estado_sqlite() -> str:
+    bases = _bases_sqlite()
+    if not bases:
+        return (
+            "La base de conocimiento no esta descargada todavia "
+            f"(KB_SQLITE_PATH={config.KB_SQLITE_PATH or 'sin definir'})."
+        )
+    lines = ["Estado de la base de conocimiento kb-seo (snapshot SQLite)"]
+    for nombre, ruta in bases:
+        conn = sqlite_kb.connect(ruta)
+        try:
+            e = sqlite_kb.estado(conn)
+        except Exception as ex:  # noqa: BLE001
+            lines.append(f"  KB {nombre}: " + _error("no se pudo leer", ex))
+            continue
+        finally:
+            conn.close()
+        lines.append(
+            f"  KB {nombre}: {e['documentos']} documentos, {e['chunks']} chunks, "
+            f"ultima ingesta: {e['ultima_ingesta'] or 'nunca'}"
+        )
+        for platform, count, newest in e["por_plataforma"]:
+            lines.append(f"    {platform:<12} {count:>4} docs   mas reciente: {newest or 'sin fecha'}")
     return "\n".join(lines)
 
 

@@ -2,8 +2,9 @@
 
 import math
 from datetime import date
+from pathlib import Path
 
-from kb import db, embeddings
+from kb import config, db, embeddings
 
 CANDIDATES = 20   # top-N de cada rama antes de fusionar
 RRF_K = 60
@@ -113,6 +114,9 @@ def search(
     if qvec is None:
         qvec = embeddings.embed_query(query)
 
+    if config.KB_BACKEND == "sqlite":
+        return _search_sqlite(query, qvec, platform, since, sources, k)
+
     params = {
         "qvec": str(qvec),
         "query": query,
@@ -147,6 +151,33 @@ def search(
     ]
 
 
+def _search_sqlite(query, qvec, platform, since, sources, k) -> list[dict]:
+    """Busca en el snapshot publico y, si esta configurada, en la KB privada.
+
+    Cada bloque lleva `origen` ("publica" | "privada"). Los scores RRF de las dos
+    bases son comparables (misma formula, mismas constantes), asi que se mezclan
+    por score y se recorta a k.
+    """
+    from kb import sqlite_kb
+
+    out: list[dict] = []
+    for origen, path in (("publica", config.KB_SQLITE_PATH), ("privada", config.KB_PRIVATE_SQLITE_PATH)):
+        if not path or not Path(path).exists():
+            continue
+        conn = sqlite_kb.connect(path)
+        try:
+            for r in sqlite_kb.search(conn, query, qvec, platform, since, sources, k):
+                r["origen"] = origen
+                # Los ids de las dos bases chocan: se desplazan para que `agrupar` no mezcle.
+                if origen == "privada":
+                    r["document_id"] = -r["document_id"]
+                out.append(r)
+        finally:
+            conn.close()
+    out.sort(key=lambda r: r["score"], reverse=True)
+    return out[:k]
+
+
 def puntuador(qvec: list[float]):
     """Puntua textos por similitud coseno con la consulta, para el recorte.
 
@@ -169,6 +200,18 @@ def listar_titulos(
     since: str | date | None = None,
 ) -> list[tuple[str, str]]:
     """Titulos y urls disponibles. Para sugerir alternativas cuando `sources` falla."""
+    if config.KB_BACKEND == "sqlite":
+        from kb import sqlite_kb
+
+        out = []
+        for path in (config.KB_SQLITE_PATH, config.KB_PRIVATE_SQLITE_PATH):
+            if path and Path(path).exists():
+                conn = sqlite_kb.connect(path)
+                try:
+                    out.extend(sqlite_kb.listar_titulos(conn, platform, since))
+                finally:
+                    conn.close()
+        return out
     params = {"platform": platform, "since": _as_date(since)}
     with db.reader() as conn, conn.cursor() as cur:
         cur.execute(_SQL_TITULOS, params)
