@@ -24,6 +24,7 @@ from youtube_mcp.utils.quota import QUOTA_COSTS
 
 DESTRUCTIVE = {"youtube_delete_video"}
 WRITE = {
+    "guardar_en_kb_privada",
     "youtube_upload_video",
     "youtube_update_video",
     "youtube_set_thumbnail",

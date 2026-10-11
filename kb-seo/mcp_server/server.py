@@ -238,6 +238,45 @@ def estado_kb() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def guardar_en_kb_privada(
+    titulo: str,
+    texto: str,
+    identificador: str,
+    plataformas: list[str] | None = None,
+    fecha: str | None = None,
+) -> str:
+    """Guarda un texto en la base de conocimiento PRIVADA del usuario para poder buscarlo despues con buscar_kb.
+
+    Sirve para conservar conocimiento propio del canal: un resumen de analiticas
+    ("que funciono en mis ultimos 20 shorts"), una transcripcion ya obtenida, o
+    conclusiones de un analisis. Lo guardado aparece en buscar_kb marcado como
+    "KB privada". Pide confirmacion al usuario antes de guardar.
+
+    Args:
+        titulo: Titulo descriptivo del documento.
+        texto: Contenido completo a guardar (texto plano o markdown).
+        identificador: Clave unica y estable, por ejemplo "analitica:2026-10"
+            o "transcripcion:<video_id>". Repetirla reemplaza el documento.
+        plataformas: Lista entre "youtube", "tiktok", "instagram", "general".
+        fecha: Fecha del contenido, "YYYY-MM-DD". Opcional.
+    """
+    if not config.KB_PRIVATE_SQLITE_PATH:
+        return "La KB privada no esta configurada (KB_PRIVATE_SQLITE_PATH)."
+    try:
+        from ingest.cli import ingest_text
+
+        r = ingest_text(
+            config.KB_PRIVATE_SQLITE_PATH, identificador, titulo, texto,
+            platforms=plataformas, published_at=fecha,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _error("Error al guardar en la KB privada", e)
+    if r["skipped"]:
+        return f"Sin cambios: '{titulo}' ya estaba guardado con ese contenido."
+    return f"Guardado '{titulo}' en la KB privada ({r['chunks']} fragmentos)."
+
+
 # ----------------------------------------------------------------- sqlite
 
 

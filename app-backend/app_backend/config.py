@@ -45,10 +45,10 @@ SETTINGS_PATH = STATE_DIR / "settings.json"
 KB_DIR = STATE_DIR / "kb"
 KB_PUBLIC_PATH = KB_DIR / "kb-public.sqlite"
 KB_PRIVATE_PATH = KB_DIR / "kb-private.sqlite"
-KB_UPDATE_URL = (os.environ.get("KB_UPDATE_URL") or "https://kb.example.invalid/kb/").rstrip("/") + "/"
+KB_UPDATE_URL = (os.environ.get("KB_UPDATE_URL") or "https://kb.mstne.dev/kb/").rstrip("/") + "/"
 # Clave publica minisign del VPS. Se genera alli y la privada nunca sale de alli.
-# Reemplazar al generar la clave real (paso 5 de la Fase 2).
-KB_MINISIGN_PUBKEY = os.environ.get("KB_MINISIGN_PUBKEY") or "RWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+# Generada el 2026-10-11 en el VPS con `kb-sign keygen` (~marc/kb-seo/keys/kb.pub).
+KB_MINISIGN_PUBKEY = os.environ.get("KB_MINISIGN_PUBKEY") or "RWQuXbso1VRON6x1Ol6g6zSn7XH35VZZaRZh7yCYtsfhLwH5O8+IdTxe"
 
 os.environ.setdefault("KB_BACKEND", "sqlite")
 os.environ.setdefault("KB_SQLITE_PATH", str(KB_PUBLIC_PATH))

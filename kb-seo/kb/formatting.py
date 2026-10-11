@@ -263,7 +263,8 @@ def formatear(
     for i, g in enumerate(grupos, 1):
         fecha = g["published_at"] or "sin fecha"
         url = g.get("url_original") or g["url"]
-        lines.append(f"[{i}] {g['title'] or 'Sin titulo'} | {fecha} | {url}")
+        origen = " | KB privada" if g.get("origen") == "privada" else ""
+        lines.append(f"[{i}] {g['title'] or 'Sin titulo'} | {fecha} | {url}{origen}")
         lines.append(recortar(g["content"], max_chars, puntuar))
         lines.append("")
 

@@ -1,0 +1,11 @@
+# ~/.config/systemd/user/kb-seo-refresh.timer
+[Unit]
+Description=kb-seo: refresco diario del snapshot
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

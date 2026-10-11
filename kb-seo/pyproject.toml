@@ -15,16 +15,19 @@ dependencies = [
     "python-dotenv>=1.0",
     "fastembed>=0.7",
     "sqlite-vec>=0.1.6",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+browser = ["playwright>=1.47"]
 
 [project.scripts]
 ingest = "ingest.cli:main"
 kb-migrate = "kb.db:migrate_main"
 kb-mcp = "mcp_server.server:main"
 kb-export = "kb.export:main"
+kb-sign = "kb.sign:main"
 
 [build-system]
 requires = ["hatchling"]

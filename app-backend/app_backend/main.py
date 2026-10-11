@@ -199,6 +199,95 @@ def create_app(
         except KBUpdateError as e:
             raise HTTPException(status_code=409, detail=str(e))
 
+    # ------------------------------------------------------------ kb privada
+
+    class FuentePrivadaIn(BaseModel):
+        url: str = Field(min_length=1)
+        type: str | None = None          # web | youtube | pdf | browser (se adivina)
+        title: str | None = None
+        platforms: list[str] | None = None
+        published_at: str | None = None
+        author: str | None = None
+
+    class NotaPrivadaIn(BaseModel):
+        identificador: str = Field(min_length=1)
+        titulo: str = Field(min_length=1)
+        texto: str = Field(min_length=1)
+        platforms: list[str] | None = None
+        published_at: str | None = None
+
+    class UrlIn(BaseModel):
+        url: str = Field(min_length=1)
+
+    def _privada():
+        from kb import sqlite_kb
+
+        return sqlite_kb, config.KB_PRIVATE_PATH
+
+    @app.get("/kb/privada/fuentes", dependencies=protegido)
+    async def kb_privada_fuentes():
+        sqlite_kb, path = _privada()
+        if not path.exists():
+            return []
+
+        def listar():
+            conn = sqlite_kb.connect(path)
+            try:
+                return [
+                    {"title": t, "url": u, "published_at": p, "platforms": pl}
+                    for t, u, p, pl in sqlite_kb.listar_fuentes(conn)
+                ]
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(listar)
+
+    @app.post("/kb/privada/fuentes", dependencies=protegido, status_code=201)
+    async def kb_privada_add(body: FuentePrivadaIn):
+        from ingest.cli import ExtractionError, ingest_one
+
+        # Solo URLs: los ficheros locales entran por las tools con carpetas permitidas.
+        if not body.url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Solo se admiten URLs http(s).")
+        source = {k: v for k, v in body.model_dump().items() if v is not None}
+        try:
+            r = await asyncio.to_thread(ingest_one, source, config.KB_PRIVATE_PATH)
+        except ExtractionError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"url": body.url, **r}
+
+    @app.post("/kb/privada/notas", dependencies=protegido, status_code=201)
+    async def kb_privada_nota(body: NotaPrivadaIn):
+        from ingest.cli import ExtractionError, ingest_text
+
+        try:
+            r = await asyncio.to_thread(
+                ingest_text, config.KB_PRIVATE_PATH, body.identificador, body.titulo,
+                body.texto, body.platforms, body.published_at,
+            )
+        except ExtractionError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"url": body.identificador, **r}
+
+    @app.delete("/kb/privada/fuentes", dependencies=protegido)
+    async def kb_privada_delete(body: UrlIn):
+        sqlite_kb, path = _privada()
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="La KB privada esta vacia.")
+
+        def borrar() -> bool:
+            conn = sqlite_kb.connect(path, readonly=False)
+            try:
+                ok = sqlite_kb.delete_document(conn, body.url)
+                conn.commit()
+                return ok
+            finally:
+                conn.close()
+
+        if not await asyncio.to_thread(borrar):
+            raise HTTPException(status_code=404, detail="No hay ningun documento con esa url.")
+        return {"borrada": body.url}
+
     @app.get("/kb/fuentes", dependencies=protegido)
     async def kb_fuentes(plataforma: str | None = None):
         return {"texto": await asyncio.to_thread(tools["listar_fuentes"].fn, plataforma)}

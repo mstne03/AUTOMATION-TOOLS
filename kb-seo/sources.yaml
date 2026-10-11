@@ -129,37 +129,41 @@
   author: Sprout Social
   topics: [algoritmo, reels, ranking]
 
-# ---------------------------------------------------------------- Capturadas con navegador
+# ---------------------------------------------------------------- Renderizadas con navegador
 #
-# Estas cuatro paginas se renderizan por JavaScript y trafilatura solo ve el
-# esqueleto. Se abrieron con el navegador integrado, se guardo el texto en
-# fuentes/*.md y se ingieren como `local` con ruta RELATIVA a la raiz del repo.
-# Si la plataforma actualiza la pagina
-# hay que volver a capturarla a mano: la ingesta no la revisita sola.
+# Estas cuatro paginas pintan el contenido con JavaScript y trafilatura solo ve el
+# esqueleto. `type: browser` las abre con Chromium headless (playwright) y extrae
+# el texto renderizado. Requiere `uv sync --extra browser` y
+# `uv run playwright install chromium`. El `title` va fijado porque el que
+# publican es generico ("TikTok Support").
 
-- url: fuentes/tiktok-sistema-recomendacion.md
-  type: local
+- url: https://www.tiktok.com/safety/en/policies-and-engagement/recommendation-system
+  type: browser
+  title: Introduccion al sistema de recomendacion de TikTok
   platforms: [tiktok]
   published_at: 2026-09-27
   author: TikTok
   topics: [algoritmo, fyp, senales, prediccion, oficial, doc-oficial-viva]
 
-- url: fuentes/tiktok-como-recomienda-contenido.md
-  type: local
+- url: https://support.tiktok.com/es/using-tiktok/exploring-videos/how-tiktok-recommends-content
+  type: browser
+  title: Como recomienda contenido TikTok (centro de ayuda)
   platforms: [tiktok]
   published_at: 2026-09-27
   author: TikTok
   topics: [algoritmo, fyp, senales, busqueda, oficial, doc-oficial-viva]
 
-- url: fuentes/meta-instagram-reels-en-cadena.md
-  type: local
+- url: https://transparency.meta.com/features/explaining-ranking/ig-reels-chaining/
+  type: browser
+  title: Sistema de IA de los reels en cadena de Instagram (Centro de Transparencia)
   platforms: [instagram]
   published_at: 2025-11-11
   author: Meta (Centro de Transparencia)
   topics: [algoritmo, reels, retencion, senales, prediccion, oficial]
 
-- url: fuentes/meta-instagram-recomendaciones-feed.md
-  type: local
+- url: https://transparency.meta.com/features/explaining-ranking/ig-feed-recommendations/
+  type: browser
+  title: Sistema de IA de recomendaciones en el feed de Instagram (Centro de Transparencia)
   platforms: [instagram]
   published_at: 2026-06-29
   author: Meta (Centro de Transparencia)

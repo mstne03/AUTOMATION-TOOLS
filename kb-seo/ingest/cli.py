@@ -1,4 +1,9 @@
-"""CLI de ingesta: `uv run ingest all | url <url> | stats`."""
+"""CLI de ingesta: `uv run ingest all | url <url> | prune | stats`.
+
+Escribe en Postgres (KB_BACKEND=postgres) o en el fichero SQLite de KB_SQLITE_PATH
+(KB_BACKEND=sqlite, el modo del VPS). `ingest_one(source, target=...)` admite ademas
+una ruta SQLite explicita: es lo que usa la KB privada del cliente.
+"""
 
 import argparse
 import hashlib
@@ -9,11 +14,11 @@ from pathlib import Path
 import yaml
 
 from ingest.extractors import ExtractionError, extract
-from kb import chunking, db, embeddings
+from kb import chunking, config, db, embeddings, sqlite_kb
 from kb.config import PROJECT_ROOT
 
 SOURCES_PATH = PROJECT_ROOT / "sources.yaml"
-VALID_TYPES = {"web", "youtube", "pdf", "local"}
+VALID_TYPES = {"web", "youtube", "pdf", "local", "browser"}
 
 _HEADER = (
     "# Fuentes de la base de conocimiento. Este archivo es la fuente de verdad.\n"
@@ -31,13 +36,14 @@ def main() -> int:
     p_url = sub.add_parser("url", help="Anade una fuente a sources.yaml y la ingiere")
     p_url.add_argument("url")
     p_url.add_argument("--type", dest="source_type", default=None,
-                       help="web | youtube | pdf | local (se adivina si se omite)")
+                       help="web | youtube | pdf | local | browser (se adivina si se omite)")
     p_url.add_argument("--platform", action="append", default=[],
                        help="Repetible: --platform youtube --platform tiktok")
     p_url.add_argument("--date", dest="published_at", default=None, help="YYYY-MM-DD")
     p_url.add_argument("--author", default=None)
     p_url.add_argument("--topic", action="append", default=[], dest="topics")
 
+    sub.add_parser("prune", help="Borra de la KB los documentos que ya no estan en sources.yaml")
     sub.add_parser("stats", help="Documentos, chunks y desglose por plataforma")
 
     args = parser.parse_args()
@@ -46,6 +52,8 @@ def main() -> int:
         return cmd_all()
     if args.command == "url":
         return cmd_url(args)
+    if args.command == "prune":
+        return cmd_prune()
     if args.command == "stats":
         return cmd_stats()
     return 1
@@ -124,7 +132,48 @@ def cmd_url(args) -> int:
     return 0
 
 
+def cmd_prune() -> int:
+    """sources.yaml es la fuente de verdad: lo que no esta ahi sale de la KB."""
+    vivas = {s.get("url") for s in load_sources()}
+    if not vivas:
+        print("sources.yaml esta vacio: no se borra nada por seguridad.")
+        return 1
+    borradas = []
+    if _sqlite_target(None):
+        conn = sqlite_kb.connect(_sqlite_target(None), readonly=False)
+        try:
+            sqlite_kb.init_schema(conn)
+            urls = [r[0] for r in conn.execute("SELECT url FROM documents").fetchall()]
+            for url in urls:
+                if url not in vivas and sqlite_kb.delete_document(conn, url):
+                    borradas.append(url)
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        with db.writer() as conn, conn.cursor() as cur:
+            cur.execute("SELECT url FROM documents")
+            for (url,) in cur.fetchall():
+                if url not in vivas:
+                    cur.execute("DELETE FROM documents WHERE url = %s", (url,))
+                    borradas.append(url)
+            conn.commit()
+    for url in borradas:
+        print(f"  BORRADA {url}")
+    print(f"{len(borradas)} documentos borrados.")
+    return 0
+
+
 def cmd_stats() -> int:
+    if _sqlite_target(None):
+        conn = sqlite_kb.connect(_sqlite_target(None))
+        try:
+            e = sqlite_kb.estado(conn)
+        finally:
+            conn.close()
+        n_docs, n_chunks, rows = e["documentos"], e["chunks"], e["por_plataforma"]
+        _print_stats(n_docs, n_chunks, rows)
+        return 0
     with db.reader() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM documents")
         n_docs = cur.fetchone()[0]
@@ -136,7 +185,11 @@ def cmd_stats() -> int:
             "GROUP BY p ORDER BY docs DESC"
         )
         rows = cur.fetchall()
+    _print_stats(n_docs, n_chunks, rows)
+    return 0
 
+
+def _print_stats(n_docs, n_chunks, rows) -> None:
     print(f"Documentos: {n_docs}")
     print(f"Chunks:     {n_chunks}")
     if rows:
@@ -145,13 +198,68 @@ def cmd_stats() -> int:
             print(f"  {platform:<12} {docs:>4} docs   mas reciente: {newest or 'sin fecha'}")
     else:
         print("\nSin documentos todavia.")
-    return 0
 
 
 # ---------------------------------------------------------------- ingesta
 
 
-def ingest_one(source: dict) -> dict:
+def _sqlite_target(target: str | Path | None) -> Path | None:
+    """Ruta SQLite de destino, o None si toca Postgres."""
+    if target:
+        return Path(target)
+    if config.KB_BACKEND == "sqlite":
+        if not config.KB_SQLITE_PATH:
+            raise ExtractionError("KB_BACKEND=sqlite pero falta KB_SQLITE_PATH")
+        return Path(config.KB_SQLITE_PATH)
+    return None
+
+
+def ingest_text(
+    target: str | Path,
+    url: str,
+    title: str,
+    text: str,
+    platforms: list[str] | None = None,
+    published_at=None,
+    author: str | None = None,
+    source_type: str = "nota",
+) -> dict:
+    """Guarda un texto ya en mano (transcripcion, resumen de analiticas) en un SQLite.
+
+    `url` es el identificador del documento: repetirlo reemplaza el contenido. Es la
+    entrada de la KB privada que no pasa por los extractores.
+    """
+    if not text or not text.strip():
+        raise ExtractionError("Texto vacio")
+    platforms = platforms or ["general"]
+    published = _as_date(published_at)
+    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    conn = sqlite_kb.connect(Path(target), readonly=False)
+    try:
+        sqlite_kb.init_schema(conn)
+        row = conn.execute("SELECT content_hash FROM documents WHERE url = ?", (url,)).fetchone()
+        if row and row[0] == content_hash:
+            return {"skipped": True, "chunks": 0}
+        chunks = chunking.chunk_text(text, chunking.context_header(title, platforms, published))
+        if not chunks:
+            raise ExtractionError("No salio ningun chunk del texto")
+        doc = {
+            "url": url, "title": title, "source_type": source_type, "platforms": platforms,
+            "author": author, "published_at": published, "lang": None, "topics": [],
+            "content_hash": content_hash,
+        }
+        sqlite_kb.upsert_document(conn, doc, chunks, embeddings.embed(chunks))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"skipped": False, "chunks": len(chunks)}
+
+
+def ingest_one(source: dict, target: str | Path | None = None) -> dict:
+    """Extrae, trocea, vectoriza y guarda una fuente. Idempotente por content_hash.
+
+    `target`: fichero SQLite de destino. Sin el, manda KB_BACKEND.
+    """
     location = source.get("url")
     if not location:
         raise ExtractionError("Fuente sin campo 'url'")
@@ -171,6 +279,38 @@ def ingest_one(source: dict) -> dict:
     published_at = _as_date(source.get("published_at") or extracted.published_at)
     lang = source.get("lang") or extracted.lang
 
+    def trocear() -> list[str]:
+        header = chunking.context_header(title, platforms, published_at)
+        if source_type == "youtube" and extracted.segments:
+            chunks = chunking.chunk_transcript(extracted.segments, header)
+        else:
+            chunks = chunking.chunk_text(extracted.text, header)
+        if not chunks:
+            raise ExtractionError(f"{location}: no salio ningun chunk del texto extraido")
+        return chunks
+
+    sqlite_path = _sqlite_target(target)
+    if sqlite_path:
+        conn = sqlite_kb.connect(sqlite_path, readonly=False)
+        try:
+            sqlite_kb.init_schema(conn)
+            row = conn.execute(
+                "SELECT content_hash FROM documents WHERE url = ?", (location,)
+            ).fetchone()
+            if row and row[0] == content_hash:
+                return {"skipped": True, "chunks": 0}
+            chunks = trocear()
+            doc = {
+                "url": location, "title": title, "source_type": source_type,
+                "platforms": platforms, "author": author, "published_at": published_at,
+                "lang": lang, "topics": topics, "content_hash": content_hash,
+            }
+            sqlite_kb.upsert_document(conn, doc, chunks, embeddings.embed(chunks))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"skipped": False, "chunks": len(chunks)}
+
     with db.writer() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, content_hash FROM documents WHERE url = %s", (location,))
@@ -179,15 +319,7 @@ def ingest_one(source: dict) -> dict:
             if row and row[1] == content_hash:
                 return {"skipped": True, "chunks": 0}
 
-            header = chunking.context_header(title, platforms, published_at)
-            if source_type == "youtube" and extracted.segments:
-                chunks = chunking.chunk_transcript(extracted.segments, header)
-            else:
-                chunks = chunking.chunk_text(extracted.text, header)
-
-            if not chunks:
-                raise ExtractionError(f"{location}: no salio ningun chunk del texto extraido")
-
+            chunks = trocear()
             vectors = embeddings.embed(chunks)
 
             if row:

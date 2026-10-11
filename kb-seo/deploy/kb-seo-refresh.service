@@ -1,0 +1,12 @@
+# Unidad de USUARIO (marc): ~/.config/systemd/user/kb-seo-refresh.service
+# Necesita `loginctl enable-linger marc` (lo hace install.sh) para correr sin sesion abierta.
+[Unit]
+Description=kb-seo: reingesta, exporta, firma y publica el snapshot de la KB
+
+[Service]
+Type=oneshot
+ExecStart=%h/kb-seo/app/deploy/refresh.sh
+# Chromium headless + modelo ONNX: acotar para no comerse la RAM del VPS (4 GB).
+MemoryMax=2G
+TimeoutStartSec=45min
+Nice=10

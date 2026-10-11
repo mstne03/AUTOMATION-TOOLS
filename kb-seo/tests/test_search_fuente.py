@@ -93,13 +93,12 @@ def test_devuelve_document_id_y_chunk_index():
 
 @requires_reader
 @requires_embeddings
-def test_archivo_local_trae_url_original_y_se_filtra_por_ella():
+def test_fuente_renderizada_con_navegador_se_filtra_por_su_url():
     url = "transparency.meta.com/features/explaining-ranking/ig-reels-chaining"
     r = search.search("reels", sources=url, k=3)
-    assert r, "fuente con la url original deberia casar con el archivo local"
+    assert r, "la pagina renderizada con playwright deberia estar ingerida"
     for x in r:
-        assert x["url"].endswith("meta-instagram-reels-en-cadena.md")
-        assert url in x["url_original"]
+        assert url in x["url"]
 
 
 @requires_reader

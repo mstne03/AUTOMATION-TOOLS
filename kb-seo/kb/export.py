@@ -20,11 +20,37 @@ DB_NAME = "kb-public.sqlite"
 MANIFEST_NAME = "manifest.json"
 
 
-def export(out_dir: Path) -> dict:
+def export(out_dir: Path, source: Path | None = None) -> dict:
+    """Exporta a `out_dir`. `source`: fichero SQLite de trabajo (modo VPS); sin el, Postgres."""
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_db = out_dir / (DB_NAME + ".tmp")
     tmp_db.unlink(missing_ok=True)
 
+    if source is None and config.KB_BACKEND == "sqlite" and config.KB_SQLITE_PATH:
+        source = Path(config.KB_SQLITE_PATH)
+    if source is not None:
+        n_docs, n_chunks = _export_from_sqlite(Path(source), tmp_db)
+    else:
+        n_docs, n_chunks = _export_from_postgres(tmp_db)
+    return _publish(out_dir, tmp_db, n_docs, n_chunks)
+
+
+def _export_from_sqlite(source: Path, tmp_db: Path) -> tuple[int, int]:
+    """VACUUM INTO: copia compacta y consistente del fichero de trabajo de la ingesta."""
+    if source.resolve() == tmp_db.resolve():
+        raise ValueError("El fichero de trabajo no puede ser el de salida.")
+    conn = sqlite_kb.connect(source)
+    try:
+        sqlite_kb.check_compatible(conn)
+        n_docs = conn.execute("SELECT count(*) FROM documents").fetchone()[0]
+        n_chunks = conn.execute("SELECT count(*) FROM chunks").fetchone()[0]
+        conn.execute("VACUUM INTO ?", (str(tmp_db),))
+    finally:
+        conn.close()
+    return n_docs, n_chunks
+
+
+def _export_from_postgres(tmp_db: Path) -> tuple[int, int]:
     with db.reader() as pg, pg.cursor() as cur:
         cur.execute(
             "SELECT id, url, title, source_type, platforms, author, published_at, lang, "
@@ -61,7 +87,10 @@ def export(out_dir: Path) -> dict:
             conn.execute("VACUUM")
         finally:
             conn.close()
+    return len(docs), n_chunks
 
+
+def _publish(out_dir: Path, tmp_db: Path, n_docs: int, n_chunks: int) -> dict:
     sha = _sha256(tmp_db)
     manifest = {
         "file": DB_NAME,
@@ -71,7 +100,7 @@ def export(out_dir: Path) -> dict:
         "sha256": sha,
         "embed_model": config.EMBED_MODEL,
         "embed_dim": config.EMBED_DIM,
-        "documents": len(docs),
+        "documents": n_docs,
         "chunks": n_chunks,
     }
     tmp_manifest = out_dir / (MANIFEST_NAME + ".tmp")
@@ -96,9 +125,13 @@ def _now() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="kb-export", description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="dist", help="Directorio de salida (por defecto ./dist)")
+    parser.add_argument(
+        "--from-sqlite", dest="source", default=None,
+        help="Fichero SQLite de trabajo del que exportar (por defecto KB_SQLITE_PATH si KB_BACKEND=sqlite)",
+    )
     args = parser.parse_args()
     try:
-        manifest = export(Path(args.out))
+        manifest = export(Path(args.out), Path(args.source) if args.source else None)
     except Exception as e:  # noqa: BLE001 - CLI: mensaje y codigo de salida
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
