@@ -25,8 +25,15 @@ La primera linea de stdout es `{"port": N, "token": "..."}`. Todas las rutas exi
 Para desarrollo, copia `.env.example` a `.env` junto a `pyproject.toml`: se carga al arrancar
 y esta en `.gitignore`.
 
-La KB sigue siendo el Postgres local de `kb-seo` (Fase 2 la sustituye por el snapshot):
-necesita `kb-seo/.env`, `docker compose up -d` y `ollama pull bge-m3`.
+**Base de conocimiento.** Por defecto el sidecar usa el **snapshot SQLite firmado**
+(`KB_BACKEND=sqlite`, fijado antes de importar `kb.config`): al arrancar, si han pasado mas
+de 24 h desde la ultima comprobacion, descarga `manifest.json` + `.minisig` de
+`KB_UPDATE_URL` (`https://kb.mstne.dev/kb/`), verifica la firma con la clave publica
+embebida (`KB_MINISIGN_PUBKEY`), y si el SHA-256 cambio descarga el `.sqlite`, lo valida y
+lo activa de forma atomica en `APP_BACKEND_DIR/kb/`, conservando el anterior para rollback.
+Despues precarga el modelo de embeddings ONNX (`EMBED_CACHE_DIR`, ~120 MB la primera vez).
+La KB privada (`APP_BACKEND_DIR/kb/kb-private.sqlite`) se crea al guardar algo. Para
+desarrollar contra el Postgres de `kb-seo`: `KB_BACKEND=postgres` en `.env.local`.
 
 ## Rutas
 
@@ -35,7 +42,9 @@ necesita `kb-seo/.env`, `docker compose up -d` y `ollama pull bge-m3`.
 | `POST /chat` | `{message, conversation_id?}` -> SSE con eventos `text`, `tool_use`, `tool_result`, `approval_required`, `approval_resolved`, `job_started`, `job_finished`, `done`, `error`. |
 | `GET /approvals`, `POST /approvals/{id}` | `{decision: approve\|reject, confirm_id?}`. Las destructivas exigen `confirm_id` = ID del video. |
 | `GET/POST /jobs`, `GET /jobs/{id}` | `{kind: upload\|transcribe, args}`; progreso en `[0, 1]`. |
-| `GET /kb/estado`, `/kb/fuentes`, `/kb/buscar?q=` | Fachada sobre las tools de `kb-seo`. |
+| `GET /kb/estado`, `/kb/fuentes`, `/kb/buscar?q=` | Fachada sobre las tools de `kb-seo`. `estado` incluye `snapshot` (version, fecha, ultimo error). |
+| `POST /kb/update`, `POST /kb/rollback` | Fuerza la comprobacion del snapshot (502 si la firma o el hash fallan; el instalado no se toca) y vuelve a la version anterior (409 si no hay). |
+| `GET/POST/DELETE /kb/privada/fuentes`, `POST /kb/privada/notas` | KB privada: URLs http(s) por `ingest/extractors.py`, notas de texto (`{identificador, titulo, texto}`), listado y borrado (`{url}` en el cuerpo). |
 | `GET /youtube/status`, `POST /youtube/auth`, `GET /youtube/tools` | Estado, flujo OAuth (unica ruta que abre el navegador) y tabla de riesgos. |
 | `GET/PUT /settings`, `POST /settings/client-secret` | Modelo, carpetas permitidas, perfil, clave de Anthropic (solo escritura), `client_secret.json`. |
 

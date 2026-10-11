@@ -11,27 +11,40 @@ fuentes que tu le indiques.
 ## Como funciona
 
 ```
-sources.yaml  ->  ingesta  ->  Postgres + pgvector  ->  servidor MCP  ->  Claude Desktop
+                                 KB_BACKEND=postgres (desarrollo)
+sources.yaml  ->  ingesta  ->  Postgres + pgvector  ->  servidor MCP  ->  Claude Desktop / app-backend
                      |                                        |
-                 Ollama (bge-m3, 1024 dim)              rol kb_reader
-                                                        (solo SELECT)
+                     |         KB_BACKEND=sqlite (VPS y producto)
+                     +------>  kb-work.sqlite  -> kb-export -> kb-public.sqlite + manifest.json
+                     |                                            + manifest.json.minisig (kb-sign)
+             fastembed (ONNX, multilingual-e5-small, 384 dim)        |
+                                                        cliente: descarga, verifica firma y busca
 ```
 
 - **`documents`**: una fila por fuente, con fecha de publicacion, plataformas y
   un hash del contenido para no reingerir lo que no ha cambiado.
-- **`chunks`**: trozos de ~600 tokens con su embedding y su `tsvector`.
+- **`chunks`**: trozos de ~600 tokens con su embedding y su indice de texto
+  (`tsvector` en Postgres; `vec0` de sqlite-vec + FTS5 `unicode61` en SQLite).
 - **Busqueda hibrida**: top 20 por similitud coseno + top 20 por full-text,
-  fusionados con Reciprocal Rank Fusion (k=60).
-- **`fuentes/`**: texto de paginas que solo se pueden leer con un navegador,
-  guardado a mano e ingerido como `local`.
+  fusionados con Reciprocal Rank Fusion (k=60). La misma consulta devuelve los
+  mismos documentos en el mismo orden en los dos backends (`tests/test_sqlite_kb.py`).
+- **Embeddings**: `multilingual-e5-small` via `fastembed` (ONNX en proceso, sin
+  servicios externos; ~120 MB que se descargan la primera vez a `EMBED_CACHE_DIR`).
+  Las preguntas llevan el prefijo `query: ` y los pasajes `passage: `, como pide
+  el modelo. `EMBED_BACKEND=ollama` sigue disponible como alternativa.
+- **Dos ficheros SQLite con el mismo esquema**: el snapshot publico (solo lectura,
+  firmado, lo distribuye el VPS) y la KB privada del usuario (escritura local:
+  URLs propias, notas, transcripciones). `buscar_kb` consulta los dos y marca los
+  bloques privados con `KB privada`.
 
 ## Requisitos
 
 | Que | Version | Para que |
 |---|---|---|
-| Docker Desktop | con backend WSL2 | Postgres 17 + pgvector |
-| Ollama | corriendo en `:11434` | embeddings |
 | uv | cualquiera reciente | entorno Python 3.12 |
+| Docker Desktop | con backend WSL2 | Postgres 17 + pgvector (solo desarrollo, `KB_BACKEND=postgres`) |
+| Chromium de Playwright | `uv run playwright install chromium` | fuentes `type: browser` |
+| Ollama | opcional | solo si `EMBED_BACKEND=ollama` |
 | Node.js | opcional | solo para MCP Inspector |
 
 ## Puesta en marcha
@@ -43,19 +56,49 @@ cd ~/kb-seo
 #    Si lo pierdes: copia .env.example y rellenalo.
 cat .env
 
-# 2. Levanta Postgres.
+# 2. Levanta Postgres (desarrollo; el VPS y el producto usan SQLite).
 docker compose up -d
 docker compose ps          # debe decir "healthy"
 
-# 3. Modelo de embeddings (1,2 GB, solo la primera vez).
-ollama pull bge-m3
+# 3. Entorno Python (+ Chromium para las paginas renderizadas por JS).
+uv sync --extra dev --extra browser
+uv run playwright install chromium
 
-# 4. Entorno Python.
-uv sync --extra dev
+# 4. Si cambias de modelo de embeddings: migra el esquema (borra los chunks).
+uv run kb-migrate
 
-# 5. Comprueba que todo habla entre si.
+# 5. Comprueba que todo habla entre si. El modelo ONNX se descarga la primera vez.
 uv run pytest -q
 ```
+
+## Snapshot SQLite: exportar, firmar y servir
+
+```bash
+# Postgres -> dist/kb-public.sqlite + dist/manifest.json (atomico, hash determinista)
+uv run kb-export --out dist
+# o desde el fichero de trabajo de una ingesta con KB_BACKEND=sqlite:
+uv run kb-export --out dist --from-sqlite kb-work.sqlite
+
+# Firma ed25519 en formato minisign (la clave secreta NUNCA sale de la maquina que firma)
+uv run kb-sign keygen --out keys          # una vez; kb.pub va embebido en app-backend
+uv run kb-sign sign --key keys/kb.key dist/manifest.json
+
+# Consultar un snapshot en vez de Postgres
+KB_BACKEND=sqlite KB_SQLITE_PATH=dist/kb-public.sqlite uv run kb-mcp
+```
+
+El manifest firmado lleva el SHA-256 del `.sqlite`, asi que la firma cubre tambien
+los datos. El cliente (`app-backend`) descarga `manifest.json` + `.minisig`, verifica,
+compara el hash con el instalado, descarga el `.sqlite` a un temporal, comprueba
+tamano, hash, modelo de embeddings e integridad, y lo activa de forma atomica
+conservando la version anterior para `rollback`.
+
+**VPS** (`deploy/`): `install.sh` (una vez, con `sudo`: libs de Chromium, `/var/www/kb`,
+Nginx `kb.mstne.dev` + certbot, linger) y `setup-user.sh` (como `marc`: venv, Chromium,
+`.env` con `KB_BACKEND=sqlite`, clave de firma, timer de usuario diario a las 04:30 que
+ejecuta `refresh.sh`: `ingest all` → `ingest prune` → `kb-export` → `kb-sign` → copia
+atomica a `/var/www/kb`). Sin Postgres ni Docker en el VPS: la ingesta escribe directamente
+en SQLite.
 
 Si `uv sync` se queja de `Missing expected target directory for Python minor
 version link`, es un bug conocido de uv en Windows. Apunta al interprete a
@@ -115,12 +158,16 @@ trafilatura descarga HTML, no ejecuta JavaScript. Algunas paginas oficiales
 devuelven el esqueleto y la ingesta las rechaza con "trafilatura no extrajo
 texto".
 
-La via para esas: abrirlas en un navegador, guardar el texto como `.md` en
-`fuentes/` e ingerirlo como `type: local` con ruta **relativa a la raiz del
-repo** (`url: fuentes/pagina.md`), para que `sources.yaml` sirva en cualquier
-maquina. Hay cuatro asi en `sources.yaml`.
-Ojo: **no se revisitan solas**. Si la plataforma actualiza la pagina, hay que
-volver a capturarla a mano.
+La via para esas: `type: browser`. Chromium headless (playwright) renderiza la
+pagina y trafilatura extrae el texto del HTML resultante. Hay cuatro asi en
+`sources.yaml`, con `title` fijado porque el que publican es generico. Se
+revisitan en cada `ingest all` como cualquier otra. Requiere
+`uv sync --extra browser` y `uv run playwright install chromium` (en Linux,
+ademas, `playwright install-deps chromium` para las librerias de sistema).
+
+Sigue existiendo `type: local` (`.md`/`.txt`) para capturas a mano; si el archivo
+lleva una linea `> Original: https://...`, esa url sale en los resultados y vale
+como `fuente`.
 
 ### Que hace con cada tipo
 
@@ -243,7 +290,17 @@ npx @modelcontextprotocol/inspector --cli .venv/Scripts/kb-mcp.exe --method tool
   (**solo SELECT**, lo usa el servidor MCP). El MCP no puede escribir en la base
   ni aunque se lo pidan.
 - Las contrasenas viven en `.env`, que esta en `.gitignore`. Nunca en el codigo.
-- El repositorio es local, sin remoto.
+- El snapshot publico se sirve sin autenticacion (no hay datos de usuario): la
+  **firma ed25519** es la garantia. Un hosting comprometido no puede inyectar
+  contenido en los clientes sin la clave secreta, que solo existe en el VPS
+  (`~marc/kb-seo/keys/kb.key`, 0600). Si se filtrase: regenerar con `kb-sign keygen`,
+  cambiar `KB_MINISIGN_PUBKEY` en `app-backend` y publicar una version nueva.
+- Con `KB_BACKEND=sqlite` el servidor MCP abre el snapshot en modo `?mode=ro`.
+  La KB privada es el unico fichero con escritura, y solo a traves de
+  `guardar_en_kb_privada` (tool `write`, con gate de aprobacion en app-backend)
+  o de los endpoints `/kb/privada/*` del sidecar.
+- El contenido de las paginas (tambien las renderizadas con Chromium) es un dato:
+  se extrae texto, nunca se ejecuta nada de lo que diga.
 
 ## Troubleshooting
 

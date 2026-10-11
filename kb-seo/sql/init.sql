@@ -28,7 +28,7 @@ CREATE TABLE chunks (
   document_id  BIGINT REFERENCES documents(id) ON DELETE CASCADE,
   chunk_index  INT NOT NULL,
   content      TEXT NOT NULL,
-  embedding    VECTOR(1024) NOT NULL,
+  embedding    VECTOR(384) NOT NULL,     -- multilingual-e5-small
   tsv          TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
   UNIQUE (document_id, chunk_index)
 );

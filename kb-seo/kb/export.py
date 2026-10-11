@@ -1,0 +1,143 @@
+"""`kb-export`: vuelca la KB de Postgres a un snapshot SQLite firmable.
+
+Escribe `<out>/kb-public.sqlite` y `<out>/manifest.json`. Los dos se escriben en
+un temporal del mismo directorio y se renombran al final, para que nadie pueda
+leer un fichero a medias. El manifest lleva version, fecha, tamano, SHA-256 y el
+modelo/dimension de los embeddings; la firma minisign se hace fuera, en el VPS.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+from kb import config, db, sqlite_kb
+
+DB_NAME = "kb-public.sqlite"
+MANIFEST_NAME = "manifest.json"
+
+
+def export(out_dir: Path, source: Path | None = None) -> dict:
+    """Exporta a `out_dir`. `source`: fichero SQLite de trabajo (modo VPS); sin el, Postgres."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp_db = out_dir / (DB_NAME + ".tmp")
+    tmp_db.unlink(missing_ok=True)
+
+    if source is None and config.KB_BACKEND == "sqlite" and config.KB_SQLITE_PATH:
+        source = Path(config.KB_SQLITE_PATH)
+    if source is not None:
+        n_docs, n_chunks = _export_from_sqlite(Path(source), tmp_db)
+    else:
+        n_docs, n_chunks = _export_from_postgres(tmp_db)
+    return _publish(out_dir, tmp_db, n_docs, n_chunks)
+
+
+def _export_from_sqlite(source: Path, tmp_db: Path) -> tuple[int, int]:
+    """VACUUM INTO: copia compacta y consistente del fichero de trabajo de la ingesta."""
+    if source.resolve() == tmp_db.resolve():
+        raise ValueError("El fichero de trabajo no puede ser el de salida.")
+    conn = sqlite_kb.connect(source)
+    try:
+        sqlite_kb.check_compatible(conn)
+        n_docs = conn.execute("SELECT count(*) FROM documents").fetchone()[0]
+        n_chunks = conn.execute("SELECT count(*) FROM chunks").fetchone()[0]
+        conn.execute("VACUUM INTO ?", (str(tmp_db),))
+    finally:
+        conn.close()
+    return n_docs, n_chunks
+
+
+def _export_from_postgres(tmp_db: Path) -> tuple[int, int]:
+    with db.reader() as pg, pg.cursor() as cur:
+        cur.execute(
+            "SELECT id, url, title, source_type, platforms, author, published_at, lang, "
+            "topics, content_hash, ingested_at FROM documents ORDER BY id"
+        )
+        docs = cur.fetchall()
+
+        conn = sqlite_kb.connect(tmp_db, readonly=False)
+        try:
+            sqlite_kb.init_schema(conn)
+            n_chunks = 0
+            for row in docs:
+                doc = {
+                    "id": row[0], "url": row[1], "title": row[2], "source_type": row[3],
+                    "platforms": list(row[4] or []), "author": row[5], "published_at": row[6],
+                    "lang": row[7], "topics": list(row[8] or []), "content_hash": row[9],
+                    "ingested_at": row[10].astimezone(UTC).isoformat(timespec="seconds")
+                    if row[10] else None,
+                }
+                cur.execute(
+                    "SELECT content, embedding FROM chunks WHERE document_id = %s "
+                    "ORDER BY chunk_index",
+                    (doc["id"],),
+                )
+                chunks, vectors = [], []
+                for content, embedding in cur.fetchall():
+                    chunks.append(content)
+                    vectors.append([float(x) for x in embedding.to_list()])
+                sqlite_kb.upsert_document(conn, doc, chunks, vectors)
+                n_chunks += len(chunks)
+            conn.commit()
+            # Sin fecha dentro del fichero: el mismo corpus debe dar el mismo SHA-256,
+            # y asi el cliente no descarga un snapshot que no ha cambiado.
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+    return len(docs), n_chunks
+
+
+def _publish(out_dir: Path, tmp_db: Path, n_docs: int, n_chunks: int) -> dict:
+    sha = _sha256(tmp_db)
+    manifest = {
+        "file": DB_NAME,
+        "version": sha[:16],
+        "exported_at": _now(),
+        "size": tmp_db.stat().st_size,
+        "sha256": sha,
+        "embed_model": config.EMBED_MODEL,
+        "embed_dim": config.EMBED_DIM,
+        "documents": n_docs,
+        "chunks": n_chunks,
+    }
+    tmp_manifest = out_dir / (MANIFEST_NAME + ".tmp")
+    tmp_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", "utf-8")
+    os.replace(tmp_db, out_dir / DB_NAME)
+    os.replace(tmp_manifest, out_dir / MANIFEST_NAME)
+    return manifest
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="kb-export", description=__doc__.splitlines()[0])
+    parser.add_argument("--out", default="dist", help="Directorio de salida (por defecto ./dist)")
+    parser.add_argument(
+        "--from-sqlite", dest="source", default=None,
+        help="Fichero SQLite de trabajo del que exportar (por defecto KB_SQLITE_PATH si KB_BACKEND=sqlite)",
+    )
+    args = parser.parse_args()
+    try:
+        manifest = export(Path(args.out), Path(args.source) if args.source else None)
+    except Exception as e:  # noqa: BLE001 - CLI: mensaje y codigo de salida
+        print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(manifest, indent=2, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

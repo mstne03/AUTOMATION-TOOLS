@@ -11,7 +11,7 @@ import pytest
 
 from ingest import cli
 from kb import search
-from tests.conftest import borrar_documento, requires_ollama, requires_reader, requires_writer
+from tests.conftest import borrar_documento, requires_embeddings, requires_reader, requires_writer
 
 SUITE = "test-suite"
 
@@ -26,7 +26,7 @@ def fixture_ingerido(fuente_fixture):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_busqueda_de_termino_exacto(fixture_ingerido):
     """La rama full-text debe encontrar 'CTR' tal cual."""
     results = search.search("CTR", platform=SUITE, k=5)
@@ -38,7 +38,7 @@ def test_busqueda_de_termino_exacto(fixture_ingerido):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_busqueda_semantica(fixture_ingerido):
     """La rama vectorial debe entender la pregunta sin compartir palabras clave."""
     results = search.search(
@@ -51,7 +51,7 @@ def test_busqueda_semantica(fixture_ingerido):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_latencia_por_debajo_de_un_segundo(fixture_ingerido):
     """Sin filtro de plataforma, o sea contra toda la base."""
     search.search("retencion", k=8)  # calienta la conexion y el modelo
@@ -63,7 +63,7 @@ def test_latencia_por_debajo_de_un_segundo(fixture_ingerido):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_filtro_por_plataforma(fixture_ingerido):
     assert search.search("retencion", platform=SUITE, k=5)
     assert search.search("retencion", platform="no-existe-esta-plataforma", k=5) == []
@@ -75,7 +75,7 @@ def test_filtro_por_plataforma(fixture_ingerido):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_filtro_por_fecha(fixture_ingerido):
     """El fixture es de 2025-01-15."""
     assert search.search("retencion", platform=SUITE, since="2024-01-01", k=5)
@@ -84,7 +84,7 @@ def test_filtro_por_fecha(fixture_ingerido):
 
 @requires_writer
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_campos_devueltos(fixture_ingerido):
     r = search.search("CTR", platform=SUITE, k=1)[0]
     for campo in ("content", "title", "url", "author", "published_at", "platforms", "score"):

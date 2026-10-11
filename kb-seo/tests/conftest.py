@@ -14,8 +14,14 @@ import pytest
 from kb import config
 
 
-def _ollama_up() -> bool:
-    """Ollama responde Y tiene el modelo de embeddings: sin modelo, /api/embed da 404."""
+def _embeddings_up() -> bool:
+    """El backend de embeddings esta disponible.
+
+    fastembed: siempre (descarga el modelo si hace falta). Ollama: responde Y tiene
+    el modelo, porque sin modelo /api/embed da 404.
+    """
+    if config.EMBED_BACKEND != "ollama":
+        return True
     try:
         r = httpx.get(f"{config.OLLAMA_URL}/api/tags", timeout=3.0)
         if r.status_code != 200:
@@ -34,8 +40,8 @@ def _db_up(dsn: str) -> bool:
         return False
 
 
-requires_ollama = pytest.mark.skipif(
-    not _ollama_up(),
+requires_embeddings = pytest.mark.skipif(
+    not _embeddings_up(),
     reason=f"Ollama no responde en {config.OLLAMA_URL} o falta el modelo {config.EMBED_MODEL}",
 )
 

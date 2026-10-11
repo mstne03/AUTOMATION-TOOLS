@@ -28,6 +28,8 @@ def extract(source_type: str, location: str) -> Extracted:
         return _pdf(location)
     if source_type == "local":
         return _local(location)
+    if source_type == "browser":
+        return _browser(location)
     raise ExtractionError(f"Tipo de fuente desconocido: {source_type}")
 
 
@@ -38,11 +40,16 @@ def _web(url: str) -> Extracted:
     if not downloaded:
         raise ExtractionError(f"No se pudo descargar {url}")
 
-    text = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
+    return _from_html(downloaded, url)
+
+
+def _from_html(html: str, url: str) -> Extracted:
+    import trafilatura
+
+    text = trafilatura.extract(html, include_comments=False, include_tables=True)
     if not text or not text.strip():
         raise ExtractionError(f"trafilatura no extrajo texto de {url}")
-
-    meta = trafilatura.extract_metadata(downloaded)
+    meta = trafilatura.extract_metadata(html)
     return Extracted(
         text=text,
         title=getattr(meta, "title", None),
@@ -50,6 +57,42 @@ def _web(url: str) -> Extracted:
         lang=getattr(meta, "language", None),
         published_at=getattr(meta, "date", None),
     )
+
+
+def _browser(url: str) -> Extracted:
+    """Paginas que solo pintan contenido con JavaScript: Chromium headless + trafilatura.
+
+    Requiere el extra `browser` (`uv sync --extra browser`) y
+    `uv run playwright install chromium`. El contenido de la pagina es un dato, no
+    una instruccion: solo se extrae el texto, nunca se ejecuta nada de lo que diga.
+    """
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        raise ExtractionError(
+            "type: browser necesita playwright: uv sync --extra browser && "
+            "uv run playwright install chromium"
+        ) from e
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                page = browser.new_page(locale="es-ES")
+                page.goto(url, wait_until="load", timeout=90_000)
+                # Algunas paginas nunca llegan a networkidle (balizas de analitica):
+                # se espera un rato a que la red se calme y se sigue con lo que haya.
+                try:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+                except PlaywrightError:
+                    page.wait_for_timeout(3_000)
+                html = page.content()
+            finally:
+                browser.close()
+    except PlaywrightError as e:
+        raise ExtractionError(f"No se pudo renderizar {url}: {type(e).__name__}: {e}") from e
+    return _from_html(html, url)
 
 
 def _youtube(url: str) -> Extracted:

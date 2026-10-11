@@ -22,7 +22,9 @@ async def client(tmp_path, fake_anthropic):
         ),
         sse_message([{"type": "text", "text": "No estas autenticado."}], "end_turn"),
     ])
-    app = create_app(TOKEN, client_factory=fake.factory, jobs_path=tmp_path / "jobs.sqlite")
+    app = create_app(
+        TOKEN, client_factory=fake.factory, jobs_path=tmp_path / "jobs.sqlite", kb_auto_update=False
+    )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

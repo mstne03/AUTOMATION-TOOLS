@@ -3,7 +3,7 @@
 import pytest
 
 from kb import search
-from tests.conftest import requires_ollama, requires_reader
+from tests.conftest import requires_embeddings, requires_reader
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def _necesita_fuentes_reales():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_filtra_por_subcadena_de_url():
     r = search.search("hashtags", sources="buffer.com", k=5)
     assert r, "buffer.com deberia devolver algo"
@@ -29,7 +29,7 @@ def test_filtra_por_subcadena_de_url():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_no_distingue_mayusculas():
     minus = search.search("hashtags", sources="buffer.com", k=5)
     mayus = search.search("hashtags", sources="BUFFER.COM", k=5)
@@ -37,7 +37,7 @@ def test_no_distingue_mayusculas():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_filtra_por_subcadena_de_titulo():
     r = search.search("reels", sources="Centro de Transparencia", k=5)
     assert r
@@ -45,7 +45,7 @@ def test_filtra_por_subcadena_de_titulo():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_una_lista_es_un_or():
     r = search.search("etiquetas", sources=["metricool", "howyoutubeworks"], k=8)
     assert r
@@ -55,13 +55,13 @@ def test_una_lista_es_un_or():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_sin_coincidencias_devuelve_vacio():
     assert search.search("hashtags", sources="no-existe-esta-fuente-xyz", k=5) == []
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_se_combina_con_plataforma_y_fecha():
     # buffer.com es tiktok y de 2025-12-17.
     assert search.search("hashtags", sources="buffer.com", platform="tiktok", k=5)
@@ -70,7 +70,7 @@ def test_se_combina_con_plataforma_y_fecha():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_el_filtro_actua_antes_de_la_similitud():
     """Con `fuente` deben salir k resultados de ese documento, no las migajas
     que sobrevivan a un top-k global."""
@@ -82,7 +82,7 @@ def test_el_filtro_actua_antes_de_la_similitud():
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_devuelve_document_id_y_chunk_index():
     r = search.search("retencion", k=3)
     assert r
@@ -92,18 +92,17 @@ def test_devuelve_document_id_y_chunk_index():
 
 
 @requires_reader
-@requires_ollama
-def test_archivo_local_trae_url_original_y_se_filtra_por_ella():
+@requires_embeddings
+def test_fuente_renderizada_con_navegador_se_filtra_por_su_url():
     url = "transparency.meta.com/features/explaining-ranking/ig-reels-chaining"
     r = search.search("reels", sources=url, k=3)
-    assert r, "fuente con la url original deberia casar con el archivo local"
+    assert r, "la pagina renderizada con playwright deberia estar ingerida"
     for x in r:
-        assert x["url"].endswith("meta-instagram-reels-en-cadena.md")
-        assert url in x["url_original"]
+        assert url in x["url"]
 
 
 @requires_reader
-@requires_ollama
+@requires_embeddings
 def test_las_fuentes_web_no_tienen_url_original():
     r = search.search("hashtags", sources="buffer.com", k=3)
     assert r and all(x["url_original"] is None for x in r)

@@ -7,6 +7,7 @@ el token, cualquier proceso local podria pedir al sidecar que suba o borre video
 
 import asyncio
 import json
+import logging
 import secrets
 import socket
 from contextlib import asynccontextmanager
@@ -27,14 +28,33 @@ from app_backend import config, registry
 from app_backend.agent import Agent
 from app_backend.approvals import Approvals
 from app_backend.jobs import Jobs
+from app_backend.kb_update import KBUpdateError, KBUpdater
 
 _bearer = HTTPBearer(auto_error=False)
+log = logging.getLogger("app_backend")
 
 # Origenes del WebView de Tauri 2 (produccion y `tauri dev`). Nada mas.
 CORS_ORIGINS = ["http://tauri.localhost", "https://tauri.localhost", "http://localhost:1420"]
 
 
-def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None = None) -> FastAPI:
+def _calentar_kb() -> None:
+    """Carga el modelo de embeddings (varios segundos en frio) para que la primera busqueda sea rapida."""
+    try:
+        from kb import embeddings
+
+        embeddings.embed_query("calentamiento")
+    except Exception as e:  # noqa: BLE001 - solo es una optimizacion
+        log.warning("No se pudo precargar el modelo de embeddings: %s", e)
+
+
+def create_app(
+    token: str,
+    *,
+    client_factory=None,
+    jobs_path: str | Path | None = None,
+    kb_updater: KBUpdater | None = None,
+    kb_auto_update: bool = True,
+) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
     approvals = Approvals()
@@ -48,8 +68,26 @@ def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None 
         )
         app.state.jobs.start()
         app.state.agent = Agent(specs, approvals, app.state.jobs, client_factory=client_factory)
+        app.state.kb_updater = kb_updater or KBUpdater(
+            config.KB_UPDATE_URL, config.KB_MINISIGN_PUBKEY, config.KB_PUBLIC_PATH
+        )
+        tareas = []
+        if kb_auto_update:
+            tareas.append(asyncio.create_task(_arranque_kb(app.state.kb_updater)))
         yield
+        for t in tareas:
+            t.cancel()
         await app.state.jobs.stop()
+
+    async def _arranque_kb(updater: KBUpdater) -> None:
+        """Al arrancar: comprobar el snapshot si toca (diario) y calentar el modelo."""
+        if updater.due():
+            try:
+                r = await asyncio.to_thread(updater.update)
+                log.info("KB: %s", r)
+            except KBUpdateError as e:
+                log.warning("KB: %s", e)
+        await asyncio.to_thread(_calentar_kb)
 
     app = FastAPI(title="app-backend", lifespan=lifespan)
     # El WebView de Tauri tiene origen propio (tauri.localhost; localhost:1420 en desarrollo),
@@ -154,7 +192,113 @@ def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None 
 
     @app.get("/kb/estado", dependencies=protegido)
     async def kb_estado():
-        return {"texto": await asyncio.to_thread(tools["estado_kb"].fn)}
+        return {
+            "texto": await asyncio.to_thread(tools["estado_kb"].fn),
+            "snapshot": app.state.kb_updater.estado(),
+        }
+
+    @app.post("/kb/update", dependencies=protegido)
+    async def kb_update():
+        try:
+            return await asyncio.to_thread(app.state.kb_updater.update)
+        except KBUpdateError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @app.post("/kb/rollback", dependencies=protegido)
+    async def kb_rollback():
+        try:
+            return await asyncio.to_thread(app.state.kb_updater.rollback)
+        except KBUpdateError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+    # ------------------------------------------------------------ kb privada
+
+    class FuentePrivadaIn(BaseModel):
+        url: str = Field(min_length=1)
+        type: str | None = None          # web | youtube | pdf | browser (se adivina)
+        title: str | None = None
+        platforms: list[str] | None = None
+        published_at: str | None = None
+        author: str | None = None
+
+    class NotaPrivadaIn(BaseModel):
+        identificador: str = Field(min_length=1)
+        titulo: str = Field(min_length=1)
+        texto: str = Field(min_length=1)
+        platforms: list[str] | None = None
+        published_at: str | None = None
+
+    class UrlIn(BaseModel):
+        url: str = Field(min_length=1)
+
+    def _privada():
+        from kb import sqlite_kb
+
+        return sqlite_kb, config.KB_PRIVATE_PATH
+
+    @app.get("/kb/privada/fuentes", dependencies=protegido)
+    async def kb_privada_fuentes():
+        sqlite_kb, path = _privada()
+        if not path.exists():
+            return []
+
+        def listar():
+            conn = sqlite_kb.connect(path)
+            try:
+                return [
+                    {"title": t, "url": u, "published_at": p, "platforms": pl}
+                    for t, u, p, pl in sqlite_kb.listar_fuentes(conn)
+                ]
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(listar)
+
+    @app.post("/kb/privada/fuentes", dependencies=protegido, status_code=201)
+    async def kb_privada_add(body: FuentePrivadaIn):
+        from ingest.cli import ExtractionError, ingest_one
+
+        # Solo URLs: los ficheros locales entran por las tools con carpetas permitidas.
+        if not body.url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Solo se admiten URLs http(s).")
+        source = {k: v for k, v in body.model_dump().items() if v is not None}
+        try:
+            r = await asyncio.to_thread(ingest_one, source, config.KB_PRIVATE_PATH)
+        except ExtractionError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"url": body.url, **r}
+
+    @app.post("/kb/privada/notas", dependencies=protegido, status_code=201)
+    async def kb_privada_nota(body: NotaPrivadaIn):
+        from ingest.cli import ExtractionError, ingest_text
+
+        try:
+            r = await asyncio.to_thread(
+                ingest_text, config.KB_PRIVATE_PATH, body.identificador, body.titulo,
+                body.texto, body.platforms, body.published_at,
+            )
+        except ExtractionError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"url": body.identificador, **r}
+
+    @app.delete("/kb/privada/fuentes", dependencies=protegido)
+    async def kb_privada_delete(body: UrlIn):
+        sqlite_kb, path = _privada()
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="La KB privada esta vacia.")
+
+        def borrar() -> bool:
+            conn = sqlite_kb.connect(path, readonly=False)
+            try:
+                ok = sqlite_kb.delete_document(conn, body.url)
+                conn.commit()
+                return ok
+            finally:
+                conn.close()
+
+        if not await asyncio.to_thread(borrar):
+            raise HTTPException(status_code=404, detail="No hay ningun documento con esa url.")
+        return {"borrada": body.url}
 
     @app.get("/kb/fuentes", dependencies=protegido)
     async def kb_fuentes(plataforma: str | None = None):
