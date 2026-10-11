@@ -80,7 +80,8 @@ Estados de la pantalla:
   3. Carpetas permitidas: tabla `ajustes-dirs` con filas `ajustes-dir` (ruta, idioma,
      botón quitar); fila de alta con `ajustes-dir-path`, `ajustes-dir-lang` y
      `ajustes-dir-add`.
-  4. Perfil de YouTube: `select[data-testid=ajustes-profile]` con `auth.profiles`;
+  4. Perfil de YouTube: `select[data-testid=ajustes-profile]` con `auth.profiles` más el
+     perfil actual (sin tokens guardados la lista viene vacía);
      estado `ajustes-yt-estado` ("Autorizado" / "Sin autorizar"); botón
      `ajustes-yt-reauth` ("Volver a autorizar").
   5. Cuota: tres barras `cuota-<bucket>` con "used / limit".

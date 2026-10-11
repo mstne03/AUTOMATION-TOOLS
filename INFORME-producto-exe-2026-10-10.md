@@ -276,8 +276,10 @@ Desviaciones respecto a lo previsto: el gate de aprobación se implementa dentro
 **Fase 2. KB como snapshot (1-2 semanas, en paralelo con la 1).**
 Migración a `multilingual-e5-small`, exportador a `sqlite-vec`+FTS5, port de la búsqueda híbrida RRF, firma minisign, systemd timer y Playwright en el VPS, cliente de actualización con verificación de firma. KB privada con el mismo esquema.
 
-**Fase 3. Interfaz Tauri + React (3-4 semanas).**
+**Fase 3. Interfaz Tauri + React (3-4 semanas).** *Hecha el 2026-10-11 (`app-ui/`).*
 Las seis pantallas de la sección 2.1. Sidecar lanzado desde Tauri con token por arranque. Tests E2E de UI estrictos contra el comportamiento descrito (no hay Figma: exigir layout y estados definidos antes de empezar cada pantalla).
+
+Resultado: Tauri 2 + React 19 + Vite + TanStack Query, con el contrato de layout y estados escrito antes de cada pantalla en `app-ui/docs/pantallas.md`. El Rust se queda en lo previsto (token por arranque, lectura del puerto, comando `sidecar_info`, kill al salir) y el WebView no tiene permiso de shell. Dos hallazgos que solo salieron al conectar las piezas de verdad, ambos resueltos en `app-backend`: el WebView es un origen distinto y el sidecar necesitaba CORS restringido a `tauri.localhost` y `localhost:1420`; y el sidecar anunciaba el puerto antes de hacer `listen()`, así que la primera petición se rechazaba durante los segundos de arranque de uvicorn. El flujo de publicación de la Fase 1 se repitió desde el chat con la UI real (rechazo, subida por la cola de jobs con la ruta resuelta visible, borrado destructivo tecleando el ID). Los E2E (20 con Playwright) arrancan el sidecar real con secretos en fichero y un Anthropic falso por `ANTHROPIC_BASE_URL`, de modo que el gate de aprobación y el stream SSE son los de producción y el modelo es determinista. Pendiente para la Fase 4: atar el sidecar a un Job Object (un cierre forzoso de la app lo deja huérfano) y sustituir `uv run` por el `externalBin` empaquetado.
 
 **Fase 4. Empaquetado y distribución (1-2 semanas).**
 PyInstaller `--onedir` con hidden imports verificados, instalador NSIS, updater firmado, firma de código, pipeline en GitHub Actions, prueba de reinstalación sobre versión anterior (el bug del sidecar cacheado).

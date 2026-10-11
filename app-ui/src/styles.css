@@ -283,3 +283,92 @@ select {
   display: flex;
   gap: 0.5rem;
 }
+
+/* Formularios de pantallas */
+.fila {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ajustes section,
+.onboarding .paso,
+.publicar section,
+.kb section,
+.canal section {
+  margin-bottom: 1.25rem;
+}
+h1 {
+  font-size: 1.25rem;
+  margin: 0 0 1rem;
+}
+h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+.ajustes table,
+.ajustes input:not([size]),
+.publicar input:not([type="datetime-local"]),
+.publicar textarea,
+.onboarding textarea,
+.kb input {
+  width: 100%;
+  max-width: 48rem;
+}
+.ajustes th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+}
+.cuota {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 28rem;
+}
+.cuota label {
+  display: grid;
+  grid-template-columns: 1fr 10rem;
+  align-items: center;
+}
+.pasos {
+  padding: 0;
+  list-style: none;
+  max-width: 48rem;
+}
+.paso {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+.paso.hecho h2 {
+  color: var(--ok-fg);
+}
+.subpasos {
+  padding-left: 1.25rem;
+}
+.subpasos li {
+  margin-bottom: 0.5rem;
+}
+.publicar label {
+  display: block;
+  margin: 0.5rem 0;
+}
+.publicar label input,
+.publicar label textarea,
+.publicar label select {
+  display: block;
+  margin-top: 0.2rem;
+}
+.publicar-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.kb pre,
+.onboarding pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  font-size: 0.9rem;
+}

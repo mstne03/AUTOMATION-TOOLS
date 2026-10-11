@@ -1,15 +1,19 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import { createClient, type Client } from "./api/client";
-import { ClientContext, useClient } from "./api/context";
+import { ClientContext } from "./api/context";
+import { useSettings } from "./api/queries";
 import { ChatScreen } from "./chat/ChatScreen";
 import { Layout } from "./Layout";
+import { CanalScreen } from "./screens/CanalScreen";
+import { KbScreen } from "./screens/KbScreen";
+import { OnboardingScreen } from "./screens/OnboardingScreen";
+import { PublicarScreen } from "./screens/PublicarScreen";
+import { SettingsScreen } from "./screens/SettingsScreen";
 import { sidecarInfo } from "./sidecar";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-const Pendiente = ({ nombre }: { nombre: string }) => <h1>{nombre} (pendiente)</h1>;
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
@@ -18,19 +22,18 @@ const router = createHashRouter([
     children: [
       { index: true, element: <Inicio /> },
       { path: "chat", element: <ChatScreen /> },
-      { path: "publicar", element: <Pendiente nombre="Publicar vídeo" /> },
-      { path: "canal", element: <Pendiente nombre="Panel de canal" /> },
-      { path: "kb", element: <Pendiente nombre="Base de conocimiento" /> },
-      { path: "ajustes", element: <Pendiente nombre="Ajustes" /> },
-      { path: "onboarding", element: <Pendiente nombre="Onboarding" /> },
+      { path: "publicar", element: <PublicarScreen /> },
+      { path: "canal", element: <CanalScreen /> },
+      { path: "kb", element: <KbScreen /> },
+      { path: "ajustes", element: <SettingsScreen /> },
+      { path: "onboarding", element: <OnboardingScreen /> },
     ],
   },
 ]);
 
 /** Abre en Onboarding si falta la clave o el client_secret; si no, en Chat. */
 function Inicio() {
-  const client = useClient();
-  const q = useQuery({ queryKey: ["settings"], queryFn: () => client.getSettings() });
+  const q = useSettings();
   if (q.isPending) return <p className="estado">Cargando ajustes…</p>;
   if (q.isError) return <p className="estado">Error: {q.error.message}</p>;
   const listo = q.data.has_anthropic_key && q.data.has_client_secret;

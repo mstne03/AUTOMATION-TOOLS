@@ -1,19 +1,29 @@
 /** Pantalla de chat (docs/pantallas.md → Chat). */
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Link } from "react-router";
-import { useClient } from "../api/context";
+import { Link, useLocation } from "react-router";
+import { useSettings } from "../api/queries";
 import { Markdown } from "./Markdown";
 import { ToolBlock } from "./ToolBlock";
 import { costeUsd, type Turno } from "./turno";
 import { useChat, type Mensaje } from "./useChat";
 
 export function ChatScreen() {
-  const client = useClient();
   const chat = useChat();
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => client.getSettings() });
+  const settings = useSettings();
   const [texto, setTexto] = useState("");
   const lista = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+
+  // Otra pantalla (Panel de canal) puede llegar con un mensaje inicial en el estado de navegación.
+  const inicial = useRef<string | undefined>((location.state as { mensaje?: string } | null)?.mensaje);
+  useEffect(() => {
+    const m = inicial.current;
+    if (!m) return;
+    inicial.current = undefined;
+    window.history.replaceState({}, "");
+    void chat.enviar(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     lista.current?.scrollTo({ top: lista.current.scrollHeight });
@@ -105,7 +115,7 @@ function MensajeView({ m, onResolver }: { m: Mensaje; onResolver: ReturnType<typ
   );
 }
 
-function TurnoView({ turno, onResolver }: { turno: Turno; onResolver: ReturnType<typeof useChat>["resolver"] }) {
+export function TurnoView({ turno, onResolver }: { turno: Turno; onResolver: ReturnType<typeof useChat>["resolver"] }) {
   const ultimo = turno.bloques.length - 1;
   return (
     <>
