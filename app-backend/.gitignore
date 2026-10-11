@@ -6,3 +6,9 @@ __pycache__/
 *.sqlite
 .env
 .env.local
+
+# Empaquetado (PyInstaller)
+models/
+build/
+dist/
+*.log

@@ -24,15 +24,24 @@ modelo ONNX. Un `.env.local` con KB_BACKEND=postgres sigue valiendo para desarro
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
-# Ninguno se commitea; .env.local pisa a .env.
-_RAIZ = Path(__file__).resolve().parent.parent
-load_dotenv(_RAIZ / ".env")
-load_dotenv(_RAIZ / ".env.local", override=True)
+# Binario de PyInstaller (sys.frozen): sin .env (un fichero junto al ejecutable no debe
+# poder cambiar la configuracion) y con el modelo de embeddings dentro del bundle.
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    _BUNDLE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    os.environ.setdefault("EMBED_MODEL_PATH", str(_BUNDLE / "models" / "multilingual-e5-small"))
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")  # fastembed/huggingface_hub: nunca a la red
+else:
+    # .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
+    # Ninguno se commitea; .env.local pisa a .env.
+    _RAIZ = Path(__file__).resolve().parent.parent
+    load_dotenv(_RAIZ / ".env")
+    load_dotenv(_RAIZ / ".env.local", override=True)
 
 STATE_DIR = Path(
     os.environ.get("APP_BACKEND_DIR")

@@ -100,7 +100,11 @@ def _get_model():
                     **custom,
                 )
             _model = TextEmbedding(
-                model_name=config.EMBED_MODEL, cache_dir=config.EMBED_CACHE_DIR
+                model_name=config.EMBED_MODEL,
+                cache_dir=config.EMBED_CACHE_DIR,
+                # Con specific_model_path fastembed no consulta HuggingFace: carga el
+                # directorio tal cual (producto empaquetado, sin red).
+                specific_model_path=config.EMBED_MODEL_PATH,
             )
         return _model
 
