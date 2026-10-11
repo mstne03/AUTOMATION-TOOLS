@@ -11,11 +11,18 @@ Variables propias:
 - APP_BACKEND_SECRETS: "keyring" (por defecto, Credential Manager) o "file"
   (JSON en claro en el directorio de estado; solo para tests y desarrollo).
 - APP_BACKEND_TOKEN: token de la cabecera Authorization. Si falta se genera uno.
+- ANTHROPIC_API_KEY: respaldo para desarrollo; en el producto la clave va al almacen
+  de secretos via PUT /settings y esta variable no se usa.
 """
 
 import json
 import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# .env junto a pyproject.toml, solo para desarrollo (ver .env.example). Nunca se commitea.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 STATE_DIR = Path(
     os.environ.get("APP_BACKEND_DIR")
@@ -27,6 +34,11 @@ MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 DEFAULTS = {"model": MODELS[0], "allowed_dirs": [], "profile": "default"}
 
 ANTHROPIC_KEY = "anthropic_api_key"  # clave en el almacen de secretos
+
+
+def anthropic_api_key(store) -> str | None:
+    """Clave de Anthropic: el almacen de secretos manda; ANTHROPIC_API_KEY es el respaldo."""
+    return store.get(ANTHROPIC_KEY) or os.environ.get("ANTHROPIC_API_KEY") or None
 
 
 def load_settings() -> dict:

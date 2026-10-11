@@ -10,6 +10,7 @@ _STATE = Path(tempfile.mkdtemp(prefix="app-backend-tests-"))
 os.environ["APP_BACKEND_DIR"] = str(_STATE)
 os.environ["APP_BACKEND_SECRETS"] = "file"
 os.environ["YOUTUBE_MCP_CONFIG_DIR"] = str(_STATE)
+os.environ.pop("ANTHROPIC_API_KEY", None)  # los tests no deben ver una clave real
 
 import httpx2
 import pytest

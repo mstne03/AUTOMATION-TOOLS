@@ -65,7 +65,7 @@ def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None 
     async def chat(body: ChatIn, request: Request):
         agent: Agent = app.state.agent
         settings = config.load_settings()
-        api_key = yt_auth.store.get(config.ANTHROPIC_KEY)
+        api_key = config.anthropic_api_key(yt_auth.store)
         if not api_key:
             raise HTTPException(status_code=409, detail="Falta la clave de Anthropic (PUT /settings).")
         conv = agent.conversation(body.conversation_id)
@@ -192,7 +192,7 @@ def create_app(token: str, *, client_factory=None, jobs_path: str | Path | None 
         return {
             **s,
             "models": list(config.MODELS),
-            "has_anthropic_key": yt_auth.store.get(config.ANTHROPIC_KEY) is not None,
+            "has_anthropic_key": config.anthropic_api_key(yt_auth.store) is not None,
             "has_client_secret": yt_auth.has_client_secret(),
             "state_dir": str(config.STATE_DIR),
             "secret_store": type(yt_auth.store).__name__,

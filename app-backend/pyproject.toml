@@ -9,6 +9,7 @@ dependencies = [
     "sse-starlette>=2.1",
     "anthropic>=0.80",
     "keyring>=25",
+    "python-dotenv>=1.0",
     "youtube-studio-mcp",
     "kb-seo",
 ]

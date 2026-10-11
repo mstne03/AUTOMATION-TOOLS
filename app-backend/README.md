@@ -20,6 +20,10 @@ La primera linea de stdout es `{"port": N, "token": "..."}`. Todas las rutas exi
 | `APP_BACKEND_DIR` | Directorio de estado (ajustes, `quota.json`, `jobs.sqlite`). Por defecto `%LOCALAPPDATA%\seo-studio`. |
 | `APP_BACKEND_SECRETS` | `keyring` (por defecto) o `file` (JSON en claro; solo desarrollo y tests). |
 | `APP_BACKEND_TOKEN` | Token fijo; si falta se genera uno por arranque. |
+| `ANTHROPIC_API_KEY` | Respaldo para desarrollo. La clave guardada por `PUT /settings` (Credential Manager) tiene prioridad. |
+
+Para desarrollo, copia `.env.example` a `.env` junto a `pyproject.toml`: se carga al arrancar
+y esta en `.gitignore`.
 
 La KB sigue siendo el Postgres local de `kb-seo` (Fase 2 la sustituye por el snapshot):
 necesita `kb-seo/.env`, `docker compose up -d` y `ollama pull bge-m3`.
