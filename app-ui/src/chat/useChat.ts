@@ -23,6 +23,24 @@ export function useChat() {
     });
   }, []);
 
+  /** El SSE solo trae job_started y job_finished; el progreso se consulta por GET /jobs/{id}. */
+  const sondearJob = useCallback(
+    async (jobId: string) => {
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1000));
+        let job;
+        try {
+          job = await client.getJob(jobId);
+        } catch {
+          return; // el job_finished del stream cerrará el bloque igualmente
+        }
+        if (job.status === "done" || job.status === "failed") return;
+        actualizarTurno((t) => reduceTurno(t, { type: "job_finished", job }));
+      }
+    },
+    [client, actualizarTurno],
+  );
+
   const enviar = useCallback(
     async (texto: string) => {
       if (enStream || !texto.trim()) return;
@@ -36,6 +54,7 @@ export function useChat() {
         )) {
           if (ev.type === "done") setConversationId(ev.conversation_id);
           actualizarTurno((t) => reduceTurno(t, ev));
+          if (ev.type === "job_started") void sondearJob(ev.job.id);
         }
       } catch (e) {
         const msg = e instanceof ApiError ? e.detail : (e as Error).message;
@@ -45,7 +64,7 @@ export function useChat() {
         abort.current = null;
       }
     },
-    [client, conversationId, enStream, actualizarTurno],
+    [client, conversationId, enStream, actualizarTurno, sondearJob],
   );
 
   const resolver = useCallback(

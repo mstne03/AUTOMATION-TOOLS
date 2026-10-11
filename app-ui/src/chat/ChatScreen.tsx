@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router";
 import { useClient } from "../api/context";
+import { Markdown } from "./Markdown";
 import { ToolBlock } from "./ToolBlock";
 import { costeUsd, type Turno } from "./turno";
 import { useChat, type Mensaje } from "./useChat";
@@ -111,9 +112,7 @@ function TurnoView({ turno, onResolver }: { turno: Turno; onResolver: ReturnType
       {turno.bloques.map((b, i) =>
         b.kind === "text" ? (
           <div className="bloque-texto" data-testid="bloque-texto" key={i}>
-            {b.text.split(/\n{2,}/).map((p, j) => (
-              <p key={j}>{p}</p>
-            ))}
+            <Markdown text={b.text} />
             {turno.estado === "streaming" && i === ultimo && <span className="cursor">▍</span>}
           </div>
         ) : (
