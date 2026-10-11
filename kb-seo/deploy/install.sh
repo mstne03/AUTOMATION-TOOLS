@@ -18,6 +18,8 @@ echo "== 1. Librerias de sistema de Chromium headless (faltaban libnss3 y libnsp
 
 echo "== 2. $WWW, propiedad de $USUARIO (asi el timer publica sin sudo); nginx solo lee"
 install -d -o "$USUARIO" -g "$USUARIO" -m 755 "$WWW"
+# Instalador y latest.json de la app de escritorio (deploy/publish-app.sh).
+install -d -o "$USUARIO" -g "$USUARIO" -m 755 /var/www/app
 
 echo "== 3. Nginx: $DOMINIO (estatico, solo lectura)"
 install -o root -g root -m 644 "$APP/deploy/nginx-$DOMINIO.conf" "/etc/nginx/sites-available/$DOMINIO"
