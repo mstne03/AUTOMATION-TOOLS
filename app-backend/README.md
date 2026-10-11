@@ -62,6 +62,43 @@ desarrollar contra el Postgres de `kb-seo`: `KB_BACKEND=postgres` en `.env.local
   como datos); la clave de Anthropic nunca se devuelve por la API; `youtube_auth` no esta
   disponible para el modelo.
 
+## Empaquetado (binario del producto)
+
+El producto no lleva Python instalado: el sidecar se congela con **PyInstaller `--onedir`**
+(`app-backend.spec`) y Tauri lo arrastra como `externalBin`. Dos conceptos:
+
+- *onedir*: un `app-backend.exe` pequeno (arrancador) mas una carpeta `_internal/` con el
+  interprete, las dependencias y los datos. Arranca mas rapido que *onefile* (que se
+  descomprime en un temporal en cada ejecucion) y Tauri la copia tal cual como recurso.
+- *hidden imports*: PyInstaller sigue los `import` estaticos; lo que se importa por cadena
+  (`uvicorn` elige el loop por nombre, `keyring` el backend por entrypoint) o dentro de una
+  funcion (`faster_whisper`, `fastembed`, `sqlite_vec`) hay que listarlo en el spec. Los hooks
+  de `pyinstaller-hooks-contrib` ya cubren onnxruntime, googleapiclient (discovery docs),
+  psycopg (libpq), av, lxml y tzdata.
+
+```bash
+uv sync --extra dev                         # pyinstaller esta en el extra dev
+uv run python scripts/fetch_model.py        # modelo ONNX -> models/multilingual-e5-small (470 MB, una vez)
+uv run pyinstaller --noconfirm --clean app-backend.spec   # -> dist/app-backend/ (~900 MB)
+uv run python scripts/smoke_test.py         # lanza el .exe, lee el puerto, GET /settings y /kb/buscar sin red
+```
+
+Hazlo con el **CPython de `uv`**, no con Anaconda: el `_ctypes` de Anaconda depende de una
+`ffi.dll` que PyInstaller no recoge y el binario muere con "DLL load failed" al importar
+`psycopg`. `uv sync --managed-python` (o `uv python install 3.12`) lo deja bien; el pipeline
+de CI usa ese mismo CPython.
+
+Diferencias del binario congelado (`sys.frozen`, ver `config.py` y `kb/config.py`):
+
+- **No lee ningun `.env`**: la configuracion solo llega por variables de entorno que fija el
+  propio producto. Un `.env` junto al ejecutable no puede cambiar nada.
+- **Modelo de embeddings dentro del bundle** (`_internal/models/multilingual-e5-small`):
+  `EMBED_MODEL_PATH` apunta ahi y `fastembed` lo carga con `specific_model_path`, sin tocar
+  Hugging Face (`HF_HUB_OFFLINE=1` por si acaso). El modelo es el ONNX fp32 oficial, el mismo
+  que ingesta el VPS: cuantizarlo a int8 cambiaria los vectores respecto al snapshot.
+- Whisper (`faster-whisper`) va en el bundle pero su modelo se descarga en el primer uso.
+- Playwright (extractor `browser`) queda excluido: es solo del VPS.
+
 ## Tests
 
 ```bash
