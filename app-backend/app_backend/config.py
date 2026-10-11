@@ -21,8 +21,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# .env junto a pyproject.toml, solo para desarrollo (ver .env.example). Nunca se commitea.
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
+# Ninguno se commitea; .env.local pisa a .env.
+_RAIZ = Path(__file__).resolve().parent.parent
+load_dotenv(_RAIZ / ".env")
+load_dotenv(_RAIZ / ".env.local", override=True)
 
 STATE_DIR = Path(
     os.environ.get("APP_BACKEND_DIR")
