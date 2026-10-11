@@ -107,7 +107,7 @@ class Agent:
             name=spec.name,
             description=spec.description,
             input_schema=spec.input_schema,
-            strict=True,
+            strict=spec.strict or None,
         )
 
     # ------------------------------------------------------------------- turno

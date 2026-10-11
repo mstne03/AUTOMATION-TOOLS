@@ -7,9 +7,10 @@ descripcion, esquema y funcion. Aqui solo se anade lo que el agente necesita:
   destructive (aprobacion repitiendo el ID del video).
 - `quota`: cubo y coste de la YouTube Data API, para mostrarlo en la propuesta.
 - `job_kind`: las tools largas (subida, transcripcion) se ejecutan en la cola de jobs.
-- esquema con `strict: true`: additionalProperties=false y todos los campos
-  requeridos; los opcionales admiten null y la llamada descarta los null para que
-  la funcion aplique sus valores por defecto.
+- `strict`: solo las tools write/destructive (la API admite 20 estrictas como maximo
+  y es donde importa que los argumentos sean exactamente los del esquema). Su esquema
+  pasa a additionalProperties=false con todos los campos requeridos; los opcionales
+  admiten null y la llamada descarta los null para que apliquen los valores por defecto.
 """
 
 import copy
@@ -63,6 +64,7 @@ class ToolSpec:
     risk: str  # read | write | destructive
     quota: dict | None  # {"bucket": ..., "cost": ...}
     job_kind: str | None
+    strict: bool = False
 
     def call(self, args: dict) -> Any:
         """Llama a la funcion descartando los null (= usar el valor por defecto)."""
@@ -115,15 +117,18 @@ def build() -> list[ToolSpec]:
         for tool in server._tool_manager.list_tools():
             if tool.name in EXCLUDED:
                 continue
+            risk = risk_of(tool.name)
+            strict = risk != "read"
             specs.append(
                 ToolSpec(
                     name=tool.name,
                     description=tool.description,
-                    input_schema=strict_schema(tool.parameters),
+                    input_schema=strict_schema(tool.parameters) if strict else tool.parameters,
                     fn=tool.fn,
-                    risk=risk_of(tool.name),
+                    risk=risk,
                     quota=quota_of(tool.name),
                     job_kind=JOB_KINDS.get(tool.name),
+                    strict=strict,
                 )
             )
     return specs

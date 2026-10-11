@@ -24,7 +24,7 @@ def _read_tool(q: str) -> str:
 SPECS = [
     ToolSpec(
         name="fake_update", description="Actualiza", fn=_write_tool, risk="write",
-        quota={"bucket": "general", "cost": 50}, job_kind=None,
+        quota={"bucket": "general", "cost": 50}, job_kind=None, strict=True,
         input_schema={
             "type": "object",
             "properties": {
@@ -81,7 +81,7 @@ async def test_read_tool_runs_without_approval(fake_anthropic, tmp_path):
     assert req["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert req["fallbacks"] == "default"
     assert "server-side-fallback-2026-07-01" in fake.headers[0]["anthropic-beta"]
-    assert all(t["strict"] is True for t in req["tools"])
+    assert {t["name"]: t.get("strict") for t in req["tools"]} == {"fake_read": None, "fake_update": True}
     assert [t["name"] for t in req["tools"]] == ["fake_read", "fake_update"]  # orden estable (cache)
     await jobs.stop()
 

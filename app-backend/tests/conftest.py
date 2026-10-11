@@ -10,11 +10,14 @@ _STATE = Path(tempfile.mkdtemp(prefix="app-backend-tests-"))
 os.environ["APP_BACKEND_DIR"] = str(_STATE)
 os.environ["APP_BACKEND_SECRETS"] = "file"
 os.environ["YOUTUBE_MCP_CONFIG_DIR"] = str(_STATE)
-os.environ.pop("ANTHROPIC_API_KEY", None)  # los tests no deben ver una clave real
 
 import httpx2
 import pytest
 from anthropic import AsyncAnthropic
+
+import app_backend  # noqa: F401  (carga .env/.env.local al importarse)
+
+os.environ.pop("ANTHROPIC_API_KEY", None)  # los tests no deben ver una clave real
 
 
 def _sse(events: list[dict]) -> bytes:

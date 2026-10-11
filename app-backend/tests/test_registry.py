@@ -12,6 +12,10 @@ def test_registry_covers_both_repos_with_risks():
     assert specs["buscar_kb"].risk == "read"
     assert specs["youtube_search"].quota == {"bucket": "search", "cost": 1}
     assert all(s.quota is None for s in specs.values() if s.name.startswith("youtube_analytics"))
+    estrictas = [s for s in specs.values() if s.strict]
+    assert len(estrictas) <= 20 and all(s.risk != "read" for s in estrictas)  # limite de la API
+    assert specs["youtube_delete_video"].input_schema["additionalProperties"] is False
+    assert "additionalProperties" not in specs["buscar_kb"].input_schema  # esquema original
 
 
 def test_strict_schema_makes_optionals_nullable_and_required():
