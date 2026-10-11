@@ -118,9 +118,11 @@ entero). READMEs: `app-backend/README.md`, `app-ui/README.md`, `kb-seo/README.md
   384 dims (`kb-seo/.env` con `EMBED_BACKEND=fastembed`, `EMBED_MODEL=intfloat/multilingual-e5-small`).
   Vídeo de prueba `C:\Users\Marc\Videos\demo cs finance.mp4`, carpeta en `allowed_dirs`.
   Estado del producto en `%LOCALAPPDATA%\seo-studio` (`settings.json`, `jobs.sqlite`, `quota.json`).
-- VPS: la Fase 2 dejó `~/kb-seo/` desplegado como `marc`; **pendiente** que Marc ejecute
-  `deploy/install.sh` con sudo y `deploy/setup-user.sh` (issue 020 en VPS_HETZNER). Clave
-  pública minisign del snapshot embebida en `app-backend` (`RWQuXbso1VRON6x1Ol6g6zSn7XH35VZZaRZh7yCYtsfhLwH5O8+IdTxe`).
+- VPS: la Fase 2 quedó **desplegada y verificada** (Nginx sirve el manifest y el snapshot
+  firmado; `deploy/install.sh` y `deploy/setup-user.sh` ya ejecutados). Clave pública
+  minisign del snapshot embebida en `app-backend` (`RWQuXbso1VRON6x1Ol6g6zSn7XH35VZZaRZh7yCYtsfhLwH5O8+IdTxe`).
+  Para el updater de Tauri, lo natural es publicar `latest.json` y los `-setup.exe` en el mismo
+  Nginx junto a `/kb/`.
 - Suites: `app-backend` 34 tests (`uv run pytest -q`), `app-ui` 18 unitarios (`pnpm test`) y
   20 E2E (`pnpm e2e`; cierra antes cualquier `tauri dev`/`pnpm dev`: el setup aborta si el
   1420 está ocupado), `youtube-mcp-server` 163, `kb-seo` ~90.
