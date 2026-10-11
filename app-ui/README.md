@@ -89,7 +89,10 @@ TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/seo-studio.key)" TAURI_SIGNING_PRIVATE
 (el fichero real es `binaries/app-backend-x86_64-pc-windows-msvc.exe`; Tauri le quita el
 sufijo al instalar) y `resources = {"binaries/_internal/": "_internal/"}`. Instalación por
 usuario (`installMode: currentUser`, sin UAC) en `%LOCALAPPDATA%\SEO Studio`.
-`prepare-sidecar.sh` borra la copia anterior de `binaries/` y de `target/release` y
+Compresor NSIS `zlib` (`bundle.windows.nsis.compression`): con el LZMA por defecto `makensis`
+pasó de 45 minutos sin terminar sobre los ~900 MB del sidecar; con zlib tarda ~7 minutos y el
+instalador sale de 414 MB. Para instalar en silencio: `SEO Studio_x_x64-setup.exe /S` (desde
+Git Bash con `MSYS_NO_PATHCONV=1`, o convierte `/S` en una ruta). `prepare-sidecar.sh` borra la copia anterior de `binaries/` y de `target/release` y
 muestra el SHA-256 del `.exe`, para que ningún instalador arrastre un sidecar viejo
 (pitfall conocido de NSIS); el workflow de CI compara ese hash con el del bundle.
 
@@ -127,6 +130,16 @@ updater (la que la app verifica), no SmartScreen.
    (descarga los tres ficheros, reescribe las URL de `latest.json` hacia `kb.mstne.dev/app/`
    y los deja en `/var/www/app` de forma atómica). El VPS no tiene ninguna clave: CI firma,
    los clientes verifican.
+
+### Verificado el 2026-10-11
+
+Instalador local de 414 MB instalado en silencio (34 s) en `%LOCALAPPDATA%\SEO Studio`
+(917 MB en disco); el SHA-256 de `app-backend.exe` instalado coincide con `dist/` y con
+`target/release`. La app arranca, el sidecar congelado escucha en `127.0.0.1:<puerto>` y la UI
+entra en Chat (clave y `client_secret` leídos del Credential Manager real). `Stop-Process -Force`
+de `app-ui.exe` mata también `app-backend.exe` (Job Object), igual que `taskkill /F` en
+`tauri dev` mata `uv.exe` y `python.exe`. Reinstalación sobre la versión instalada: 27 s, mismo
+hash. El flujo real de publicación (subida/borrado en YouTube) no se repitió en esta sesión.
 
 ## Seguridad
 

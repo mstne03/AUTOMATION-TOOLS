@@ -50,7 +50,8 @@
           "Spanish",
           "English"
         ],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "compression": "zlib"
       }
     }
   },
