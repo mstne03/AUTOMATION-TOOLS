@@ -13,6 +13,8 @@ dependencies = [
     "pyyaml>=6.0",
     "mcp>=2.0",
     "python-dotenv>=1.0",
+    "fastembed>=0.7",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,7 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 ingest = "ingest.cli:main"
 kb-migrate = "kb.db:migrate_main"
 kb-mcp = "mcp_server.server:main"
+kb-export = "kb.export:main"
 
 [build-system]
 requires = ["hatchling"]

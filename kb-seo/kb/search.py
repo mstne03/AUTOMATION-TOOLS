@@ -111,7 +111,7 @@ def search(
         return []
 
     if qvec is None:
-        qvec = embeddings.embed([query])[0]
+        qvec = embeddings.embed_query(query)
 
     params = {
         "qvec": str(qvec),

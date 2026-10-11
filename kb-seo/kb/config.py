@@ -27,8 +27,22 @@ PGDATABASE = os.getenv("PGDATABASE", "kb_seo")
 # Ollama solo escucha en IPv4, y cada conexion nueva perdia ~2s esperando
 # a que fallara el intento IPv6.
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
-EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
+
+# Backend de embeddings: "fastembed" (ONNX en proceso, sin servicios externos; es
+# el del cliente) u "ollama" (servidor local; opcion para la ingesta en el VPS).
+# El modelo y la dimension tienen que ser LOS MISMOS en quien ingesta y en quien
+# consulta, o la similitud coseno no significa nada.
+EMBED_BACKEND = os.getenv("EMBED_BACKEND", "fastembed")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-small")
+EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
+# Donde fastembed guarda el modelo ONNX descargado. Vacio = cache por defecto.
+EMBED_CACHE_DIR = os.getenv("EMBED_CACHE_DIR") or None
+
+# Backend de la busqueda: "postgres" (kb-seo clasico) o "sqlite" (snapshot).
+KB_BACKEND = os.getenv("KB_BACKEND", "postgres")
+# Rutas de los snapshots SQLite (publico, de solo lectura; privado, con escritura).
+KB_SQLITE_PATH = os.getenv("KB_SQLITE_PATH") or None
+KB_PRIVATE_SQLITE_PATH = os.getenv("KB_PRIVATE_SQLITE_PATH") or None
 
 
 def writer_dsn() -> str:

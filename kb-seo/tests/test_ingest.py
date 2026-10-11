@@ -4,7 +4,7 @@ import pytest
 
 from ingest import cli
 from kb import db
-from tests.conftest import borrar_documento, requires_ollama, requires_writer
+from tests.conftest import borrar_documento, requires_embeddings, requires_writer
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def documento_limpio(fuente_fixture):
 
 
 @requires_writer
-@requires_ollama
+@requires_embeddings
 def test_ingerir_el_fixture_crea_documento_y_chunks(documento_limpio):
     source = documento_limpio
     result = cli.ingest_one(source)
@@ -56,7 +56,7 @@ def test_ingerir_el_fixture_crea_documento_y_chunks(documento_limpio):
 
 
 @requires_writer
-@requires_ollama
+@requires_embeddings
 def test_reingerir_sin_cambios_no_duplica(documento_limpio):
     source = documento_limpio
     primera = cli.ingest_one(source)
@@ -78,7 +78,7 @@ def test_reingerir_sin_cambios_no_duplica(documento_limpio):
 
 
 @requires_writer
-@requires_ollama
+@requires_embeddings
 def test_si_cambia_el_contenido_se_reemplazan_los_chunks(tmp_path):
     temporal = tmp_path / "cambiante.md"
     temporal.write_text("# Titulo\n\nTexto original corto.\n", encoding="utf-8")
@@ -117,7 +117,7 @@ def test_si_cambia_el_contenido_se_reemplazan_los_chunks(tmp_path):
 
 
 @requires_writer
-@requires_ollama
+@requires_embeddings
 def test_no_toca_documentos_ajenos(documento_limpio):
     """Regresion: la suite no debe alterar fuentes que no sean suyas."""
     ajeno = {

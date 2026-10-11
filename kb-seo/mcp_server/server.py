@@ -81,7 +81,7 @@ def buscar_kb(
             amplias.
     """
     try:
-        qvec = embeddings.embed([query])[0] if query.strip() else None
+        qvec = embeddings.embed_query(query) if query.strip() else None
         results = kb_search.search(
             query, platform=plataforma, since=desde, sources=fuente, k=k, qvec=qvec
         )
