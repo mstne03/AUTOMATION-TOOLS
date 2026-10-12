@@ -1,0 +1,112 @@
+# Release del producto de escritorio (Windows x64): sidecar con PyInstaller + Tauri (NSIS)
+# + firma del updater + release de GitHub con latest.json. Se dispara con un tag vX.Y.Z que
+# debe coincidir con la version de app-ui/src-tauri/tauri.conf.json.
+#
+# Secretos necesarios (Settings > Secrets and variables > Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           contenido de ~/.tauri/seo-studio.key (NO esta en el repo)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  solo si la clave tiene contrasena (la actual, generada con --ci, no la
+#                                       tiene: NO crees el secreto; GitHub no admite valores vacios y sin el
+#                                       secreto la expresion vale "", que es lo correcto)
+# Despues, en el VPS: bash deploy/publish-app.sh vX.Y.Z (kb-seo/deploy) para servir
+# latest.json y el instalador en https://kb.mstne.dev/app/.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: El tag debe ser la version de tauri.conf.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v="v$(jq -r .version app-ui/src-tauri/tauri.conf.json)"
+          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "El tag ${GITHUB_REF_NAME} no coincide con $v" >&2; exit 1; }
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app-ui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app-ui/src-tauri
+
+      # El modelo ONNX (470 MB) se baja de Hugging Face una vez y se cachea.
+      - uses: actions/cache@v4
+        with:
+          path: app-backend/models
+          key: e5-small-${{ hashFiles('app-backend/scripts/fetch_model.py') }}
+
+      - name: Sidecar - tests, modelo y PyInstaller
+        working-directory: app-backend
+        run: |
+          uv sync --extra dev
+          uv run pytest -q
+          uv run python scripts/fetch_model.py
+          uv run pyinstaller --noconfirm --clean app-backend.spec
+
+      - name: Sidecar - test de arranque del binario (sin red)
+        working-directory: app-backend
+        run: uv run python scripts/smoke_test.py
+
+      - name: Copiar el sidecar a src-tauri/binaries
+        working-directory: app-ui
+        run: bash scripts/prepare-sidecar.sh
+
+      - name: UI - dependencias, tests y tipos
+        working-directory: app-ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm typecheck
+
+      - name: Tauri build + firma + release (borrador)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app-ui
+          tagName: ${{ github.ref_name }}
+          releaseName: "SEO Studio ${{ github.ref_name }}"
+          releaseBody: "Instalador para Windows x64 (sin firma de código: SmartScreen avisará; ver app-ui/README.md)."
+          releaseDraft: true
+          includeUpdaterJson: true
+
+      # Pitfall del informe (2.1): que el instalador lleve el sidecar recién compilado.
+      - name: Verificar que el sidecar del bundle es el de este build
+        run: |
+          a=$(sha256sum app-backend/dist/app-backend/app-backend.exe | cut -d' ' -f1)
+          b=$(sha256sum app-ui/src-tauri/target/release/app-backend.exe | cut -d' ' -f1)
+          echo "dist:   $a"; echo "bundle: $b"
+          [ "$a" = "$b" ] || { echo "El sidecar empaquetado no es el recién compilado" >&2; exit 1; }
+          ls -la app-ui/src-tauri/target/release/bundle/nsis/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seo-studio-windows
+          path: |
+            app-ui/src-tauri/target/release/bundle/nsis/*-setup.exe
+            app-ui/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+            app-ui/src-tauri/target/release/bundle/nsis/latest.json
+          if-no-files-found: error

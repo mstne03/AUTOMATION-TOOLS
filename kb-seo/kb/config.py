@@ -1,13 +1,17 @@
 """Carga de configuracion desde .env."""
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-load_dotenv(PROJECT_ROOT / ".env")
+# En el binario empaquetado (PyInstaller, sys.frozen) no se lee ningun .env: la
+# configuracion llega solo por variables de entorno que fija el propio producto.
+if not getattr(sys, "frozen", False):
+    load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _req(name: str) -> str:
@@ -37,6 +41,10 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-small")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
 # Donde fastembed guarda el modelo ONNX descargado. Vacio = cache por defecto.
 EMBED_CACHE_DIR = os.getenv("EMBED_CACHE_DIR") or None
+# Directorio con el modelo ya descargado (config.json, tokenizer.json, onnx/model.onnx).
+# Si se fija, fastembed lo carga de ahi sin tocar la red: es lo que usa el producto
+# empaquetado, que lleva el modelo dentro del instalador.
+EMBED_MODEL_PATH = os.getenv("EMBED_MODEL_PATH") or None
 
 # Backend de la busqueda: "postgres" (kb-seo clasico) o "sqlite" (snapshot).
 KB_BACKEND = os.getenv("KB_BACKEND", "postgres")

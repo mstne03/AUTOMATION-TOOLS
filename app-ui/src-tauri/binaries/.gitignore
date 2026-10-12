@@ -1,0 +1,3 @@
+# Sidecar empaquetado: lo deja scripts/prepare-sidecar.sh a partir de app-backend/dist
+*
+!.gitignore

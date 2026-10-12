@@ -1,5 +1,6 @@
 /** Marco común: barra lateral de 220 px + contenido (docs/pantallas.md → Marco común). */
 import { NavLink, Outlet } from "react-router";
+import { UpdateBanner } from "./UpdateBanner";
 
 const enlaces = [
   ["chat", "Chat"],
@@ -22,6 +23,7 @@ export function Layout() {
         ))}
       </nav>
       <main>
+        <UpdateBanner />
         <Outlet />
       </main>
     </div>

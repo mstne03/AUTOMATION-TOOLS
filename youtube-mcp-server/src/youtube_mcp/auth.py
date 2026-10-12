@@ -51,6 +51,16 @@ def _validar_client_config(raw: str) -> dict:
         raise AuthError(f"client_secret.json is not valid JSON: {e}") from e
     if not isinstance(config, dict) or not ({"installed", "web"} & set(config)):
         raise AuthError("client_secret.json must contain an 'installed' or 'web' section.")
+    # Las mismas claves que exige google_auth_oauthlib al arrancar el flujo: si faltan,
+    # mejor rechazar el fichero al importarlo que fallar al pulsar "Autorizar".
+    seccion = config.get("installed") or config.get("web") or {}
+    faltan = sorted({"client_id", "client_secret", "auth_uri", "token_uri"} - set(seccion))
+    if faltan:
+        raise AuthError(
+            f"client_secret.json is incomplete (missing {', '.join(faltan)}). "
+            "Download the file from Google Cloud Console > APIs & Services > Credentials "
+            "and import it without editing it."
+        )
     return config
 
 

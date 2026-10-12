@@ -322,7 +322,10 @@ def create_app(
     @app.post("/youtube/auth", dependencies=protegido)
     async def youtube_authorize(body: YouTubeAuthIn):
         # Unica ruta que abre el navegador: la pide el usuario desde la UI, no el modelo.
-        return await asyncio.to_thread(youtube_auth, body.profile, body.reauthorize)
+        r = await asyncio.to_thread(youtube_auth, body.profile, body.reauthorize)
+        if r.get("status") == "error":
+            raise HTTPException(status_code=400, detail=r.get("detail", "Fallo al autorizar."))
+        return r
 
     @app.get("/youtube/tools", dependencies=protegido)
     async def youtube_tools():
