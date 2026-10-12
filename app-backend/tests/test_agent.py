@@ -25,11 +25,12 @@ SPECS = [
     ToolSpec(
         name="fake_update", description="Actualiza", fn=_write_tool, risk="write",
         quota={"bucket": "general", "cost": 50}, job_kind=None, strict=True,
+        omit_if_empty=frozenset({"title"}),
         input_schema={
             "type": "object",
             "properties": {
                 "video_id": {"type": "string"},
-                "title": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "title": {"type": "string"},  # "" = no indicado (ver registry.strict_schema)
             },
             "required": ["video_id", "title"],
             "additionalProperties": False,
@@ -91,7 +92,7 @@ async def test_write_tool_waits_for_approval_then_runs(fake_anthropic, tmp_path)
     fake = fake_anthropic([
         sse_message(
             [{"type": "tool_use", "id": "t1", "name": "fake_update",
-              "input": {"video_id": "v1", "title": None}}],
+              "input": {"video_id": "v1", "title": ""}}],
             "tool_use",
         ),
         sse_message([{"type": "text", "text": "Hecho."}], "end_turn"),
@@ -114,7 +115,7 @@ async def test_write_tool_waits_for_approval_then_runs(fake_anthropic, tmp_path)
     await turno
     evs = await _drain(events)
     assert [e["type"] for e in evs] == ["approval_resolved", "tool_result", "text", "done"]
-    assert LLAMADAS == [{"video_id": "v1", "title": "x"}]  # null descartado -> default
+    assert LLAMADAS == [{"video_id": "v1", "title": "x"}]  # "" descartado -> default
     assert json.loads(evs[1]["content"]) == {"id": "v1", "title": "x"}
     await jobs.stop()
 
