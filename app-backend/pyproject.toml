@@ -22,6 +22,12 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27", "ruff>=0.6"]
 [project.scripts]
 app-backend = "app_backend.main:main"
 
+[tool.uv]
+# Solo el CPython gestionado por uv: con un entorno de Anaconda activo, uv podia crear
+# el .venv con su Python y el binario de PyInstaller moria con "DLL load failed while
+# importing _ctypes" (ver README, Empaquetado).
+python-preference = "only-managed"
+
 [tool.uv.sources]
 youtube-studio-mcp = { path = "../youtube-mcp-server", editable = true }
 kb-seo = { path = "../kb-seo", editable = true }

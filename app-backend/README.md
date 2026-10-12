@@ -88,9 +88,18 @@ uv run python scripts/smoke_test.py         # lanza el .exe, lee el puerto, GET 
 ```
 
 Hazlo con el **CPython de `uv`**, no con Anaconda: el `_ctypes` de Anaconda depende de una
-`ffi.dll` que PyInstaller no recoge y el binario muere con "DLL load failed" al importar
-`psycopg`. `uv sync --managed-python` (o `uv python install 3.12`) lo deja bien; el pipeline
-de CI usa ese mismo CPython.
+`ffi.dll` que PyInstaller no recoge y el binario muere con "DLL load failed while importing
+_ctypes" al importar `psycopg`. `pyproject.toml` fija `python-preference = "only-managed"`
+para que `uv` no elija nunca el Python de Anaconda (aunque haya un entorno conda activo), y
+`app-backend.spec` aborta al principio si el `.venv` lo usa. Si ya se creo con Anaconda:
+
+```bash
+conda deactivate            # si hay un entorno activo
+rm -rf .venv && uv sync --extra dev
+uv run python -c "import sys; print(sys.base_prefix)"   # debe ser ...\uv\python\cpython-3.12...
+```
+
+El pipeline de CI usa ese mismo CPython.
 
 Diferencias del binario congelado (`sys.frozen`, ver `config.py` y `kb/config.py`):
 
