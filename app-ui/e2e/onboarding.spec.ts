@@ -54,7 +54,7 @@ test.describe("Onboarding", () => {
     await page.getByTestId("google-paso-a").check();
     await page.getByTestId("google-paso-b").check();
     await page.getByTestId("google-json").fill(
-      JSON.stringify({ installed: { client_id: "id-e2e.apps.googleusercontent.com", client_secret: "secreto-e2e", redirect_uris: ["http://localhost"] } }),
+      JSON.stringify({ installed: { client_id: "id-e2e.apps.googleusercontent.com", client_secret: "secreto-e2e", auth_uri: "https://accounts.google.com/o/oauth2/auth", token_uri: "https://oauth2.googleapis.com/token", redirect_uris: ["http://localhost"] } }),
     );
     await page.getByTestId("google-importar").click();
     await expect(page.getByTestId("paso-google")).toHaveAttribute("data-estado", "hecho");

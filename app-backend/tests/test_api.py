@@ -75,7 +75,10 @@ async def test_settings_roundtrip(client):
 async def test_client_secret_import(client):
     r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": "{}"})
     assert r.status_code == 400
-    bueno = json.dumps({"installed": {"client_id": "id", "client_secret": "s"}})
+    incompleto = json.dumps({"installed": {"client_id": "id", "client_secret": "s"}})
+    r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": incompleto})
+    assert r.status_code == 400 and "auth_uri" in r.json()["detail"]
+    bueno = '{"installed": {"client_id": "id", "client_secret": "s", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}'
     r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": bueno})
     assert r.status_code == 200 and r.json()["has_client_secret"] is True
 

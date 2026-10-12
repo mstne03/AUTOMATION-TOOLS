@@ -8,7 +8,7 @@ import pytest
 
 from youtube_mcp.auth import AuthError, YouTubeAuth
 
-CLIENT_SECRET = json.dumps({"installed": {"client_id": "id", "client_secret": "s"}})
+CLIENT_SECRET = '{"installed": {"client_id": "id", "client_secret": "s", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}'
 
 
 class DictStore:
