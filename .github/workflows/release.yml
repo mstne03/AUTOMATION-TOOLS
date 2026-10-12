@@ -4,7 +4,9 @@
 #
 # Secretos necesarios (Settings > Secrets and variables > Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           contenido de ~/.tauri/seo-studio.key (NO esta en el repo)
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contrasena de esa clave (vacia si se genero con --ci)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  solo si la clave tiene contrasena (la actual, generada con --ci, no la
+#                                       tiene: NO crees el secreto; GitHub no admite valores vacios y sin el
+#                                       secreto la expresion vale "", que es lo correcto)
 # Despues, en el VPS: bash deploy/publish-app.sh vX.Y.Z (kb-seo/deploy) para servir
 # latest.json y el instalador en https://kb.mstne.dev/app/.
 name: release

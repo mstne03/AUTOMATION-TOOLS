@@ -108,7 +108,8 @@ updater (la que la app verifica), no SmartScreen.
 
 - Clave privada en `C:\Users\Marc\.tauri\seo-studio.key` (generada con
   `pnpm tauri signer generate --ci`, sin contraseña; **fuera del repo**, y en CI como secreto
-  `TAURI_SIGNING_PRIVATE_KEY`). Si se pierde, los clientes ya instalados no podrán
+  `TAURI_SIGNING_PRIVATE_KEY`; no crees `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: GitHub no admite
+  secretos vacíos y sin él la expresión vale "", que es lo que toca para una clave sin contraseña). Si se pierde, los clientes ya instalados no podrán
   actualizarse nunca: guárdala en el gestor de contraseñas. La pública está en
   `tauri.conf.json > plugins.updater.pubkey`.
 - Endpoint `https://kb.mstne.dev/app/latest.json` (Nginx del VPS; `kb-seo/deploy`). El
