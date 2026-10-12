@@ -83,7 +83,7 @@ class Agent:
 
     def _wrap(self, spec: ToolSpec, events: asyncio.Queue) -> BetaAsyncFunctionTool:
         async def run(**kwargs: Any) -> str:
-            args = {k: v for k, v in kwargs.items() if v is not None}
+            args = spec.clean_args(kwargs)
             if spec.risk != "read":
                 ap = self.approvals.create(spec.name, args, spec.risk, spec.quota)
                 events.put_nowait({"type": "approval_required", "approval": ap.to_dict()})

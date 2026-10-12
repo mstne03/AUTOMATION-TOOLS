@@ -52,7 +52,11 @@ desarrollar contra el Postgres de `kb-seo`: `KB_BACKEND=postgres` en `.env.local
 
 - **Registro** (`registry.py`): lee las tools ya registradas en los `MCPServer` de ambos
   repos y les anade riesgo (`read` / `write` / `destructive`), coste de cuota y, para
-  subida y transcripcion, el tipo de job. Esquemas transformados para `strict: true`.
+  subida y transcripcion, el tipo de job. Solo las `write`/`destructive` van con
+  `strict: true`, con el esquema transformado: los opcionales de texto o lista pasan a
+  obligatorios con `""`/`[]` = "no indicado" y el resto admite `null`. Asi el conjunto de
+  estrictas queda en 2 parametros con union (la API rechaza con 400 cualquier peticion
+  si pasan de 16, y de 20 tools estrictas); `tests/test_registry.py` lo vigila.
 - **Agente** (`agent.py`): `client.beta.messages.tool_runner(stream=True)` con
   `fallbacks="default"`, `cache_control` en el system prompt (cubre tools + system) y
   tools ordenadas por nombre para que el prefijo cacheado no cambie. El gate vive dentro
@@ -94,9 +98,11 @@ Diferencias del binario congelado (`sys.frozen`, ver `config.py` y `kb/config.py
   propio producto. Un `.env` junto al ejecutable no puede cambiar nada.
 - **Modelo de embeddings dentro del bundle** (`_internal/models/multilingual-e5-small`):
   `EMBED_MODEL_PATH` apunta ahi y `fastembed` lo carga con `specific_model_path`, sin tocar
-  Hugging Face (`HF_HUB_OFFLINE=1` por si acaso). El modelo es el ONNX fp32 oficial, el mismo
+  Hugging Face. **No** se fija `HF_HUB_OFFLINE`: bloquearia tambien la descarga del modelo de
+  Whisper (el smoke test comprueba que el sidecar no la tiene). El modelo es el ONNX fp32 oficial, el mismo
   que ingesta el VPS: cuantizarlo a int8 cambiaria los vectores respecto al snapshot.
-- Whisper (`faster-whisper`) va en el bundle pero su modelo se descarga en el primer uso.
+- Whisper (`faster-whisper`) va en el bundle pero su modelo (`small`, ~480 MB) se descarga de
+  Hugging Face en el primer uso a `%USERPROFILE%\.cache\huggingface\hub`.
 - Playwright (extractor `browser`) queda excluido: es solo del VPS.
 
 ## Tests

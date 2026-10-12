@@ -11,8 +11,9 @@
 //! Object con KILL_ON_JOB_CLOSE: si la app muere de cualquier forma (crash, `taskkill /F`)
 //! el kernel cierra el handle del job y mata al sidecar; sin esto quedaba huérfano.
 //!
-//! El updater corre en Rust (comandos `update_check` / `update_install`), así que el
-//! WebView sigue sin ningún permiso más allá de `core:default`.
+//! El updater corre en Rust (comandos `update_check` / `update_install`), y el diálogo
+//! para elegir el vídeo también (`elegir_video`), así que el WebView sigue sin ningún
+//! permiso más allá de `core:default`.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -20,6 +21,7 @@ use std::time::Duration;
 use rand::RngCore;
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -189,13 +191,32 @@ async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------------------ diálogo
+
+const EXTENSIONES_VIDEO: [&str; 5] = ["mp4", "mov", "mkv", "webm", "avi"];
+
+/// Abre el explorador de Windows en `dir_inicial` (la primera carpeta permitida) filtrado a
+/// vídeo y devuelve la ruta elegida, o `None` si se cancela. Es comodidad, no control de
+/// acceso: el sidecar sigue validando la ruta contra la lista blanca (`resolve_allowed`).
+/// Comando `async` para que el diálogo bloqueante no corra en el hilo principal.
+#[tauri::command]
+async fn elegir_video(app: tauri::AppHandle, dir_inicial: String) -> Option<String> {
+    let mut dialogo = app.dialog().file().add_filter("Vídeo", &EXTENSIONES_VIDEO);
+    if !dir_inicial.is_empty() && std::path::Path::new(&dir_inicial).is_dir() {
+        dialogo = dialogo.set_directory(&dir_inicial);
+    }
+    let ruta = dialogo.blocking_pick_file()?;
+    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Sidecar::default())
-        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install])
+        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video])
         .setup(|app| {
             spawn_sidecar(app.handle())?;
             Ok(())
