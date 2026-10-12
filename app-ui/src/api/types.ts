@@ -61,6 +61,8 @@ export interface Settings {
   has_client_secret: boolean;
   state_dir: string;
   secret_store: string;
+  /** Diagnóstico: debe ser null (si no, Whisper no puede bajar su modelo). */
+  hf_hub_offline?: string | null;
 }
 
 export interface SettingsPatch {

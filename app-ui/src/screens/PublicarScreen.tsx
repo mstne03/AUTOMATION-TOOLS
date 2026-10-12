@@ -1,5 +1,6 @@
-/** Publicar vídeo (docs/pantallas.md → Publicar): ruta dentro de allowed_dirs, transcripción
- *  como job, borrador generado por el agente y editable, subida con aprobación inline. */
+/** Publicar vídeo (docs/pantallas.md → Publicar): vídeo elegido con el explorador (o ruta
+ *  escrita) dentro de allowed_dirs, transcripción como job, borrador generado por el agente
+ *  y editable, subida con aprobación inline. */
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useClient } from "../api/context";
@@ -7,6 +8,7 @@ import { useSettings } from "../api/queries";
 import type { Job } from "../api/types";
 import { TurnoView } from "../chat/ChatScreen";
 import { useChat } from "../chat/useChat";
+import { elegirVideo } from "../dialogo";
 
 interface Borrador {
   title: string;
@@ -49,6 +51,26 @@ export function PublicarScreen() {
   const dirs = settings.data?.allowed_dirs ?? [];
   const pathOk = path.trim() !== "" && dirs.some((d) => norm(path).startsWith(norm(d.path) + "\\"));
   const pathError = path.trim() !== "" && !pathOk;
+  const [errorDialogo, setErrorDialogo] = useState<string | null>(null);
+
+  const elegir = async () => {
+    setErrorDialogo(null);
+    try {
+      const elegido = await elegirVideo(dirs[0]?.path ?? "");
+      if (elegido) setPath(elegido);
+    } catch (e) {
+      setErrorDialogo(String((e as Error)?.message ?? e));
+    }
+  };
+
+  // Por qué no se puede pedir la subida todavía (null = se puede).
+  const motivoSubir = !pathOk
+    ? "Falta elegir un vídeo dentro de una carpeta permitida."
+    : !borrador.title.trim()
+      ? "Falta el título del borrador."
+      : chat.enStream
+        ? "Espera a que el agente termine la respuesta en curso."
+        : null;
 
   const transcribir = useMutation({
     mutationFn: async () => {
@@ -108,7 +130,13 @@ export function PublicarScreen() {
       <section data-testid="publicar-fichero">
         <h2>1. Fichero</h2>
         {dirs.length === 0 && <p className="error">No hay carpetas permitidas. Añade una en Ajustes.</p>}
-        <input data-testid="publicar-path" placeholder={dirs[0] ? `${dirs[0].path}\\mi-video.mp4` : "ruta del vídeo"} value={path} onChange={(e) => setPath(e.target.value)} />
+        <div className="fila publicar-ruta">
+          <button data-testid="publicar-elegir" disabled={dirs.length === 0} onClick={() => void elegir()}>
+            Elegir vídeo…
+          </button>
+          <input data-testid="publicar-path" placeholder={dirs[0] ? `${dirs[0].path}\\mi-video.mp4` : "ruta del vídeo"} value={path} onChange={(e) => setPath(e.target.value)} />
+        </div>
+        {errorDialogo && <p className="error" data-testid="publicar-elegir-error">{errorDialogo}</p>}
         {pathError && (
           <p className="error" data-testid="publicar-path-error">
             La ruta debe estar dentro de una carpeta permitida: {dirs.map((d) => d.path).join(", ")}
@@ -167,9 +195,10 @@ export function PublicarScreen() {
 
       <section>
         <h2>4. Subir</h2>
-        <button data-testid="publicar-subir" disabled={!pathOk || !borrador.title.trim() || chat.enStream} onClick={subir}>
+        <button data-testid="publicar-subir" disabled={motivoSubir !== null} onClick={subir}>
           Pedir al agente que lo suba
         </button>
+        {motivoSubir && <p className="nota" data-testid="publicar-subir-motivo">{motivoSubir}</p>}
         <p className="nota">La subida no empieza hasta que apruebes la propuesta que aparecerá abajo.</p>
       </section>
 

@@ -52,7 +52,11 @@ desarrollar contra el Postgres de `kb-seo`: `KB_BACKEND=postgres` en `.env.local
 
 - **Registro** (`registry.py`): lee las tools ya registradas en los `MCPServer` de ambos
   repos y les anade riesgo (`read` / `write` / `destructive`), coste de cuota y, para
-  subida y transcripcion, el tipo de job. Esquemas transformados para `strict: true`.
+  subida y transcripcion, el tipo de job. Solo las `write`/`destructive` van con
+  `strict: true`, con el esquema transformado: los opcionales de texto o lista pasan a
+  obligatorios con `""`/`[]` = "no indicado" y el resto admite `null`. Asi el conjunto de
+  estrictas queda en 2 parametros con union (la API rechaza con 400 cualquier peticion
+  si pasan de 16, y de 20 tools estrictas); `tests/test_registry.py` lo vigila.
 - **Agente** (`agent.py`): `client.beta.messages.tool_runner(stream=True)` con
   `fallbacks="default"`, `cache_control` en el system prompt (cubre tools + system) y
   tools ordenadas por nombre para que el prefijo cacheado no cambie. El gate vive dentro

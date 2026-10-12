@@ -10,6 +10,13 @@ test.describe("Publicar vídeo", () => {
     await expect(page.getByTestId("publicar-transcribir")).toBeDisabled();
     await expect(page.getByTestId("borrador-generar")).toBeDisabled();
     await expect(page.getByTestId("publicar-subir")).toBeDisabled();
+    await expect(page.getByTestId("publicar-subir-motivo")).toContainText("Falta elegir un vídeo");
+
+    // Fuera de Tauri no hay diálogo nativo: el botón existe pero no cambia la ruta.
+    await expect(page.getByTestId("publicar-elegir")).toBeEnabled();
+    await page.getByTestId("publicar-elegir").click();
+    await expect(page.getByTestId("publicar-path")).toHaveValue("");
+    await expect(page.getByTestId("publicar-elegir-error")).toHaveCount(0);
 
     await page.getByTestId("publicar-path").fill("C:\\otra\\carpeta\\video.mp4");
     await expect(page.getByTestId("publicar-path-error")).toContainText(dir);
@@ -20,8 +27,10 @@ test.describe("Publicar vídeo", () => {
     await expect(page.getByTestId("publicar-transcribir")).toBeEnabled();
     await expect(page.getByTestId("borrador-generar")).toBeEnabled();
     await expect(page.getByTestId("publicar-subir")).toBeDisabled(); // falta el título
+    await expect(page.getByTestId("publicar-subir-motivo")).toHaveText("Falta el título del borrador.");
     await page.getByTestId("borrador-title").fill("Título E2E");
     await expect(page.getByTestId("publicar-subir")).toBeEnabled();
+    await expect(page.getByTestId("publicar-subir-motivo")).toHaveCount(0);
     await expect(page.getByTestId("borrador-privacy")).toHaveValue("private");
   });
 

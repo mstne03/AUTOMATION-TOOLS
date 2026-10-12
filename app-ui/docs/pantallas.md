@@ -111,9 +111,14 @@ Botón `onboarding-terminar` ("Ir al chat"), habilitado cuando 1–3 están hech
 
 ## Publicar vídeo (`/publicar`)
 
-1. `publicar-fichero`: `select` con los ficheros de vídeo de las `allowed_dirs`
-   (el sidecar no lista carpetas: se escribe la ruta en `publicar-path`, que debe empezar
-   por una `allowed_dir`; si no, error `publicar-path-error`).
+1. `publicar-fichero`: botón `publicar-elegir` ("Elegir vídeo…") que abre el explorador de
+   Windows ya situado en `allowed_dirs[0]` y filtrado a vídeo (`mp4, mov, mkv, webm, avi`), y
+   rellena `publicar-path` con la ruta elegida. El diálogo lo abre Rust (comando
+   `elegir_video` con `tauri-plugin-dialog`), así que el WebView sigue solo con
+   `core:default`. `publicar-path` sigue siendo editable: fuera de Tauri (E2E, `pnpm dev`)
+   no hay diálogo y la ruta se escribe a mano. Debe empezar por una `allowed_dir`; si no,
+   error `publicar-path-error`. El diálogo es comodidad, no control de acceso: el sidecar
+   valida la ruta con `resolve_allowed`. Si el diálogo falla, `publicar-elegir-error`.
 2. `publicar-transcribir`: botón que crea job `transcribe` y muestra barra
    `publicar-progreso` con "N %"; al terminar, `publicar-transcripcion` con el texto.
 3. `publicar-borrador`: botón "Generar borrador" que envía al chat la petición con la
@@ -121,6 +126,8 @@ Botón `onboarding-terminar` ("Ir al chat"), habilitado cuando 1–3 están hech
    `borrador-privacy`, `borrador-publishAt` son editables.
 4. `publicar-subir`: botón que pide al agente subir con los campos actuales; la aprobación
    llega como tarjeta inline (misma tarjeta que el chat) y el progreso en `publicar-progreso`.
+   Mientras está deshabilitado, `publicar-subir-motivo` dice por qué ("Falta elegir un
+   vídeo…", "Falta el título del borrador.", o que el agente aún está respondiendo).
 
 ## Panel de canal (`/canal`)
 
