@@ -15,6 +15,7 @@ del VPS). Los hooks de pyinstaller-hooks-contrib ya cubren onnxruntime (DLLs),
 googleapiclient (discovery docs), psycopg_binary (libpq), av, lxml, tzdata y certifi.
 """
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import (
@@ -23,6 +24,17 @@ from PyInstaller.utils.hooks import (
     collect_dynamic_libs,
     collect_submodules,
 )
+
+# Con el Python de Anaconda el binario muere al arrancar con "DLL load failed while
+# importing _ctypes": su _ctypes depende de una ffi.dll que PyInstaller no recoge. Se
+# corta aqui, antes de 5 minutos de build, en vez de descubrirlo en el smoke test.
+_BASE = Path(sys.base_prefix)
+if (_BASE / "conda-meta").is_dir():
+    raise SystemExit(
+        f"El .venv usa el Python de Anaconda ({_BASE}). Recrealo con el CPython de uv:\n"
+        "  conda deactivate   (si hay un entorno activo)\n"
+        "  rm -rf .venv && uv sync --extra dev"
+    )
 
 RAIZ = Path(SPECPATH)
 MODELO = RAIZ / "models" / "multilingual-e5-small"
