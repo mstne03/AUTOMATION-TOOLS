@@ -23,6 +23,7 @@ _TIMEOUT = 180.0
 _lock = threading.Lock()
 _client: httpx.Client | None = None       # Ollama
 _model = None                              # fastembed.TextEmbedding
+_registered: set[str] = set()              # modelos custom ya registrados en fastembed
 
 
 def _prefixes() -> tuple[str, str]:
@@ -90,8 +91,11 @@ def _get_model():
             from fastembed import TextEmbedding
             from fastembed.common.model_description import ModelSource, PoolingType
 
+            # El registro de fastembed es global al proceso y no admite registrar dos
+            # veces: si TextEmbedding(...) falla (403, sin red), el reintento no debe
+            # volver a registrarlo o lanzaria "already registered" hasta reiniciar.
             custom = _CUSTOM_MODELS.get(config.EMBED_MODEL)
-            if custom:
+            if custom and config.EMBED_MODEL not in _registered:
                 TextEmbedding.add_custom_model(
                     model=config.EMBED_MODEL,
                     pooling=PoolingType.MEAN,
@@ -99,6 +103,7 @@ def _get_model():
                     sources=ModelSource(hf=config.EMBED_MODEL),
                     **custom,
                 )
+                _registered.add(config.EMBED_MODEL)
             _model = TextEmbedding(
                 model_name=config.EMBED_MODEL,
                 cache_dir=config.EMBED_CACHE_DIR,

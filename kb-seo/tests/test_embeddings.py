@@ -49,6 +49,32 @@ def test_prefijos_e5(monkeypatch):
     assert embeddings._prefixes() == ("", "")
 
 
+def test_reintento_tras_fallo_de_carga_no_registra_dos_veces(monkeypatch):
+    """Si TextEmbedding(...) falla (403, sin red), el reintento debe poder cargar el
+    modelo en vez de chocar con el registro custom que ya hizo el primer intento."""
+    import fastembed
+
+    llamadas = []
+
+    def init_falso(self, *args, **kwargs):
+        llamadas.append(kwargs)
+        if len(llamadas) == 1:
+            raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(config, "EMBED_MODEL", "intfloat/multilingual-e5-small")
+    monkeypatch.setattr(embeddings, "_model", None)
+    monkeypatch.setattr(fastembed.TextEmbedding, "__init__", init_falso)
+
+    try:
+        embeddings._get_model()
+    except RuntimeError as e:
+        assert "403" in str(e)
+    assert embeddings._model is None
+
+    assert embeddings._get_model() is not None  # sin "already registered"
+    assert len(llamadas) == 2
+
+
 @requires_embeddings
 def test_query_y_pasaje_se_parecen():
     """Con los prefijos puestos, una pregunta queda mas cerca del pasaje que la responde."""

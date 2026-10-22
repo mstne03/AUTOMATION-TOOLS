@@ -11,7 +11,7 @@ import { PublicarScreen } from "../screens/PublicarScreen";
 
 const DIR = "C:\\Users\\Marc\\Videos";
 
-function montar() {
+function montar(extra: Partial<Client> = {}) {
   const settings = {
     model: "claude-opus-5-5",
     models: ["claude-opus-5-5"],
@@ -22,7 +22,7 @@ function montar() {
     state_dir: "C:\\estado",
     secret_store: "FileSecretStore",
   } as Settings;
-  const client = { getSettings: vi.fn(async () => settings) } as unknown as Client;
+  const client = { getSettings: vi.fn(async () => settings), ...extra } as unknown as Client;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -68,5 +68,34 @@ describe("PublicarScreen", () => {
     fireEvent.click(boton);
     await waitFor(() => expect(elegirVideo).toHaveBeenCalled());
     expect((screen.getByTestId("publicar-path") as HTMLInputElement).value).toBe(`${DIR}\\a.mp4`);
+  });
+
+  // E6: el job devuelve full_text (no text); antes la UI volcaba el JSON entero en el textarea.
+  const jobHecho = (full_text: string) => ({
+    id: "j1",
+    kind: "transcribe",
+    status: "done",
+    progress: 1,
+    result: { full_text, segments: [], language: "es", notes: full_text ? [] : ["No speech detected in the file."] },
+    error: null,
+  });
+
+  async function transcribir(full_text: string) {
+    montar({ createJob: vi.fn(async () => jobHecho(full_text)) } as unknown as Partial<Client>);
+    const boton = await screen.findByTestId("publicar-transcribir");
+    fireEvent.change(screen.getByTestId("publicar-path"), { target: { value: `${DIR}\\a.mp4` } });
+    await waitFor(() => expect((boton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(boton);
+  }
+
+  it("la transcripción muestra full_text", async () => {
+    await transcribir("hola a todos");
+    await waitFor(() => expect((screen.getByTestId("publicar-transcripcion") as HTMLTextAreaElement).value).toBe("hola a todos"));
+  });
+
+  it("sin voz avisa en vez de mostrar el JSON del job", async () => {
+    await transcribir("");
+    await screen.findByTestId("publicar-sin-voz");
+    expect(screen.queryByTestId("publicar-transcripcion")).toBeNull();
   });
 });
