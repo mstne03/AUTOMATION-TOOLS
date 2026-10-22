@@ -28,7 +28,12 @@ nginx -t
 systemctl reload nginx
 
 echo "== 4. TLS con certbot (anade el bloque 443 y la redireccion)"
-if [ ! -d "/etc/letsencrypt/live/$DOMINIO" ]; then
+# El paso 3 acaba de sobrescribir el site con la version del repo, que no lleva el bloque 443
+# que certbot anadio la primera vez. Con el certificado ya emitido basta con reinstalarlo en
+# la config (no pide uno nuevo); sin esto, repetir el script dejaba el dominio sin HTTPS.
+if [ -d "/etc/letsencrypt/live/$DOMINIO" ]; then
+    certbot install --nginx --cert-name "$DOMINIO" -d "$DOMINIO" --redirect --non-interactive
+else
     certbot --nginx -d "$DOMINIO" --non-interactive --agree-tos --keep-until-expiring \
         --email "$(grep -m1 -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' /etc/letsencrypt/renewal/*.conf 2>/dev/null | head -1 || true)" \
         || certbot --nginx -d "$DOMINIO" --non-interactive --agree-tos --register-unsafely-without-email
