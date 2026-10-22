@@ -35,7 +35,9 @@ FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
     _BUNDLE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     os.environ.setdefault("EMBED_MODEL_PATH", str(_BUNDLE / "models" / "multilingual-e5-small"))
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")  # fastembed/huggingface_hub: nunca a la red
+    # Sin HF_HUB_OFFLINE: fastembed carga el modelo con specific_model_path y no toca la red
+    # de todos modos, y faster-whisper necesita huggingface_hub en linea para bajar su modelo
+    # en el primer uso (la Fase 4 lo bloqueaba; ver HANDOFF-fase5.md, E1).
 else:
     # .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
     # Ninguno se commitea; .env.local pisa a .env.

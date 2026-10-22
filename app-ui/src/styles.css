@@ -324,6 +324,13 @@ h2 {
   width: 100%;
   max-width: 48rem;
 }
+.publicar-ruta {
+  flex-wrap: nowrap;
+  max-width: 48rem;
+}
+.publicar-ruta input {
+  flex: 1;
+}
 .ajustes th {
   text-align: left;
   font-weight: 500;

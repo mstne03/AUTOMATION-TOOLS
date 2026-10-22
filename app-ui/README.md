@@ -146,8 +146,9 @@ hash. El flujo real de publicación (subida/borrado en YouTube) no se repitió e
 
 - El token vive en memoria de Rust y del WebView; no se escribe en disco ni en logs.
 - CSP (`src-tauri/tauri.conf.json`): `connect-src` solo `ipc:` y `http://127.0.0.1:*`; sin
-  scripts externos. `capabilities/default.json` solo concede `core:default`. El updater y el
-  sidecar se manejan desde Rust: el WebView no recibe permisos de ningún plugin.
+  scripts externos. `capabilities/default.json` solo concede `core:default`. El updater, el
+  sidecar y el diálogo "Elegir vídeo…" (`elegir_video`, `tauri-plugin-dialog`) se manejan
+  desde Rust: el WebView no recibe permisos de ningún plugin.
 - La clave de Anthropic se envía una vez con `PUT /settings` y la API nunca la devuelve;
   los campos de clave son `type=password` y se vacían tras guardar.
 - La salida del modelo es entrada no confiable: el Markdown se renderiza como elementos

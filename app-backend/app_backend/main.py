@@ -8,6 +8,7 @@ el token, cualquier proceso local podria pedir al sidecar que suba o borre video
 import asyncio
 import json
 import logging
+import os
 import secrets
 import socket
 from contextlib import asynccontextmanager
@@ -355,6 +356,8 @@ def create_app(
             "has_client_secret": yt_auth.has_client_secret(),
             "state_dir": str(config.STATE_DIR),
             "secret_store": type(yt_auth.store).__name__,
+            # Diagnostico para el smoke test: debe ser None (si no, Whisper no puede bajar su modelo).
+            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
         }
 
     @app.get("/settings", dependencies=protegido)

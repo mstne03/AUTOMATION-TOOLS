@@ -4,9 +4,11 @@
 
 Hace lo mismo que Tauri: lanza el .exe con APP_BACKEND_TOKEN, lee la primera linea de
 stdout (`{"port": N, "token": "..."}`), llama a GET /settings con el token y a
-GET /kb/buscar (que carga el modelo de embeddings EMBEBIDO: HF_HUB_OFFLINE=1 y
-KB_UPDATE_URL apuntando a un puerto cerrado, asi que si tocara la red fallaria), y
-cierra el proceso. Estado en un directorio temporal con secretos en fichero: no toca
+GET /kb/buscar (que carga el modelo de embeddings EMBEBIDO con KB_UPDATE_URL apuntando a
+un puerto cerrado; fastembed usa specific_model_path y no consulta HuggingFace), y cierra
+el proceso. Comprueba tambien que HF_HUB_OFFLINE NO esta en el entorno del hijo: si
+estuviera, faster-whisper no podria bajar su modelo en la primera transcripcion (E1 de
+la Fase 5). Estado en un directorio temporal con secretos en fichero: no toca
 el Credential Manager ni LOCALAPPDATA/seo-studio.
 """
 
@@ -41,8 +43,8 @@ def main() -> int:
         "APP_BACKEND_DIR": estado,
         "APP_BACKEND_SECRETS": "file",
         "KB_UPDATE_URL": "http://127.0.0.1:9/kb/",  # puerto discard: falla rapido, sin red
-        "HF_HUB_OFFLINE": "1",
     }
+    env.pop("HF_HUB_OFFLINE", None)  # el hijo no debe heredarla ni fijarla el mismo
     proc = subprocess.Popen([str(exe)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=exe.parent)
     try:
         t0 = time.time()
@@ -59,6 +61,9 @@ def main() -> int:
         assert st == 200, f"GET /settings -> {st}: {cuerpo}"
         s = json.loads(cuerpo)
         assert s["state_dir"] == estado and s["secret_store"] == "FileSecretStore", s
+        assert s.get("hf_hub_offline") is None, (
+            f"HF_HUB_OFFLINE={s.get('hf_hub_offline')!r} en el sidecar: Whisper no podria bajar su modelo"
+        )
         print(f"GET /settings OK en {time.time() - t0:.1f} s (modelo {s['model']})")
 
         st, cuerpo = get(base, "/kb/buscar?q=retencion%20en%20youtube")
