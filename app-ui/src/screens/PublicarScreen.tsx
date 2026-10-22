@@ -82,8 +82,10 @@ export function PublicarScreen() {
         setJob(j);
       }
       if (j.status === "failed") throw new Error(j.error ?? "La transcripción ha fallado.");
-      const texto = (j.result as { text?: string } | null)?.text;
-      setTranscripcion(typeof texto === "string" ? texto : JSON.stringify(j.result));
+      // El job devuelve el resultado de transcribe_local_video: el texto va en full_text.
+      const texto = (j.result as { full_text?: string } | null)?.full_text;
+      if (typeof texto !== "string") throw new Error("La transcripción no devolvió texto.");
+      setTranscripcion(texto);
     },
   });
 
@@ -155,7 +157,10 @@ export function PublicarScreen() {
           </label>
         )}
         {transcribir.error && <p className="error">{transcribir.error.message}</p>}
-        {transcripcion !== null && (
+        {transcripcion !== null && !transcripcion.trim() && (
+          <p data-testid="publicar-sin-voz">No se ha detectado voz en el vídeo: el borrador se generará sin transcripción.</p>
+        )}
+        {transcripcion !== null && transcripcion.trim() !== "" && (
           <textarea data-testid="publicar-transcripcion" rows={5} value={transcripcion} onChange={(e) => setTranscripcion(e.target.value)} />
         )}
       </section>
