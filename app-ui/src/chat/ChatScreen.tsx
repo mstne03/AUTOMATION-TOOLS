@@ -4,11 +4,12 @@ import { Link, useLocation } from "react-router";
 import { useSettings } from "../api/queries";
 import { Markdown } from "./Markdown";
 import { ToolBlock } from "./ToolBlock";
+import { useConversaciones } from "../state/conversations";
 import { costeUsd, type Turno } from "./turno";
 import { useChat, type Mensaje } from "./useChat";
 
 export function ChatScreen() {
-  const chat = useChat();
+  const chat = useChat(useConversaciones((s) => s.activa));
   const settings = useSettings();
   const [texto, setTexto] = useState("");
   const lista = useRef<HTMLDivElement>(null);

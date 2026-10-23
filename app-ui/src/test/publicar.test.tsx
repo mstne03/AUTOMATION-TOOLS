@@ -8,6 +8,9 @@ import type { Settings } from "../api/types";
 vi.mock("../dialogo", () => ({ elegirVideo: vi.fn() }));
 import { elegirVideo } from "../dialogo";
 import { PublicarScreen } from "../screens/PublicarScreen";
+import { reiniciarConversaciones } from "../state/conversations";
+import { reiniciarJobs } from "../state/jobs";
+import { reiniciarPublicar } from "../state/publicar";
 
 const DIR = "C:\\Users\\Marc\\Videos";
 
@@ -37,6 +40,9 @@ describe("PublicarScreen", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    reiniciarPublicar();
+    reiniciarConversaciones();
+    reiniciarJobs();
   });
 
   it("Elegir vídeo… abre el diálogo en la primera carpeta permitida y rellena la ruta", async () => {
