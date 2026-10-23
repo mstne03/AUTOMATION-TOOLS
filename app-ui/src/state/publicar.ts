@@ -3,6 +3,7 @@
  *  de esta pantalla es la "publicar" de state/conversations.ts. */
 import { create } from "zustand";
 import type { Client } from "../api/client";
+import { limpiarConversacion } from "./conversations";
 import { esperarJob, seguirJob } from "./jobs";
 
 export interface Borrador {
@@ -62,6 +63,12 @@ export async function transcribir(client: Client) {
   } finally {
     parchar({ transcribiendo: false });
   }
+}
+
+/** Descartar: borra ruta, transcripción, borrador y la conversación del agente de esta pantalla. */
+export function descartar() {
+  usePublicar.setState(inicial(), true);
+  limpiarConversacion("publicar");
 }
 
 /** Solo para tests. */

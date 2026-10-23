@@ -124,6 +124,12 @@ export function cancelar(id: string) {
   abortos.get(id)?.abort();
 }
 
+/** Vacía una conversación (cancelando su turno en curso): "Descartar" en Publicar. */
+export function limpiarConversacion(id: string) {
+  abortos.get(id)?.abort();
+  parchar(id, () => vacia(id));
+}
+
 /** Solo para tests. */
 export function reiniciarConversaciones() {
   for (const a of abortos.values()) a.abort();

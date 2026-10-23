@@ -9,9 +9,11 @@ export interface TagInputProps {
   onChange: (tags: string[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** data-testid del campo de texto (el contenedor ya lleva "taginput"). */
+  inputTestId?: string;
 }
 
-export function TagInput({ value, onChange, placeholder = "Añadir etiqueta", disabled }: TagInputProps) {
+export function TagInput({ value, onChange, placeholder = "Añadir etiqueta", disabled, inputTestId }: TagInputProps) {
   const [texto, setTexto] = useState("");
   const campo = useFieldProps();
 
@@ -46,6 +48,7 @@ export function TagInput({ value, onChange, placeholder = "Añadir etiqueta", di
       <input
         {...campo}
         className={s.entrada}
+        data-testid={inputTestId}
         value={texto}
         disabled={disabled}
         placeholder={value.length === 0 ? placeholder : ""}

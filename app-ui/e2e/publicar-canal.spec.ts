@@ -31,7 +31,7 @@ test.describe("Publicar vídeo", () => {
     await page.getByTestId("borrador-title").fill("Título E2E");
     await expect(page.getByTestId("publicar-subir")).toBeEnabled();
     await expect(page.getByTestId("publicar-subir-motivo")).toHaveCount(0);
-    await expect(page.getByTestId("borrador-privacy")).toHaveValue("private");
+    await expect(page.getByTestId("borrador-privacy").getByRole("radio", { name: "Privado" })).toBeChecked();
   });
 
   test("subir: la petición llega al agente y la propuesta aparece inline sin ejecutar nada", async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe("Publicar vídeo", () => {
     await page.getByTestId("publicar-path").fill(`${s.allowed_dirs[0].path}\\demo.mp4`);
     await page.getByTestId("borrador-title").fill("E2E-RECHAZO título");
     await page.getByTestId("publicar-subir").click();
-    const card = page.getByTestId("publicar-turnos").getByTestId("approval-card");
+    const card = page.getByTestId("publicar-aprobacion").getByTestId("approval-card");
     await expect(card).toBeVisible();
     await card.getByTestId("approval-rechazar").click();
     await expect(page.getByTestId("publicar-turnos").getByTestId("tool-estado")).toHaveText("rechazada");
