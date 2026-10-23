@@ -13,7 +13,7 @@ import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
-import { Toaster } from "./ui";
+import { Estado, Toaster } from "./ui";
 
 // Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
 const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
@@ -41,8 +41,8 @@ const router = createHashRouter([
 /** Abre en Onboarding si falta la clave o el client_secret; si no, en Chat. */
 function Inicio() {
   const q = useSettings();
-  if (q.isPending) return <p className="estado">Cargando ajustes…</p>;
-  if (q.isError) return <p className="estado">Error: {q.error.message}</p>;
+  if (q.isPending) return <Estado>Cargando ajustes…</Estado>;
+  if (q.isError) return <Estado error>Error: {q.error.message}</Estado>;
   const listo = q.data.has_anthropic_key && q.data.has_client_secret;
   return <Navigate to={listo ? "/chat" : "/onboarding"} replace />;
 }
@@ -59,16 +59,16 @@ export default function App() {
 
   if (error) {
     return (
-      <main className="estado" data-testid="sidecar-error">
+      <Estado as="main" error data-testid="sidecar-error">
         No se pudo arrancar el sidecar: {error}
-      </main>
+      </Estado>
     );
   }
   if (!client) {
     return (
-      <main className="estado" data-testid="sidecar-arrancando">
+      <Estado as="main" data-testid="sidecar-arrancando">
         Arrancando el sidecar…
-      </main>
+      </Estado>
     );
   }
 

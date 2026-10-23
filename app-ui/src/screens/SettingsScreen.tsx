@@ -10,7 +10,7 @@ import type { AllowedDir, Model, SettingsPatch } from "../api/types";
 import { descripcionModelo, nombreModelo, precioModelo } from "../chat/modelos";
 import { elegirCarpeta } from "../dialogo";
 import { setTema, useTema, type Tema } from "../state/tema";
-import { Button, Chip, ConfirmDialog, Dialog, Field, IconButton, Input, Mono, SegmentedControl, Select, toast } from "../ui";
+import { Button, Chip, ConfirmDialog, Dialog, Estado, Field, IconButton, Input, Mono, SegmentedControl, Select, toast } from "../ui";
 import { cx } from "../ui/cx";
 import { CuotaLista } from "./CuotaLista";
 import s from "./SettingsScreen.module.css";
@@ -40,8 +40,8 @@ const PERFIL_VALIDO = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 export function SettingsScreen() {
   const settings = useSettings();
-  if (settings.isPending) return <p className="estado">Cargando ajustes…</p>;
-  if (settings.isError) return <p className="estado error">Error: {settings.error.message}</p>;
+  if (settings.isPending) return <Estado>Cargando ajustes…</Estado>;
+  if (settings.isError) return <Estado error>Error: {settings.error.message}</Estado>;
   return <Ajustes />;
 }
 

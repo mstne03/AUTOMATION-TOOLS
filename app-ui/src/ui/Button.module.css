@@ -21,7 +21,7 @@
   border-color: var(--color-border);
   background: var(--color-surface-2);
   color: var(--color-disabled);
-  opacity: 1; /* anula el button:disabled heredado de styles.css */
+  opacity: 1; /* el estado deshabilitado lo da el color, no la opacidad */
   cursor: not-allowed;
 }
 

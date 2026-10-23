@@ -71,8 +71,25 @@ El sidecar solo admite CORS desde `http://tauri.localhost`, `https://tauri.local
 | `src/chat/useChat.ts` | Hook: mensajes, envío, aprobaciones, sondeo de progreso de jobs. |
 | `src/chat/*.tsx` | Pantalla de chat, bloque de tool, tarjeta de aprobación, Markdown seguro. |
 | `src/screens/*.tsx` | Ajustes, Onboarding, Publicar, Panel de canal, Base de conocimiento. |
+| `tokens/` | Fuente de verdad del diseño (`tokens.json`) y su generador (`build.mjs`). |
+| `src/styles/` | `tokens.css` (generado, se commitea) y `base.css` (fuentes, reset, foco). |
+| `src/ui/` | Componentes del sistema de diseño (CSS Modules sobre tokens). |
+| `src/shell/`, `src/state/` | Marco con barra lateral y paleta (Ctrl K); estado global con zustand. |
 | `docs/pantallas.md` | **Contrato de layout y estados** que exigen los E2E (no hay Figma). |
 | `e2e/` | Playwright: sidecar real en modo `file` + Anthropic falso (`anthropic-mock.ts`). |
+
+## Sistema de diseño
+
+- **Tokens**: `tokens/tokens.json` (colores claro/oscuro, tipografía, espaciado, radios, tamaños)
+  es la fuente de verdad. `pnpm tokens` ejecuta Style Dictionary y regenera
+  `src/styles/tokens.css` (que se commitea). No edites `tokens.css` a mano.
+- **Reglas**: fuera de `tokens.css` no hay colores hexadecimales ni `px` de espaciado
+  (`margin`, `padding`, `gap`); `pnpm lint` (stylelint) lo comprueba.
+- **Catálogo**: con `pnpm dev`, abre `http://localhost:1420/#/catalogo` para ver todos los
+  componentes de `src/ui` en claro y oscuro. La ruta solo existe en desarrollo.
+- **Fuentes**: Inter y JetBrains Mono van empaquetadas (`@fontsource`); la CSP solo admite
+  `font-src 'self'`.
+- **Tema**: Sistema / Claro / Oscuro desde Ajustes; se aplica como `data-theme` en `<html>`.
 
 ## Instalador (`pnpm tauri build`)
 
@@ -161,7 +178,13 @@ hash. El flujo real de publicación (subida/borrado en YouTube) no se repitió e
 pnpm test        # vitest: parser SSE, cliente, reducer de turno, hook, Markdown
 pnpm e2e         # Playwright contra el sidecar real (cierra antes tauri dev / pnpm dev)
 pnpm typecheck
+pnpm lint         # stylelint: sin hex ni px de espaciado fuera de tokens.css
+pnpm tokens      # regenera src/styles/tokens.css desde tokens/tokens.json
 ```
+
+`e2e/visual.spec.ts` compara capturas de cada pantalla y del catálogo (claro y oscuro, 1200×800
+y 900×600) con las de `e2e/__capturas__/`. Tras un cambio de diseño intencionado, regenéralas con
+`pnpm e2e visual --update-snapshots` y revisa el diff de las imágenes antes de commitear.
 
 Los E2E arrancan en `globalSetup` un sidecar con `APP_BACKEND_SECRETS=file` en un
 directorio temporal, un Anthropic falso (`ANTHROPIC_BASE_URL`) con guiones elegidos por una

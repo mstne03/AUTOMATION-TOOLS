@@ -1,0 +1,9 @@
+{
+  "ignoreFiles": ["src/styles/tokens.css", "dist/**", "node_modules/**"],
+  "rules": {
+    "color-no-hex": true,
+    "declaration-property-value-disallowed-list": {
+      "/^(margin|padding|gap|row-gap|column-gap)/": ["/\\d+px/"]
+    }
+  }
+}
