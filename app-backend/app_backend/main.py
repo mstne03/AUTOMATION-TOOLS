@@ -28,6 +28,7 @@ from youtube_mcp.server import youtube_auth
 from app_backend import config, registry
 from app_backend.agent import Agent
 from app_backend.approvals import Approvals
+from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
 from app_backend.jobs import Jobs
 from app_backend.kb_update import KBUpdateError, KBUpdater
 
@@ -48,6 +49,30 @@ def _calentar_kb() -> None:
         log.warning("No se pudo precargar el modelo de embeddings: %s", e)
 
 
+def _fuentes_reales(tools: dict) -> Fuentes:
+    """Lecturas reales de youtube_mcp (las mismas funciones que usa el agente, sin pasar por él)."""
+    from youtube_mcp.tools.analytics import _run_analytics_query
+
+    def estado(ids: list[str]) -> dict[str, dict]:
+        yt_quota.consume("list")
+        r = yt_auth.build_youtube_service().videos().list(part="status", id=",".join(ids)).execute()
+        return {
+            v["id"]: {"privacy": v.get("status", {}).get("privacyStatus"), "publish_at": v.get("status", {}).get("publishAt")}
+            for v in r.get("items", [])
+        }
+
+    def analytics(inicio: str, fin: str) -> dict:
+        r = _run_analytics_query(metrics=METRICAS, start_date=inicio, end_date=fin)
+        return r["results"][0] if r["results"] else {}
+
+    return Fuentes(
+        canal=lambda: tools["youtube_get_channel"].fn(mine=True),
+        videos=lambda n: tools["youtube_list_videos"].fn(mine=True, max_results=n),
+        estado=estado,
+        analytics=analytics,
+    )
+
+
 def create_app(
     token: str,
     *,
@@ -55,10 +80,12 @@ def create_app(
     jobs_path: str | Path | None = None,
     kb_updater: KBUpdater | None = None,
     kb_auto_update: bool = True,
+    canal_fuentes: Fuentes | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
     approvals = Approvals()
+    canal_cache = CanalCache(canal_fuentes or _fuentes_reales(tools))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -319,6 +346,19 @@ def create_app(
     @app.get("/youtube/status", dependencies=protegido)
     async def youtube_status():
         return {"auth": yt_auth.status(), "quota": yt_quota.status()}
+
+    @app.get("/youtube/channel", dependencies=protegido)
+    async def youtube_channel(refresh: bool = False):
+        """Canal, métricas de 28 días y últimos vídeos para el Panel de canal (caché de 10 min)."""
+        estado = yt_auth.status()
+        if not estado.get("authenticated"):
+            raise HTTPException(status_code=409, detail="El canal no está autorizado: autorízalo en Ajustes.")
+        try:
+            return await asyncio.to_thread(canal_cache.obtener, estado["profile"], refresh)
+        except CanalError as e:
+            raise HTTPException(status_code=502, detail=f"No se pudo leer el canal: {e}") from e
+        except AuthError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
 
     @app.post("/youtube/auth", dependencies=protegido)
     async def youtube_authorize(body: YouTubeAuthIn):

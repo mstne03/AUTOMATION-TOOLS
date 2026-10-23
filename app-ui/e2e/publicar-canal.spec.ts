@@ -54,8 +54,9 @@ test.describe("Panel de canal", () => {
     const estado = page.getByTestId("canal-estado");
     await expect(estado).toContainText(yt.auth.profile);
     await expect(estado).toContainText(yt.auth.authenticated ? "Autorizado" : "Sin autorizar");
+    const miles = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
     for (const [b, v] of Object.entries(yt.quota.buckets)) {
-      await expect(estado.getByTestId(`cuota-${b}`)).toContainText(`${v.used} / ${v.limit}`);
+      await expect(page.getByTestId("canal-cuota").getByTestId(`cuota-${b}`)).toContainText(`${miles(v.used)} de ${miles(v.limit)}`);
     }
     const boton = page.getByTestId("canal-pregunta");
     if (!yt.auth.authenticated) {
