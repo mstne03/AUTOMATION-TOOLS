@@ -87,6 +87,45 @@ export interface YouTubeStatus {
   };
 }
 
+/** Tarjeta de GET /kb/buscar?formato=json. `origen`: snapshot público o KB privada del usuario. */
+export interface KbResultado {
+  titulo: string;
+  plataforma: string | null;
+  plataformas: string[];
+  fecha: string | null;
+  url: string | null;
+  origen: "publica" | "privada";
+  fragmento: string;
+}
+
+/** Documento de GET /kb/fuentes?formato=json. */
+export type KbFuente = Omit<KbResultado, "fragmento">;
+
+/** Estado del snapshot instalado (GET /kb/estado → snapshot). */
+export interface KbSnapshot {
+  instalada: boolean;
+  version: string | null;
+  exportada: string | null;
+  documentos: number | null;
+  chunks: number | null;
+  anterior_disponible: boolean;
+  url: string;
+  ultima_comprobacion?: string | null;
+  ultimo_error?: string | null;
+}
+
+export interface KbEstado extends Texto {
+  snapshot: KbSnapshot;
+}
+
+/** Documento de la KB privada (GET /kb/privada/fuentes). */
+export interface KbPrivadaFuente {
+  title: string | null;
+  url: string;
+  published_at: string | null;
+  platforms: string[];
+}
+
 /** GET /youtube/channel: datos del Panel de canal (caché de 10 min en el sidecar). */
 export interface CanalPanel {
   canal: { id: string; titulo: string; handle: string | null; avatar: string | null; suscriptores: number; visualizaciones_totales: number; videos: number };

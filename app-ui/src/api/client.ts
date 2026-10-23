@@ -2,6 +2,10 @@
  *  cada petición; el token vive en memoria y no se registra en ningún sitio. */
 import { parseSse } from "./sse";
 import type {
+  KbEstado,
+  KbFuente,
+  KbPrivadaFuente,
+  KbResultado,
   CanalPanel,
   Approval,
   ChatEvent,
@@ -32,7 +36,13 @@ export interface Client {
   listJobs(): Promise<Job[]>;
   getJob(id: string): Promise<Job>;
   createJob(kind: JobKind, args: Record<string, unknown>): Promise<Job>;
-  kbEstado(): Promise<Texto>;
+  kbEstado(): Promise<KbEstado>;
+  kbBuscarJson(q: string, plataforma?: string, k?: number): Promise<KbResultado[]>;
+  kbFuentesJson(plataforma?: string): Promise<KbFuente[]>;
+  kbUpdate(): Promise<{ accion: string; version?: string | null }>;
+  kbPrivadaFuentes(): Promise<KbPrivadaFuente[]>;
+  kbPrivadaAnadir(url: string): Promise<{ url: string; chunks: number; skipped: boolean }>;
+  kbPrivadaBorrar(url: string): Promise<{ borrada: string }>;
   kbFuentes(plataforma?: string): Promise<Texto>;
   kbBuscar(q: string, plataforma?: string, k?: number): Promise<Texto>;
   youtubeStatus(): Promise<YouTubeStatus>;
@@ -86,6 +96,12 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     createJob: (kind, args) =>
       req("/jobs", { method: "POST", body: JSON.stringify({ kind, args }) }),
     kbEstado: () => req("/kb/estado"),
+    kbBuscarJson: (qq, plataforma, k) => req(`/kb/buscar${q({ q: qq, plataforma, k, formato: "json" })}`),
+    kbFuentesJson: (plataforma) => req(`/kb/fuentes${q({ plataforma, formato: "json" })}`),
+    kbUpdate: () => req("/kb/update", { method: "POST" }),
+    kbPrivadaFuentes: () => req("/kb/privada/fuentes"),
+    kbPrivadaAnadir: (url) => req("/kb/privada/fuentes", { method: "POST", body: JSON.stringify({ url }) }),
+    kbPrivadaBorrar: (url) => req("/kb/privada/fuentes", { method: "DELETE", body: JSON.stringify({ url }) }),
     kbFuentes: (plataforma) => req(`/kb/fuentes${q({ plataforma })}`),
     kbBuscar: (qq, plataforma, k) => req(`/kb/buscar${q({ q: qq, plataforma, k })}`),
     youtubeStatus: () => req("/youtube/status"),

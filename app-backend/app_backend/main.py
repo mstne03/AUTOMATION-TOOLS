@@ -123,7 +123,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ORIGINS,
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -329,13 +329,29 @@ def create_app(
         return {"borrada": body.url}
 
     @app.get("/kb/fuentes", dependencies=protegido)
-    async def kb_fuentes(plataforma: str | None = None):
+    async def kb_fuentes(plataforma: str | None = None, formato: str | None = None):
+        # Sin `formato` el texto es el que lee el agente; con formato=json, la lista para pintar tarjetas.
+        if formato == "json":
+            from mcp_server.server import fuentes_estructuradas
+
+            return await _kb_json(fuentes_estructuradas, plataforma)
         return {"texto": await asyncio.to_thread(tools["listar_fuentes"].fn, plataforma)}
 
     @app.get("/kb/buscar", dependencies=protegido)
-    async def kb_buscar(q: str, plataforma: str | None = None, k: int = 3):
+    async def kb_buscar(q: str, plataforma: str | None = None, k: int = 3, formato: str | None = None):
+        if formato == "json":
+            from mcp_server.server import buscar_estructurado
+
+            return await _kb_json(buscar_estructurado, q, plataforma, k)
         fn = tools["buscar_kb"].fn
         return {"texto": await asyncio.to_thread(fn, q, plataforma, None, None, None, k)}
+
+    async def _kb_json(fn, *args):
+        try:
+            return await asyncio.to_thread(fn, *args)
+        except Exception as e:
+            log.warning("KB: %s: %s", type(e).__name__, e)
+            raise HTTPException(status_code=503, detail=f"La base de conocimiento no está disponible: {type(e).__name__}.") from e
 
     # ---------------------------------------------------------------- youtube
 
