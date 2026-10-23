@@ -12,8 +12,8 @@
 //! el kernel cierra el handle del job y mata al sidecar; sin esto quedaba huérfano.
 //!
 //! El updater corre en Rust (comandos `update_check` / `update_install`), y el diálogo
-//! para elegir el vídeo también (`elegir_video`), así que el WebView sigue sin ningún
-//! permiso más allá de `core:default`.
+//! para elegir el vídeo (`elegir_video`) y abrir enlaces en el navegador (`abrir_url`)
+//! también, así que el WebView sigue sin ningún permiso más allá de `core:default`.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -209,6 +209,40 @@ async fn elegir_video(app: tauri::AppHandle, dir_inicial: String) -> Option<Stri
     ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+// ------------------------------------------------------------------ enlaces
+
+/// Solo `https://` y sin espacios ni caracteres de control. Las URLs del chat las escribe el
+/// modelo (entrada no confiable): nada de `file:`, `javascript:` ni `http:`.
+fn url_https_valida(url: &str) -> bool {
+    url.len() > "https://".len()
+        && url.starts_with("https://")
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Abre `url` en el navegador del sistema (mismo patrón que `elegir_video`).
+#[tauri::command]
+fn abrir_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !url_https_valida(&url) {
+        return Err("Solo se abren enlaces https://".into());
+    }
+    #[allow(deprecated)]
+    app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_https_valida;
+
+    #[test]
+    fn solo_https() {
+        assert!(url_https_valida("https://console.cloud.google.com/apis/credentials"));
+        for mala in ["http://x.com", "file:///C:/Windows", "javascript:alert(1)", "https://", "https://a b", "https://a
+b", ""] {
+            assert!(!url_https_valida(mala), "{mala}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -216,7 +250,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(Sidecar::default())
-        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video])
+        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, abrir_url])
         .setup(|app| {
             spawn_sidecar(app.handle())?;
             Ok(())

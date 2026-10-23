@@ -1,6 +1,7 @@
 /** Subconjunto de Markdown que emite el modelo (párrafos, listas, **negrita**, `código`,
- *  enlaces http), renderizado como elementos React: nunca innerHTML, porque la salida del
+ *  enlaces https), renderizado como elementos React: nunca innerHTML, porque la salida del
  *  modelo es entrada no confiable. ponytail: sin tablas ni cabeceras; añadir si aparecen. */
+import { EnlaceExterno } from "../enlaces";
 import type { ReactNode } from "react";
 
 export function Markdown({ text }: { text: string }) {
@@ -50,9 +51,9 @@ export function inline(s: string): ReactNode[] {
     if (parte.startsWith("`") && parte.endsWith("`")) return <code key={i}>{parte.slice(1, -1)}</code>;
     if (/^https?:\/\//.test(parte)) {
       return (
-        <a key={i} href={parte} target="_blank" rel="noopener noreferrer">
+        <EnlaceExterno key={i} href={parte}>
           {parte}
-        </a>
+        </EnlaceExterno>
       );
     }
     return parte;

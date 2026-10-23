@@ -1,5 +1,6 @@
 /** Onboarding (docs/pantallas.md → Onboarding): clave, asistente de Google Cloud con
  *  validador por paso, OAuth y estado de la KB. */
+import { EnlaceExterno } from "../enlaces";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
@@ -110,9 +111,9 @@ export function OnboardingScreen() {
               <label>
                 <input type="checkbox" data-testid="google-paso-a" checked={paso2a} onChange={(e) => setPaso2a(e.target.checked)} />{" "}
                 Crea un proyecto y activa <strong>YouTube Data API v3</strong>:{" "}
-                <a href={CONSOLE} target="_blank" rel="noopener noreferrer">
+                <EnlaceExterno href={CONSOLE}>
                   abrir la biblioteca de APIs
-                </a>
+                </EnlaceExterno>
                 .
               </label>
             </li>
@@ -120,9 +121,9 @@ export function OnboardingScreen() {
               <label>
                 <input type="checkbox" data-testid="google-paso-b" checked={paso2b} onChange={(e) => setPaso2b(e.target.checked)} />{" "}
                 En{" "}
-                <a href={CREDENCIALES} target="_blank" rel="noopener noreferrer">
+                <EnlaceExterno href={CREDENCIALES}>
                   Credenciales
-                </a>
+                </EnlaceExterno>
                 , crea un <strong>ID de cliente OAuth</strong> de tipo <strong>Aplicación de escritorio</strong> y descarga el JSON.
               </label>
             </li>
@@ -130,9 +131,9 @@ export function OnboardingScreen() {
               <label>
                 <input type="checkbox" data-testid="google-paso-c" checked={paso2c} onChange={(e) => setPaso2c(e.target.checked)} />{" "}
                 En{" "}
-                <a href={PUBLICO} target="_blank" rel="noopener noreferrer">
+                <EnlaceExterno href={PUBLICO}>
                   Público
-                </a>
+                </EnlaceExterno>
                 , pulsa <strong>Publicar aplicación</strong>. Si la dejas en «Prueba», Google desconecta tu canal cada 7 días y
                 tendrías que volver a autorizarlo.
               </label>
