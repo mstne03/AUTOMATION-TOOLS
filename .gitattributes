@@ -1,3 +1,6 @@
 # Los scripts de shell siempre con LF, también en checkouts de Windows (core.autocrlf=true):
 # con CRLF bash lee "pipefail\r" y falla con "set: pipefail: invalid option name".
 *.sh text eol=lf
+
+# Hooks de git: siempre LF (bash)
+.githooks/* text eol=lf

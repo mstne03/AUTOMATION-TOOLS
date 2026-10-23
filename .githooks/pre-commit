@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Rechaza commits cuyo autor sea Claude.
+autor="$(git var GIT_AUTHOR_IDENT)"
+if echo "$autor" | grep -Eiq 'noreply@anthropic\.com|^claude '; then
+  echo "pre-commit: el autor es '$autor'. Configura git user.name/user.email de Marc (ver CLAUDE.md)." >&2
+  exit 1
+fi

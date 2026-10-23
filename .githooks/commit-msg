@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Rechaza mensajes de commit con atribución a Claude o enlaces de sesión.
+if grep -Eiq 'co-authored-by:.*(claude|anthropic)|generated with .*claude|claude-session:|claude\.ai/code' "$1"; then
+  echo "commit-msg: el mensaje lleva atribución a Claude o un enlace de sesión. Quítalo (ver CLAUDE.md)." >&2
+  exit 1
+fi

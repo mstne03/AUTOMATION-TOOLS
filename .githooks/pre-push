@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Rechaza ramas claude/* y commits con autor o atribución de Claude.
+cero=0000000000000000000000000000000000000000
+fallo=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$cero" ] && continue
+  case "$remote_ref" in
+    refs/heads/claude/*) echo "pre-push: no se suben ramas claude/… ($remote_ref). Renómbrala (ver CLAUDE.md)." >&2; fallo=1 ;;
+  esac
+  if [ "$remote_sha" = "$cero" ]; then rango="$local_sha --not --remotes"; else rango="$remote_sha..$local_sha"; fi
+  if git log --format='%an <%ae>%n%B' $rango | grep -Eiq 'noreply@anthropic\.com|co-authored-by:.*(claude|anthropic)|generated with .*claude|claude-session:'; then
+    echo "pre-push: hay commits con autor o atribución de Claude en $local_ref. Reescríbelos antes de subir." >&2
+    fallo=1
+  fi
+done
+exit $fallo

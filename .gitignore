@@ -9,3 +9,8 @@ __pycache__/
 secrets/
 token*.json
 client_secret*.json
+
+# Claude Code: worktrees, ajustes personales y notas de sesión
+.claude/worktrees/
+.claude/settings.local.json
+PROGRESO-DS.md
