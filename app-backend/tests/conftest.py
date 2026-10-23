@@ -93,6 +93,12 @@ class FakeAnthropic:
         self.headers: list[dict] = []
 
     def handler(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith("/v1/models"):  # validación de la clave: GET sin cuerpo
+            self.headers.append(dict(request.headers))
+            if request.headers.get("x-api-key", "").endswith("mala"):
+                return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})
+            modelo = {"id": "claude-opus-5-5", "type": "model", "display_name": "Claude Opus 5.5", "created_at": "2026-01-01T00:00:00Z"}
+            return httpx2.Response(200, json={"data": [modelo], "has_more": False, "first_id": modelo["id"], "last_id": modelo["id"]})
         self.requests.append(json.loads(request.content))
         self.headers.append(dict(request.headers))
         if not self.responses:

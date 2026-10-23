@@ -16,6 +16,7 @@ import { costeUsd, type BloqueTool, type Turno } from "./turno";
 import { useChat, type Mensaje } from "./useChat";
 
 const ALTO_MAXIMO_COMPOSITOR = 168;
+const SUGERENCIAS_BIENVENIDA = ["Analiza mi canal y dime qué mejorar", "¿Cuál es la mejor hora para publicar Shorts?", "Prepárame un borrador para un vídeo nuevo"];
 
 export function ChatScreen() {
   const chat = useChat(useConversaciones((st) => st.activa));
@@ -27,8 +28,13 @@ export function ChatScreen() {
   const campo = useRef<HTMLTextAreaElement>(null);
   const location = useLocation();
 
-  // Otra pantalla (Panel de canal) puede llegar con un mensaje inicial en el estado de navegación.
+  // Otra pantalla (Panel de canal) puede llegar con un mensaje inicial en el estado de navegación;
+  // el asistente de bienvenida llega con `bienvenida`: saludo y preguntas sugeridas en el chat vacío.
   const inicial = useRef<string | undefined>((location.state as { mensaje?: string } | null)?.mensaje);
+  const [bienvenida] = useState(() => Boolean((location.state as { bienvenida?: boolean } | null)?.bienvenida));
+  useEffect(() => {
+    if (bienvenida) window.history.replaceState({}, "");
+  }, [bienvenida]);
   useEffect(() => {
     const m = inicial.current;
     if (!m) return;
@@ -120,7 +126,25 @@ export function ChatScreen() {
 
       <div className={s.mensajes} data-testid="chat-mensajes" ref={lista}>
         <div className={s.hilo}>
-          {chat.mensajes.length === 0 && (
+          {chat.mensajes.length === 0 && bienvenida && (
+            <section className={s.bienvenida} data-testid="chat-bienvenida" aria-label="Bienvenida">
+              <div className={s.avatar} aria-hidden>
+                <Sparkles size="1em" />
+              </div>
+              <div className={s.bienvenidaTexto}>
+                <h2 className={s.bienvenidaTitulo}>¡Todo listo!</h2>
+                <p>Soy tu agente de SEO para YouTube. Puedo analizar tu canal, consultar la base de conocimiento y preparar o subir vídeos; todo lo que cambie algo en YouTube te lo pido antes de hacerlo.</p>
+                <div className={s.sugerencias}>
+                  {SUGERENCIAS_BIENVENIDA.map((q, i) => (
+                    <button key={q} type="button" className={s.sugerencia} data-testid={`chat-sugerencia-${i + 1}`} onClick={() => void chat.enviar(q, { sinKb: !usarKb })}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+          {chat.mensajes.length === 0 && !bienvenida && (
             <p className={s.vacio} data-testid="chat-vacio">
               Pregunta al agente o pídele que publique un vídeo.
             </p>

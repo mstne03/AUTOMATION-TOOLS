@@ -15,6 +15,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    AsyncAnthropic,
+    AuthenticationError,
+    PermissionDeniedError,
+)
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -447,6 +454,28 @@ def create_app(
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
+
+    class ValidarClaveIn(BaseModel):
+        api_key: str | None = None  # sin ella, se valida la clave guardada
+
+    @app.post("/settings/validate-key", dependencies=protegido)
+    async def validate_key(body: ValidarClaveIn):
+        """Comprueba la clave de Anthropic con la llamada más barata (GET /v1/models, sin coste)."""
+        clave = body.api_key or config.anthropic_api_key(yt_auth.store)
+        if not clave:
+            raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
+        cliente = (client_factory or (lambda k: AsyncAnthropic(api_key=k)))(clave)
+        try:
+            await cliente.models.list(limit=1)
+        except AuthenticationError:
+            return {"valida": False, "detalle": "Anthropic no reconoce esta clave."}
+        except PermissionDeniedError:
+            return {"valida": False, "detalle": "Esta clave no tiene permiso para usar la API."}
+        except APIConnectionError as e:
+            raise HTTPException(status_code=502, detail="No se pudo conectar con Anthropic: comprueba tu conexión.") from e
+        except APIStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Anthropic respondió con un error ({e.status_code}).") from e
+        return {"valida": True, "detalle": None}
 
     @app.post("/settings/client-secret", dependencies=protegido)
     async def put_client_secret(body: ClientSecretIn):

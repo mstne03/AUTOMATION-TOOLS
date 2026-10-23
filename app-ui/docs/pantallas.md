@@ -149,26 +149,40 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
 
 ## Onboarding (`/onboarding`)
 
-Pasos numerados en una columna (`onboarding-pasos`), cada uno con `data-estado`
-`pendiente|hecho`:
+Asistente de bienvenida **a ancho completo y sin barra lateral** (la ruta queda fuera del marco
+común), con un paso visible cada vez. Se llega con el aviso "Completa la configuración" de la barra,
+al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de configuración".
 
-1. `paso-clave`: campo de clave de Anthropic + botón "Guardar". Hecho si `has_anthropic_key`.
-2. `paso-google`: asistente de Google Cloud en sub-pasos con validador:
-   a) crear proyecto y activar YouTube Data API v3 (enlace externo, checkbox manual),
-   b) crear credenciales OAuth de tipo "Aplicación de escritorio" y descargar el JSON,
-   c) publicar la app OAuth (`google-paso-c`, enlace a Google Auth Platform → Público): en
-      "Prueba" los refresh tokens caducan a los 7 días. `google-importar` exige a), b) y c),
-   d) importar el JSON: `textarea[data-testid=google-json]` o ruta `google-path`
-      + botón `google-importar`. Validador: el JSON debe tener `installed.client_id` y
-      `installed.client_secret`; si no, error `google-error` sin enviar nada.
-   Hecho si `has_client_secret`.
-3. `paso-oauth`: botón `oauth-autorizar` ("Autorizar canal de YouTube"), que llama a
-   `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras espera. Nota
-   `oauth-no-verificada`: explica el aviso de Google "app no verificada" (proyecto propio sin
-   verificar) y cómo continuar. Hecho si `auth.authenticated`.
-4. `paso-kb`: muestra `GET /kb/estado` (texto). Hecho si la llamada responde.
+- Cabecera (`onboarding`): logo, h1 "Primeros pasos", `onboarding-progreso` ("Paso N de 4"), barra de
+  progreso (pasos hechos / 4) y migas `onboarding-ir-<paso>` (Clave de Anthropic, Google Cloud,
+  Autorizar canal, Base de conocimiento): solo se puede ir a pasos ya alcanzados (hasta el primer
+  pendiente; con 1–3 hechos, también al cuarto).
+- `onboarding-pasos` (`ol`) contiene los cuatro `li` en este orden, cada uno con `data-estado`
+  `pendiente|hecho`; solo el paso actual es visible (los demás llevan `hidden`). Mientras el usuario
+  no navegue, el asistente avanza solo al primer paso pendiente (o abre en el primero si todo está
+  hecho). Debajo: `onboarding-atras`, `onboarding-continuar` (habilitado si el paso actual está
+  hecho; no existe en el último) y `onboarding-terminar` ("Ir al chat", habilitado cuando 1–3 están
+  hechos; va al chat con `state.bienvenida`).
+1. `paso-clave`: `clave-input` (password) y `clave-guardar` ("Validar y guardar"). Antes de guardar
+   se valida con Anthropic (`POST /settings/validate-key`, que hace un `GET /v1/models` sin coste):
+   una clave que Anthropic no reconoce muestra `clave-error` y no se guarda. Hecho si
+   `has_anthropic_key`.
+2. `paso-google`: checklist informativa (`google-paso-a|b|c`: crear proyecto y activar YouTube Data
+   API v3, crear credenciales de "Aplicación de escritorio", publicar la app OAuth; en "Prueba" los
+   refresh tokens caducan a los 7 días) que **no bloquea** "Importar". Zona `google-soltar` para
+   soltar el `client_secret.json` (o `google-fichero`, selector del navegador) y `google-elegir`
+   ("Elegir fichero…", diálogo nativo con el comando Rust `elegir_client_secret`); también
+   `textarea[data-testid=google-json]` y la ruta `google-path`, y `google-importar`. Validador: el
+   JSON debe tener `installed.client_id` y `installed.client_secret`; si no, `google-error` sin
+   enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`.
+3. `paso-oauth`: `oauth-autorizar` ("Autorizar canal de YouTube", deshabilitado hasta tener las
+   credenciales), que llama a `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras
+   espera. Nota `oauth-no-verificada`: explica el aviso de Google "app no verificada". Hecho si
+   `auth.authenticated`.
+4. `paso-kb`: muestra `GET /kb/estado` (`kb-estado-texto`). Hecho si la llamada responde.
 
-Botón `onboarding-terminar` ("Ir al chat"), habilitado cuando 1–3 están hechos.
+Al terminar, el chat muestra `chat-bienvenida` ("¡Todo listo!") con tres preguntas sugeridas
+`chat-sugerencia-1..3` que se envían al agente.
 
 ## Publicar vídeo (`/publicar`)
 

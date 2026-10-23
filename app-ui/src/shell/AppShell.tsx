@@ -1,7 +1,6 @@
 /** Marco común (docs/pantallas.md → Marco común): barra lateral de 248 px + contenido. */
 import { Outlet, useLocation } from "react-router";
 import { CommandPalette } from "../CommandPalette";
-import { Toaster } from "../ui";
 import { UpdateBanner } from "../UpdateBanner";
 import s from "./AppShell.module.css";
 import { Sidebar } from "./Sidebar";
@@ -20,7 +19,6 @@ export function AppShell() {
         <Outlet />
       </main>
       <CommandPalette />
-      <Toaster />
     </div>
   );
 }

@@ -209,6 +209,14 @@ async fn elegir_video(app: tauri::AppHandle, dir_inicial: String) -> Option<Stri
     ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Abre el explorador de Windows filtrado a `.json` para elegir el `client_secret.json` de Google
+/// (Onboarding). Devuelve la ruta o `None` si se cancela; el sidecar lee y valida el fichero.
+#[tauri::command]
+async fn elegir_client_secret(app: tauri::AppHandle) -> Option<String> {
+    let ruta = app.dialog().file().add_filter("Credenciales de Google (JSON)", &["json"]).blocking_pick_file()?;
+    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Abre el explorador de Windows para elegir una carpeta (Ajustes → Carpetas permitidas), situado
 /// en `dir_inicial` si existe. Devuelve `None` si se cancela. Comodidad, no control de acceso:
 /// el sidecar guarda la lista y valida cada ruta al usarla (`resolve_allowed`).
@@ -263,7 +271,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(Sidecar::default())
-        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, elegir_carpeta, abrir_url])
+        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, elegir_carpeta, elegir_client_secret, abrir_url])
         .setup(|app| {
             spawn_sidecar(app.handle())?;
             Ok(())

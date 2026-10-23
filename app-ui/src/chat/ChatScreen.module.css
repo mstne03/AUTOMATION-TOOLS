@@ -201,3 +201,48 @@
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+.bienvenida {
+  display: flex;
+  gap: var(--space-12);
+  margin-top: var(--space-24);
+}
+.bienvenidaTexto {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-10);
+  font-size: var(--text-16);
+  line-height: var(--text-16-lh);
+}
+.bienvenidaTexto p {
+  margin: 0;
+}
+.bienvenidaTitulo {
+  margin: 0;
+  font-size: var(--text-20);
+  line-height: var(--text-20-lh);
+  font-weight: 600;
+}
+.sugerencias {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+.sugerencia {
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-group);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  font-family: inherit;
+  font-size: var(--text-14);
+  text-align: left;
+  cursor: pointer;
+}
+.sugerencia:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}

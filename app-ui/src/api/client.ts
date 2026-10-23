@@ -51,6 +51,7 @@ export interface Client {
   youtubeChannel(refresh?: boolean): Promise<CanalPanel>;
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
+  validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
   importClientSecret(body: { path?: string; json_text?: string }): Promise<Settings>;
 }
 
@@ -110,6 +111,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     youtubeChannel: (refresh) => req(`/youtube/channel${refresh ? "?refresh=true" : ""}`),
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+    validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
   };
