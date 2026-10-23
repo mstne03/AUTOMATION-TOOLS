@@ -8,6 +8,7 @@ import { cx } from "./cx";
 export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
+  disabled?: boolean;
   icon?: LucideIcon;
 }
 
@@ -18,6 +19,7 @@ export interface SegmentedControlProps<T extends string> {
   "aria-label": string;
   disabled?: boolean;
   className?: string;
+  "data-testid"?: string;
 }
 
 export function SegmentedControl<T extends string>({ options, value, onChange, disabled, className, ...rest }: SegmentedControlProps<T>) {
@@ -38,7 +40,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, d
   };
 
   return (
-    <div role="radiogroup" aria-label={rest["aria-label"]} className={cx(s.grupo, className)}>
+    <div role="radiogroup" aria-label={rest["aria-label"]} data-testid={rest["data-testid"]} className={cx(s.grupo, className)}>
       {options.map((o, i) => {
         const activo = o.value === value;
         return (
@@ -51,7 +53,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, d
             role="radio"
             aria-checked={activo}
             tabIndex={activo ? 0 : -1}
-            disabled={disabled}
+            disabled={disabled || o.disabled}
             className={cx(s.opcion, activo && s.activa)}
             onClick={() => onChange(o.value)}
             onKeyDown={(e) => teclas(e, i)}

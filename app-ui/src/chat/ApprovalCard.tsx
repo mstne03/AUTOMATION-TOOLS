@@ -11,6 +11,10 @@ import { ETIQUETA_RIESGO, infoTool } from "./herramientas";
 interface Props {
   approval: Approval;
   onResolver: (decision: "approve" | "reject", confirmId?: string) => Promise<unknown>;
+  /** Contenido extra sobre los botones (p. ej. diferencias con el borrador en Publicar). */
+  extra?: ReactNode;
+  /** Bloquea "Aprobar" desde fuera (además de la confirmación del ID). */
+  aprobarDeshabilitado?: boolean;
 }
 
 const ETIQUETAS_ARG: Record<string, string> = {
@@ -81,7 +85,7 @@ function estadoConfirmacion(escrito: string, esperado: string): string {
 
 const APROBAR: Record<string, string> = { youtube_upload_video: "Aprobar y subir", youtube_delete_video: "Borrar definitivamente" };
 
-export function ApprovalCard({ approval, onResolver }: Props) {
+export function ApprovalCard({ approval, onResolver, extra, aprobarDeshabilitado }: Props) {
   const [confirm, setConfirm] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +94,7 @@ export function ApprovalCard({ approval, onResolver }: Props) {
   const titulo = useId();
   const destructiva = approval.risk === "destructive";
   const videoId = String(approval.args.video_id ?? "");
-  const puedeAprobar = !enviando && (!approval.requires_confirm_id || (confirm !== "" && confirm === videoId));
+  const puedeAprobar = !enviando && !aprobarDeshabilitado && (!approval.requires_confirm_id || (confirm !== "" && confirm === videoId));
   const info = infoTool(approval.tool);
   const Icono = info.icono;
 
@@ -196,6 +200,8 @@ export function ApprovalCard({ approval, onResolver }: Props) {
           {JSON.stringify(approval.args, null, 2)}
         </pre>
       )}
+
+      {extra}
 
       <div className={s.acciones}>
         <button type="button" className={s.enlace} onClick={() => setTecnico(!tecnico)} aria-expanded={tecnico} data-testid="approval-tecnico">

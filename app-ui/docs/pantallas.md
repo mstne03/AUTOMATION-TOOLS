@@ -158,23 +158,49 @@ Botón `onboarding-terminar` ("Ir al chat"), habilitado cuando 1–3 están hech
 
 ## Publicar vídeo (`/publicar`)
 
-1. `publicar-fichero`: botón `publicar-elegir` ("Elegir vídeo…") que abre el explorador de
-   Windows ya situado en `allowed_dirs[0]` y filtrado a vídeo (`mp4, mov, mkv, webm, avi`), y
-   rellena `publicar-path` con la ruta elegida. El diálogo lo abre Rust (comando
-   `elegir_video` con `tauri-plugin-dialog`), así que el WebView sigue solo con
-   `core:default`. `publicar-path` sigue siendo editable: fuera de Tauri (E2E, `pnpm dev`)
-   no hay diálogo y la ruta se escribe a mano. Debe empezar por una `allowed_dir`; si no,
-   error `publicar-path-error`. El diálogo es comodidad, no control de acceso: el sidecar
-   valida la ruta con `resolve_allowed`. Si el diálogo falla, `publicar-elegir-error`.
-2. `publicar-transcribir`: botón que crea job `transcribe` y muestra barra
-   `publicar-progreso` con "N %"; al terminar, `publicar-transcripcion` con el texto.
-3. `publicar-borrador`: botón "Generar borrador" que envía al chat la petición con la
-   transcripción; los campos `borrador-title`, `borrador-description`, `borrador-tags`,
-   `borrador-privacy`, `borrador-publishAt` son editables.
-4. `publicar-subir`: botón que pide al agente subir con los campos actuales; la aprobación
-   llega como tarjeta inline (misma tarjeta que el chat) y el progreso en `publicar-progreso`.
-   Mientras está deshabilitado, `publicar-subir-motivo` dice por qué ("Falta elegir un
-   vídeo…", "Falta el título del borrador.", o que el agente aún está respondiendo).
+Referencia: artboard "Publicar vídeo (oscuro)". Pantalla a sangre: cabecera, cuerpo en dos
+columnas (formulario a la izquierda, vista previa y comprobaciones a la derecha) y barra
+inferior fija. Todo el estado (ruta, transcripción, borrador, job) vive en un store y sobrevive
+a cambiar de pantalla.
+
+- Cabecera: h1 "Publicar vídeo" y el asistente `publicar-pasos` (`ol`): `publicar-paso-1..4`
+  (Vídeo, Transcripción, Borrador, Revisar y subir) con `data-estado` = `hecho` | `actual` |
+  `pendiente` y `aria-current="step"` en el actual. Se deriva de los datos (la transcripción es
+  opcional: se da por pasada en cuanto hay título). Los pasos hechos son botones que llevan el
+  foco a su campo.
+- `publicar-fichero`: tarjeta del vídeo (miniatura de marcador, nombre y carpeta; no se muestran
+  tamaño ni duración porque el sidecar no los da), botón `publicar-elegir` ("Elegir vídeo…" /
+  "Cambiar…") que abre el explorador de Windows situado en `allowed_dirs[0]` y filtrado a vídeo
+  (`mp4, mov, mkv, webm, avi`; comando Rust `elegir_video`) y rellena `publicar-path` (campo
+  monoespaciado, editable: fuera de Tauri se escribe a mano). Debe empezar por una `allowed_dir`;
+  si no, `publicar-path-error`. El diálogo es comodidad, no control de acceso: el sidecar valida
+  con `resolve_allowed`. Si el diálogo falla, `publicar-elegir-error`.
+- Transcripción (bloque plegable, abierto mientras no hay transcripción): `publicar-transcribir`
+  crea un job `transcribe`; `publicar-progreso` con la barra y "N %"; al terminar,
+  `publicar-transcripcion` con el texto (o `publicar-sin-voz`).
+- `publicar-borrador`: botón `borrador-generar` ("Generar con el agente" / "Regenerar con el
+  agente") y los campos `borrador-title` (contador n / 100 caracteres), `borrador-description`
+  (n / 5000 **bytes** UTF-8), `borrador-tags` (campo de `TagInput`; contador n / 500 contando
+  comas y las comillas de las etiquetas con espacios), `borrador-privacy` (SegmentedControl:
+  Privado / Oculto / Público) y `borrador-publishAt` (datetime-local con la zona horaria). Al
+  fijar una fecha la visibilidad pasa a Privado y se bloquean las otras; una fecha pasada
+  bloquea la subida. Límites verificados contra la documentación de YouTube; `<` y `>` no se
+  admiten en título, descripción ni etiquetas.
+- Columna derecha: vista previa "Así se verá en YouTube" (`publicar-previa-titulo`) y
+  `publicar-comprobaciones` (`li[data-nivel]` = `ok` | `aviso` | `error` | `info`): título,
+  fichero en carpeta permitida, descripción (aviso por marcadores sin rellenar como
+  `[ENLACE A …]`), etiquetas, fecha y cuota de subidas del día. Los de nivel `error` bloquean la
+  subida; los `aviso` no.
+- Barra inferior: a la izquierda `publicar-subir-motivo` con el motivo que impide subir ("Falta
+  elegir un vídeo…", "Falta el título del borrador.", el error de límites, o que el agente aún
+  está respondiendo) o, si se puede, el estado del borrador; "Descartar" (con confirmación:
+  vacía ruta, transcripción, borrador y conversación) y `publicar-subir` ("Revisar y subir").
+- La propuesta de subida del agente se abre en un diálogo no descartable "Revisar y subir"
+  (`publicar-aprobacion`) con la tarjeta de aprobación del chat y, debajo, o bien
+  `publicar-coincide` ("Coincide con tu borrador") o `publicar-diferencias` con cada campo
+  que difiere (título, descripción, etiquetas, visibilidad, fecha); con diferencias, "Aprobar"
+  queda bloqueado hasta marcar `publicar-acepto`. La respuesta del agente (estado de la tool,
+  progreso de la subida, errores) se ve en `publicar-turnos`, sin tarjetas de aprobación.
 
 ## Panel de canal (`/canal`)
 

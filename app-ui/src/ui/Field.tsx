@@ -23,6 +23,7 @@ export interface FieldProps {
   label: string;
   help?: string;
   error?: string;
+  errorTestId?: string;
   /** Contador `count / max`; se marca como error al pasarse. */
   count?: number;
   max?: number;
@@ -30,7 +31,7 @@ export interface FieldProps {
   children: ReactNode;
 }
 
-export function Field({ label, help, error, count, max, className, children }: FieldProps) {
+export function Field({ label, help, error, errorTestId, count, max, className, children }: FieldProps) {
   const id = useId();
   const pasado = count !== undefined && max !== undefined && count > max;
   const invalid = Boolean(error) || pasado;
@@ -55,7 +56,7 @@ export function Field({ label, help, error, count, max, className, children }: F
           </p>
         )}
         {error && (
-          <p id={`${id}-error`} className={s.error} role="alert">
+          <p id={`${id}-error`} className={s.error} role="alert" data-testid={errorTestId}>
             {error}
           </p>
         )}

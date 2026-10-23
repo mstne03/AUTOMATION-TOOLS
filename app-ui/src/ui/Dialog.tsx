@@ -14,10 +14,12 @@ export interface DialogProps {
   /** Pie con las acciones (botones). */
   footer?: ReactNode;
   wide?: boolean;
+  /** false: ni Escape ni clic fuera lo cierran (hay que decidir con los botones). */
+  dismissible?: boolean;
   children?: ReactNode;
 }
 
-export function Dialog({ open, onOpenChange, title, description, footer, wide, children }: DialogProps) {
+export function Dialog({ open, onOpenChange, title, description, footer, wide, dismissible = true, children }: DialogProps) {
   // El diálogo es controlado y no lleva Trigger de Radix: devolvemos el foco nosotros al cerrar.
   const origen = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -30,6 +32,8 @@ export function Dialog({ open, onOpenChange, title, description, footer, wide, c
         {/* sin descripción, aria-describedby={undefined} evita el aviso de Radix */}
         <R.Content
           className={cx(s.dialogo, wide && s.ancho)}
+          onEscapeKeyDown={(e) => !dismissible && e.preventDefault()}
+          onInteractOutside={(e) => !dismissible && e.preventDefault()}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             origen.current?.focus();

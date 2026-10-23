@@ -203,7 +203,7 @@ function trocear(turno: Turno): Trozo[] {
   return trozos;
 }
 
-export function TurnoView({ turno, onResolver }: { turno: Turno; onResolver: ReturnType<typeof useChat>["resolver"] }) {
+export function TurnoView({ turno, onResolver, sinAprobaciones }: { turno: Turno; onResolver: ReturnType<typeof useChat>["resolver"]; sinAprobaciones?: boolean }) {
   return (
     <>
       {trocear(turno).map((t, i) =>
@@ -217,7 +217,7 @@ export function TurnoView({ turno, onResolver }: { turno: Turno; onResolver: Ret
             <GrupoPasos bloques={t.bloques} />
             {t.bloques.map(
               (b) =>
-                b.approval?.status === "pending" && <ApprovalCard key={b.approval.id} approval={b.approval} onResolver={(d, c) => onResolver(b.approval!, d, c)} />,
+                !sinAprobaciones && b.approval?.status === "pending" && <ApprovalCard key={b.approval.id} approval={b.approval} onResolver={(d, c) => onResolver(b.approval!, d, c)} />,
             )}
           </div>
         ),
