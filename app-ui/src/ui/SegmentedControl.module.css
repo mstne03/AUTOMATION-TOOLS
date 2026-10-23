@@ -1,0 +1,35 @@
+.grupo {
+  display: inline-flex;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-group);
+  background: var(--color-surface-2);
+}
+.opcion {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-control-xs);
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font-family: inherit;
+  font-size: var(--text-13);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.opcion:hover:not(:disabled) {
+  color: var(--color-text);
+}
+.opcion:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+.activa {
+  background: var(--color-surface-3);
+  color: var(--color-text);
+  font-weight: 500;
+  box-shadow: var(--elevation-key);
+}

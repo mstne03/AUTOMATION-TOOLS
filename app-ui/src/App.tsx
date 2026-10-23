@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import { createClient, type Client } from "./api/client";
 import { ClientContext } from "./api/context";
@@ -12,6 +12,9 @@ import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { sidecarInfo } from "./sidecar";
+
+// Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
+const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -27,6 +30,7 @@ const router = createHashRouter([
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },
       { path: "onboarding", element: <OnboardingScreen /> },
+      ...(Catalogo ? [{ path: "catalogo", element: <Suspense fallback={null}><Catalogo /></Suspense> }] : []),
     ],
   },
 ]);

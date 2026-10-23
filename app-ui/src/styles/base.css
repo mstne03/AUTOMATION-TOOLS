@@ -50,7 +50,7 @@ samp,
 }
 
 :focus-visible {
-  outline: var(--focus-width) solid var(--color-accent);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: var(--focus-offset);
 }
 

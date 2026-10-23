@@ -1,0 +1,56 @@
+.caja {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--size-control-md);
+  padding: var(--space-4) var(--space-8);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+.caja:focus-within {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+.lista {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) 0 var(--space-8);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+}
+.quitar {
+  display: inline-flex;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.quitar:hover:not(:disabled) {
+  background: var(--color-accent-border);
+}
+.entrada {
+  flex: 1;
+  min-width: 120px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+.entrada:focus-visible {
+  outline: none; /* el foco lo muestra la caja entera (:focus-within) */
+}

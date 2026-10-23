@@ -1,0 +1,47 @@
+.caja {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.cabecera {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: var(--text-13);
+}
+.valor {
+  font-family: var(--font-mono);
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+.pista {
+  height: var(--size-bar);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+}
+.relleno {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transition: width var(--motion-base) var(--motion-ease);
+}
+.indeterminada {
+  width: 40%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  animation: deslizar 1200ms var(--motion-ease) infinite;
+}
+.detalle {
+  font-size: var(--text-12);
+  color: var(--color-subtle);
+}
+@keyframes deslizar {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
