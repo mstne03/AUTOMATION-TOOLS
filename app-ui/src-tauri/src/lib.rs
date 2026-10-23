@@ -12,7 +12,7 @@
 //! el kernel cierra el handle del job y mata al sidecar; sin esto quedaba huérfano.
 //!
 //! El updater corre en Rust (comandos `update_check` / `update_install`), y el diálogo
-//! para elegir el vídeo (`elegir_video`) y abrir enlaces en el navegador (`abrir_url`)
+//! para elegir el vídeo (`elegir_video`) o una carpeta (`elegir_carpeta`) y abrir enlaces en el navegador (`abrir_url`)
 //! también, así que el WebView sigue sin ningún permiso más allá de `core:default`.
 
 use std::sync::Mutex;
@@ -209,6 +209,19 @@ async fn elegir_video(app: tauri::AppHandle, dir_inicial: String) -> Option<Stri
     ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Abre el explorador de Windows para elegir una carpeta (Ajustes → Carpetas permitidas), situado
+/// en `dir_inicial` si existe. Devuelve `None` si se cancela. Comodidad, no control de acceso:
+/// el sidecar guarda la lista y valida cada ruta al usarla (`resolve_allowed`).
+#[tauri::command]
+async fn elegir_carpeta(app: tauri::AppHandle, dir_inicial: String) -> Option<String> {
+    let mut dialogo = app.dialog().file();
+    if !dir_inicial.is_empty() && std::path::Path::new(&dir_inicial).is_dir() {
+        dialogo = dialogo.set_directory(&dir_inicial);
+    }
+    let ruta = dialogo.blocking_pick_folder()?;
+    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 // ------------------------------------------------------------------ enlaces
 
 /// Solo `https://` y sin espacios ni caracteres de control. Las URLs del chat las escribe el
@@ -250,7 +263,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(Sidecar::default())
-        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, abrir_url])
+        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, elegir_carpeta, abrir_url])
         .setup(|app| {
             spawn_sidecar(app.handle())?;
             Ok(())

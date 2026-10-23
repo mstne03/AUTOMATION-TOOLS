@@ -187,33 +187,6 @@
   align-items: baseline;
   justify-content: space-between;
 }
-.cuota {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-}
-.cuotaFila {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--text-13);
-}
-.barra {
-  height: var(--size-bar);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--color-border);
-}
-.barraRelleno {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-}
-.cuota[data-nivel="alto"] .barraRelleno {
-  background: var(--color-risk-write);
-}
-.cuota[data-nivel="critico"] .barraRelleno {
-  background: var(--color-risk-destructive);
-}
 .sugerencia {
   padding: var(--space-10) var(--space-12);
   border: 1px solid var(--color-border);

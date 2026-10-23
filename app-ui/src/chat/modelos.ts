@@ -11,3 +11,7 @@ export function precioModelo(id: string): string {
   const p = id.includes("opus") ? PRECIOS_MODELO.opus : PRECIOS_MODELO.sonnet;
   return `${p.entrada} $ / ${p.salida} $ por Mtok`;
 }
+
+export function descripcionModelo(id: string): string {
+  return id.includes("opus") ? "Más capaz para análisis y borradores" : "La mitad de coste, rápido";
+}

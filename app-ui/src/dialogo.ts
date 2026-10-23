@@ -11,3 +11,9 @@ export async function elegirVideo(dirInicial: string): Promise<string | null> {
   if (!enTauri()) return null;
   return invoke<string | null>("elegir_video", { dirInicial });
 }
+
+/** Carpeta elegida, o null si se cancela o no estamos en Tauri (Ajustes → Carpetas permitidas). */
+export async function elegirCarpeta(dirInicial: string): Promise<string | null> {
+  if (!enTauri()) return null;
+  return invoke<string | null>("elegir_carpeta", { dirInicial });
+}

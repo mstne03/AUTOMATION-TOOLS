@@ -115,23 +115,37 @@ Estados de la pantalla:
 
 ## Ajustes (`/ajustes`)
 
-- Formulario `ajustes-form` con secciones en este orden:
-  1. Modelo: `select[data-testid=ajustes-model]` con las opciones de `models`.
-  2. Clave de Anthropic: estado `ajustes-key-estado` ("Guardada en <secret_store>" o
-     "Sin clave"); `input[type=password][data-testid=ajustes-key]` vacío siempre; botón
-     `ajustes-key-guardar`; botón `ajustes-key-borrar` solo si hay clave. Tras guardar, el
-     campo se vacía y nunca se muestra la clave.
-  3. Carpetas permitidas: tabla `ajustes-dirs` con filas `ajustes-dir` (ruta, idioma,
-     botón quitar); fila de alta con `ajustes-dir-path`, `ajustes-dir-lang` y
-     `ajustes-dir-add`.
-  4. Perfil de YouTube: `select[data-testid=ajustes-profile]` con `auth.profiles` más el
-     perfil actual (sin tokens guardados la lista viene vacía);
-     estado `ajustes-yt-estado` ("Autorizado" / "Sin autorizar"); botón
-     `ajustes-yt-reauth` ("Volver a autorizar").
-  5. Cuota: tres barras `cuota-<bucket>` con "used / limit".
-  6. Información: `state_dir` y `secret_store` en texto.
-- Botón `ajustes-guardar` deshabilitado si no hay cambios; mensaje `ajustes-ok`
-  "Guardado" durante 3 s tras éxito; `ajustes-error` con el detalle si falla.
+Referencia: artboard "Ajustes (claro)". Pantalla a sangre (`ajustes-form`). **Guardado
+automático**: no hay botón "Guardar"; cada cambio se envía al sidecar al momento y avisa con un
+toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast de error y
+`ajustes-error`.
+
+- Subnavegación `ajustes-subnav` (botones `ajustes-nav-general|canales|carpetas|clave|avanzado`,
+  el activo con `aria-current="true"`) que desplaza a cada sección.
+- **General**: modelo como tarjetas de radio (`ajustes-model` = radiogroup; una tarjeta
+  `ajustes-model-<id>` por modelo de `models`, con nombre, descripción y precio de la tabla
+  única de `PRECIOS_MODELO`); apariencia `ajustes-tema` (Sistema / Claro / Oscuro; se aplica como
+  `data-theme` y se guarda en localStorage).
+- **Canales de YouTube**: botón `ajustes-yt-anadir` ("Añadir canal") que abre un diálogo con el
+  nombre del perfil (minúsculas, números, `-`, `_`; máx. 32; `ajustes-yt-nombre`) y, al aceptar
+  (`ajustes-yt-anadir-ok`), lanza el OAuth de ese perfil (`POST /youtube/auth`) y lo deja en uso
+  (`PUT /settings`). Lista `ajustes-profile` con una tarjeta `ajustes-profile-<nombre>` por perfil
+  (`auth.profiles` más el actual; el actual con `aria-current="true"`): el actual muestra
+  `ajustes-yt-estado` (chip "Autorizado" / "Sin autorizar") y `ajustes-yt-reauth` ("Volver a
+  autorizar"); los demás, `ajustes-yt-usar-<nombre>` ("Usar este").
+- **Carpetas permitidas**: `ajustes-dir-elegir` ("Elegir carpeta…", explorador nativo con el
+  comando Rust `elegir_carpeta`; fuera de Tauri no hace nada), lista `ajustes-dirs` con una fila
+  `ajustes-dir` por carpeta (ruta monoespaciada, selector de idioma Español / Inglés / Detectar,
+  botón de icono "Quitar la carpeta <ruta>"), y alta a mano: `ajustes-dir-path`,
+  `ajustes-dir-lang` (select) y `ajustes-dir-add`. Una carpeta repetida se rechaza.
+- **Clave de Anthropic**: `ajustes-key-estado` ("sk-ant-•••• · Guardada en <secret_store>" o
+  "Sin clave"). Sin clave, o tras "Reemplazar" (`ajustes-key-reemplazar`), aparece
+  `input[type=password][data-testid=ajustes-key]` (vacío siempre) con `ajustes-key-guardar`; con
+  clave guardada el campo no existe. Tras guardar nunca se muestra la clave. `ajustes-key-borrar`
+  ("Borrar") pide confirmación en un diálogo.
+- **Avanzado**: cuota de YouTube de hoy (`cuota-<bucket>`, "154 de 10.000"), información
+  (directorio de estado y almacén de secretos con su nombre legible: "Administrador de
+  credenciales de Windows") y `ajustes-asistente` ("Abrir el asistente" → Onboarding).
 
 ## Onboarding (`/onboarding`)
 

@@ -4,10 +4,11 @@ import { Film, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useCanal, useYoutubeStatus } from "../api/queries";
 import type { CanalPanel } from "../api/types";
-import { CUBOS, formatearNumero, haceCuanto, horaLocal, reinicioCuota } from "../formato";
+import { formatearNumero, haceCuanto, horaLocal, reinicioCuota } from "../formato";
 import { Button, Chip, EmptyState, Mono } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./CanalScreen.module.css";
+import { CuotaLista } from "./CuotaLista";
 
 const SUGERENCIAS = ["¿Qué vídeo retuvo mejor y por qué?", "Propón 3 títulos para el próximo Short", "¿A qué hora publica mejor mi audiencia?"];
 const ANALIZAR_CANAL = "Analiza mi canal: últimos vídeos, rendimiento y qué mejorar. Separa claramente datos de conclusiones.";
@@ -186,23 +187,7 @@ export function CanalScreen() {
                 </h2>
                 <span className={s.suave}>se reinicia a las {reinicio}</span>
               </div>
-              {Object.entries(yt.data.quota.buckets).map(([b, v]) => {
-                const pct = v.limit ? v.used / v.limit : 0;
-                return (
-                  <div key={b} className={s.cuota} data-testid={`cuota-${b}`} data-nivel={pct >= 0.95 ? "critico" : pct >= 0.8 ? "alto" : "normal"}>
-                    <div className={s.cuotaFila}>
-                      <span>{CUBOS[b]?.nombre ?? b}</span>
-                      <span className={s.suave}>
-                        {formatearNumero(v.used)} de {formatearNumero(v.limit)}
-                      </span>
-                    </div>
-                    <div className={s.barra} role="progressbar" aria-label={CUBOS[b]?.nombre ?? b} aria-valuemin={0} aria-valuemax={v.limit} aria-valuenow={v.used}>
-                      {/* ancho dinámico: único estilo inline permitido */}
-                      <div className={s.barraRelleno} style={{ width: `${Math.max(pct > 0 ? 1 : 0, Math.round(pct * 100))}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+              <CuotaLista buckets={yt.data.quota.buckets} />
             </section>
           )}
           <section className={s.panel} aria-labelledby="canal-sugerencias">
