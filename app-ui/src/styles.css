@@ -1,44 +1,17 @@
+/* Alias temporales: las pantallas antiguas siguen usando estos nombres mientras migran a los
+ * tokens de styles/tokens.css (DS-06 a DS-11). DS-12 borra este fichero entero. */
 :root {
-  font-family: system-ui, "Segoe UI", sans-serif;
-  color-scheme: light dark;
-  --bg: #fafafa;
-  --fg: #1a1a1a;
-  --muted: #666;
-  --border: #ddd;
-  --panel: #fff;
-  --accent: #2563eb;
-  --warn-bg: #fff7ed;
-  --warn-fg: #9a3412;
-  --danger-bg: #fef2f2;
-  --danger-fg: #991b1b;
-  --ok-fg: #166534;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111;
-    --fg: #eee;
-    --muted: #999;
-    --border: #333;
-    --panel: #1b1b1b;
-    --warn-bg: #3b2a12;
-    --warn-fg: #fdba74;
-    --danger-bg: #3b1212;
-    --danger-fg: #fca5a5;
-    --ok-fg: #86efac;
-  }
-}
-* {
-  box-sizing: border-box;
-}
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-body {
-  background: var(--bg);
-  color: var(--fg);
+  --bg: var(--color-bg);
+  --fg: var(--color-text);
+  --muted: var(--color-muted);
+  --border: var(--color-border);
+  --panel: var(--color-surface);
+  --accent: var(--color-accent);
+  --warn-bg: var(--color-risk-write-soft);
+  --warn-fg: var(--color-risk-write-text);
+  --danger-bg: var(--color-risk-destructive-soft);
+  --danger-fg: var(--color-risk-destructive-text);
+  --ok-fg: var(--color-success-text);
 }
 pre {
   white-space: pre-wrap;
@@ -61,7 +34,7 @@ button:disabled {
 button[type="submit"],
 .acciones button:first-child {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-on-accent);
   border-color: var(--accent);
 }
 input,
@@ -106,7 +79,7 @@ select {
 }
 .layout nav a[aria-current="page"] {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-on-accent);
 }
 .layout main {
   min-width: 0;
@@ -165,7 +138,7 @@ select {
 .msg-user {
   align-self: flex-end;
   background: var(--accent);
-  color: #fff;
+  color: var(--color-on-accent);
   white-space: pre-wrap;
 }
 .msg-assistant {
@@ -279,9 +252,6 @@ select {
 }
 .approval-card td {
   word-break: break-word;
-}
-.mono {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 .nota {
   color: var(--muted);
