@@ -1,0 +1,129 @@
+/* Aspecto común de Dialog, DropdownMenu, Popover y Tooltip. Animación de 200 ms (se anula con
+ * prefers-reduced-motion en styles/base.css). */
+@keyframes aparecer {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes subir {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-8));
+  }
+}
+
+.fondo {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  animation: aparecer var(--motion-base) var(--motion-ease);
+}
+
+.dialogo {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  width: min(480px, calc(100vw - var(--space-32)));
+  max-height: calc(100vh - var(--space-48));
+  overflow: auto;
+  padding: var(--space-20);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-overlay);
+  color: var(--color-text);
+  box-shadow: var(--elevation-e2);
+  animation: aparecer var(--motion-base) var(--motion-ease);
+}
+.ancho {
+  width: min(720px, calc(100vw - var(--space-32)));
+}
+.titulo {
+  margin: 0;
+  font-size: var(--text-16);
+  line-height: var(--text-16-lh);
+  font-weight: 600;
+}
+.descripcion {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  color: var(--color-muted);
+}
+.acciones {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+.panel {
+  z-index: 10;
+  min-width: 200px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-overlay);
+  color: var(--color-text);
+  box-shadow: var(--elevation-e1);
+  animation: subir var(--motion-base) var(--motion-ease);
+}
+.popover {
+  padding: var(--space-12);
+  min-width: 240px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--size-control-sm);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+  cursor: pointer;
+  outline: none;
+}
+.item[data-highlighted] {
+  background: var(--color-surface-3);
+}
+.item[data-disabled] {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+.check {
+  width: var(--size-icon-sm);
+  color: var(--color-accent-text);
+}
+.itemTexto {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.itemAyuda {
+  font-size: var(--text-12);
+  color: var(--color-subtle);
+}
+.etiqueta {
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--text-12);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-subtle);
+}
+
+.tooltip {
+  z-index: 20;
+  max-width: 280px;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+  background: var(--color-toast-bg);
+  color: var(--color-toast-fg);
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  animation: aparecer var(--motion-fast) var(--motion-ease);
+}

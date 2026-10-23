@@ -1,8 +1,9 @@
 /** Catálogo de componentes (/#/catalogo, solo en desarrollo): todos los componentes de src/ui y
  *  sus estados, en oscuro y claro a la vez. Sustituye a Storybook y lo usa DS-12 para las capturas. */
-import { Bell, Inbox, Play, Search, Trash2, Upload } from "lucide-react";
+import { Bell, Cpu, Inbox, MoreHorizontal, Play, Search, Trash2, Upload } from "lucide-react";
 import { useState } from "react";
-import { Button, Card, Chip, EmptyState, Field, IconButton, Input, Kbd, Mono, Progress, SegmentedControl, Select, Spinner, TagInput, Textarea } from "../ui";
+import { abrirPaleta } from "../CommandPalette";
+import { Button, Card, Chip, ConfirmDialog, Dialog, DropdownMenu, EmptyState, Field, IconButton, Input, Kbd, Mono, Popover, Progress, SegmentedControl, Select, Spinner, TagInput, Textarea, Tooltip, toast } from "../ui";
 import s from "./CatalogoScreen.module.css";
 
 type Visibilidad = "private" | "unlisted" | "public";
@@ -11,6 +12,9 @@ function Muestra({ tema }: { tema: "dark" | "light" }) {
   const [titulo, setTitulo] = useState("Cómo posicionar un canal de YouTube en 2026");
   const [visibilidad, setVisibilidad] = useState<Visibilidad>("private");
   const [etiquetas, setEtiquetas] = useState(["seo", "youtube"]);
+  const [dialogo, setDialogo] = useState(false);
+  const [confirmar, setConfirmar] = useState(false);
+  const [modelo, setModelo] = useState("opus");
 
   return (
     <section data-theme={tema} className={s.panel} data-testid={`catalogo-${tema === "dark" ? "oscuro" : "claro"}`}>
@@ -101,6 +105,56 @@ function Muestra({ tema }: { tema: "dark" | "light" }) {
         </Card>
         <Spinner />
       </div>
+
+      <h3 className={s.grupo}>Overlays (Radix) y paleta (cmdk)</h3>
+      <div className={s.fila}>
+        <Button onClick={() => setDialogo(true)}>Abrir Dialog</Button>
+        <Button variant="danger" onClick={() => setConfirmar(true)}>
+          Abrir ConfirmDialog
+        </Button>
+        <DropdownMenu
+          trigger={<Button icon={Cpu}>Modelo: {modelo === "opus" ? "Opus 5.5" : "Sonnet 5.5"}</Button>}
+          label="Modelo"
+          radio={{ value: modelo, onValueChange: setModelo }}
+          items={[
+            { value: "opus", label: "Claude Opus 5.5", description: "4 $ / 20 $ por Mtok" },
+            { value: "sonnet", label: "Claude Sonnet 5.5", description: "2 $ / 10 $ por Mtok" },
+          ]}
+        />
+        <DropdownMenu
+          trigger={<IconButton icon={MoreHorizontal} aria-label="Más opciones" />}
+          items={[
+            { value: "renombrar", label: "Renombrar", onSelect: () => toast({ title: "Renombrar" }) },
+            { value: "borrar", label: "Borrar", onSelect: () => toast({ title: "Borrada", tone: "error" }) },
+          ]}
+        />
+        <Popover trigger={<Button>Popover</Button>} label="Detalles">
+          Contenido de un popover con <Mono>7uIc5VVIsRE</Mono>.
+        </Popover>
+        <Tooltip content="Ayuda visual (el nombre accesible lo da el control)">
+          <IconButton icon={Search} aria-label="Buscar en el catálogo" />
+        </Tooltip>
+        <Button onClick={() => toast({ title: "Vídeo subido como privado", description: "7uIc5VVIsRE · hace 2 s" })}>Lanzar toast</Button>
+        <Button onClick={abrirPaleta} icon={Search}>
+          Paleta <Kbd>Ctrl</Kbd> <Kbd>K</Kbd>
+        </Button>
+      </div>
+      <Dialog
+        open={dialogo}
+        onOpenChange={setDialogo}
+        title="Título del diálogo"
+        description="Foco atrapado, Escape cierra y el fondo queda inerte."
+        footer={<Button variant="primary" onClick={() => setDialogo(false)}>Entendido</Button>}
+      />
+      <ConfirmDialog
+        open={confirmar}
+        onOpenChange={setConfirmar}
+        title="¿Borrar la clave de Anthropic?"
+        description="Tendrás que volver a introducirla para usar el agente."
+        confirmLabel="Borrar"
+        tone="danger"
+        onConfirm={() => toast({ title: "Clave borrada" })}
+      />
 
       <h3 className={s.grupo}>EmptyState</h3>
       <EmptyState icon={Inbox} title="Sin resultados" description="Prueba con otras palabras o amplía el filtro." action={<Button>Limpiar filtro</Button>} />

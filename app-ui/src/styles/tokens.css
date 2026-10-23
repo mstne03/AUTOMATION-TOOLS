@@ -93,6 +93,8 @@
   --color-success-fg: #6EE7A8;
   --color-success-border: #1D4D33;
   --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-toast-bg: #1C1C24;
+  --color-toast-fg: #EDEDF0;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -142,6 +144,8 @@
     --color-success-fg: #19663F;
     --color-success-border: #B7E3C8;
     --color-overlay: rgba(24, 24, 27, 0.4);
+    --color-toast-bg: #18181B;
+    --color-toast-fg: #FAFAFA;
     --elevation-e0: none;
     --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
     --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);
@@ -191,6 +195,8 @@
   --color-success-fg: #6EE7A8;
   --color-success-border: #1D4D33;
   --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-toast-bg: #1C1C24;
+  --color-toast-fg: #EDEDF0;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -239,6 +245,8 @@
   --color-success-fg: #19663F;
   --color-success-border: #B7E3C8;
   --color-overlay: rgba(24, 24, 27, 0.4);
+  --color-toast-bg: #18181B;
+  --color-toast-fg: #FAFAFA;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
   --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);

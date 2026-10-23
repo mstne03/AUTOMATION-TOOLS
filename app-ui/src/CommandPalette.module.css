@@ -1,0 +1,77 @@
+@keyframes aparecer {
+  from {
+    opacity: 0;
+  }
+}
+.fondo {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  animation: aparecer var(--motion-base) var(--motion-ease);
+}
+.caja {
+  position: fixed;
+  top: 18vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - var(--space-32)));
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-overlay);
+  color: var(--color-text);
+  box-shadow: var(--elevation-e2);
+  animation: aparecer var(--motion-base) var(--motion-ease);
+}
+.buscador {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-14);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-subtle);
+}
+.entrada {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-16);
+}
+.entrada:focus-visible {
+  outline: none;
+}
+.lista {
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--space-6);
+}
+.vacio {
+  padding: var(--space-16);
+  text-align: center;
+  color: var(--color-muted);
+  font-size: var(--text-14);
+}
+.grupo [cmdk-group-heading] {
+  padding: var(--space-8) var(--space-10) var(--space-4);
+  font-size: var(--text-12);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-subtle);
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: var(--space-8) var(--space-10);
+  border-radius: var(--radius-group);
+  color: var(--color-text-soft);
+  font-size: var(--text-14);
+  cursor: pointer;
+}
+.item[data-selected="true"] {
+  background: var(--color-border);
+  color: var(--color-text);
+}

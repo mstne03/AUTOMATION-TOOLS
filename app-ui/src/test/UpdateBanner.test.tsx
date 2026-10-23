@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../updater", () => ({ checkForUpdate: vi.fn(), installUpdate: vi.fn() }));
@@ -21,20 +21,24 @@ describe("UpdateBanner", () => {
     expect(r2.container.innerHTML).toBe("");
   });
 
-  it("avisa de la versión y solo instala tras confirmar", async () => {
+  it("avisa de la versión y solo instala tras confirmar en el diálogo", async () => {
     vi.mocked(checkForUpdate).mockResolvedValueOnce({ version: "0.2.0", notes: "Arreglos" });
     vi.mocked(installUpdate).mockResolvedValue();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     render(<UpdateBanner />);
     const banner = await screen.findByTestId("update-banner");
     expect(banner.textContent).toContain("0.2.0");
     expect(banner.textContent).toContain("Arreglos");
-    const boton = screen.getByRole("button", { name: "Instalar y reiniciar" });
-    boton.click();
+
+    fireEvent.click(screen.getByRole("button", { name: "Instalar y reiniciar" }));
+    const dialogo = await screen.findByRole("dialog", { name: /Instalar SEO Studio 0.2.0/ });
+    fireEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(installUpdate).not.toHaveBeenCalled();
-    boton.click();
+
+    fireEvent.click(screen.getByRole("button", { name: "Instalar y reiniciar" }));
+    const otra = await screen.findByRole("dialog");
+    fireEvent.click(within(otra).getByRole("button", { name: "Instalar y reiniciar" }));
     await waitFor(() => expect(installUpdate).toHaveBeenCalledTimes(1));
-    expect(confirm).toHaveBeenCalledTimes(2);
-    expect(banner.textContent).toContain("Descargando e instalando");
+    await waitFor(() => expect(banner.textContent).toContain("Descargando e instalando"));
   });
 });
