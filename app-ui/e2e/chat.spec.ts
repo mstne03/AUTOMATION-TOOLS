@@ -68,9 +68,12 @@ test.describe("Chat", () => {
     const confirm = card.getByTestId("approval-confirm");
     await expect(confirm).toHaveAttribute("placeholder", "Escribe el video_id para confirmar");
     await expect(card.getByTestId("approval-aprobar")).toBeDisabled();
+    await expect(card.getByTestId("approval-video-id")).toHaveCSS("font-family", /mono|Consolas/i);
     await confirm.fill("vid");
     await expect(card.getByTestId("approval-aprobar")).toBeDisabled();
+    await expect(card.getByTestId("approval-confirm-estado")).toHaveText("El ID no coincide");
     await confirm.fill("vid9");
+    await expect(card.getByTestId("approval-confirm-estado")).toHaveText("El ID coincide");
     await expect(card.getByTestId("approval-aprobar")).toBeEnabled();
     // Aprobamos: sin OAuth en el entorno de pruebas la tool falla, y eso SÍ es un error de tool.
     await card.getByTestId("approval-aprobar").click();
