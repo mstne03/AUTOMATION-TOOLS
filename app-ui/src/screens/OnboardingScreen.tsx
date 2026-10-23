@@ -8,6 +8,8 @@ import { usePutSettings, useSettings, useYoutubeStatus } from "../api/queries";
 
 const CONSOLE = "https://console.cloud.google.com/apis/library/youtube.googleapis.com";
 const CREDENCIALES = "https://console.cloud.google.com/apis/credentials";
+// En estado "Prueba" Google emite refresh tokens que caducan a los 7 días: hay que publicar la app.
+const PUBLICO = "https://console.cloud.google.com/auth/audience";
 
 /** Validador del client_secret.json de una app "de escritorio". Devuelve el motivo del fallo. */
 export function validarClientSecret(texto: string): string | null {
@@ -36,6 +38,7 @@ export function OnboardingScreen() {
   const [apiKey, setApiKey] = useState("");
   const [paso2a, setPaso2a] = useState(false);
   const [paso2b, setPaso2b] = useState(false);
+  const [paso2c, setPaso2c] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [path, setPath] = useState("");
   const [googleError, setGoogleError] = useState<string | null>(null);
@@ -100,7 +103,7 @@ export function OnboardingScreen() {
 
         <Paso id="paso-google" titulo="Proyecto de Google Cloud" hecho={hechoGoogle}>
           <p className="nota">
-            YouTube exige que cada usuario traiga su propio proyecto de Google Cloud (gratuito). Tres sub-pasos:
+            YouTube exige que cada usuario traiga su propio proyecto de Google Cloud (gratuito). Cuatro sub-pasos:
           </p>
           <ol className="subpasos">
             <li>
@@ -124,12 +127,23 @@ export function OnboardingScreen() {
               </label>
             </li>
             <li>
+              <label>
+                <input type="checkbox" data-testid="google-paso-c" checked={paso2c} onChange={(e) => setPaso2c(e.target.checked)} />{" "}
+                En{" "}
+                <a href={PUBLICO} target="_blank" rel="noopener noreferrer">
+                  Público
+                </a>
+                , pulsa <strong>Publicar aplicación</strong>. Si la dejas en «Prueba», Google desconecta tu canal cada 7 días y
+                tendrías que volver a autorizarlo.
+              </label>
+            </li>
+            <li>
               Importa el JSON descargado (se guarda cifrado; el fichero original puedes borrarlo):
               <textarea data-testid="google-json" rows={4} placeholder='{"installed": {"client_id": …}}' value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
               <div className="fila">
                 <span>o ruta:</span>
                 <input data-testid="google-path" placeholder="C:\Users\…\client_secret_….json" value={path} onChange={(e) => setPath(e.target.value)} />
-                <button data-testid="google-importar" disabled={importar.isPending || !(paso2a && paso2b)} onClick={onImportar}>
+                <button data-testid="google-importar" disabled={importar.isPending || !(paso2a && paso2b && paso2c)} onClick={onImportar}>
                   Importar
                 </button>
               </div>
@@ -144,6 +158,10 @@ export function OnboardingScreen() {
 
         <Paso id="paso-oauth" titulo="Autorizar tu canal de YouTube" hecho={hechoOauth}>
           <p className="nota">Se abre el navegador con el consentimiento de Google. Es la única acción que abre el navegador.</p>
+          <p className="nota" data-testid="oauth-no-verificada">
+            Google avisará de que «no ha verificado esta app»: es tu propio proyecto y es normal. Pulsa «Configuración avanzada» y
+            luego «Ir a …» para continuar.
+          </p>
           <button data-testid="oauth-autorizar" disabled={!hechoGoogle || oauth.isPending} onClick={() => oauth.mutate()}>
             {oauth.isPending ? "Se ha abierto el navegador…" : "Autorizar canal de YouTube"}
           </button>
