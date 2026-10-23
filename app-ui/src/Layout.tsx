@@ -1,5 +1,7 @@
 /** Marco común: barra lateral de 220 px + contenido (docs/pantallas.md → Marco común). */
 import { NavLink, Outlet } from "react-router";
+import { CommandPalette } from "./CommandPalette";
+import { Toaster } from "./ui";
 import { UpdateBanner } from "./UpdateBanner";
 
 const enlaces = [
@@ -26,6 +28,8 @@ export function Layout() {
         <UpdateBanner />
         <Outlet />
       </main>
+      <CommandPalette />
+      <Toaster />
     </div>
   );
 }
