@@ -6,11 +6,27 @@ estados posibles. Lo que no está aquí no se exige.
 
 ## Marco común
 
-- Ventana mínima 900×600. Layout de dos columnas: barra lateral fija de 220 px a la
+- Ventana mínima 900×600. Layout de dos columnas: barra lateral fija de 248 px a la
   izquierda (`nav[data-testid=nav]`) y contenido a la derecha (`main`), que ocupa el resto.
-- Barra lateral: título "SEO Studio" arriba y seis enlaces en este orden, con estos
-  `data-testid`: `nav-chat`, `nav-publicar`, `nav-canal`, `nav-kb`, `nav-ajustes`,
-  `nav-onboarding`. El activo lleva `aria-current="page"`.
+- Barra lateral, de arriba abajo: logo y título "SEO Studio" (`h2`); botón `nav-paleta`
+  "Buscar o ejecutar… Ctrl K" (abre la paleta de comandos, también con Ctrl K); enlaces con
+  icono, en este orden y con estos `data-testid`: `nav-chat` ("Chat"), `nav-publicar`
+  ("Publicar"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento"); el activo lleva
+  `aria-current="page"`; lista de conversaciones (`nav-conversaciones`) con el botón
+  `conv-nueva` ("Nueva conversación") y un botón `conv-<id>` por conversación (título = primeras
+  palabras del primer mensaje; la activa lleva `aria-current="true"`); en el pie, aviso
+  `nav-onboarding` ("Completa la configuración") **solo si falta algún paso** (clave de
+  Anthropic, client_secret o canal autorizado), tarjeta `nav-job` con el progreso del job activo
+  (subida o transcripción; al terminar, un toast con el resultado o el error) y el enlace de
+  perfil `nav-ajustes` (canal activo y estado de autorización).
+- Onboarding ya no es un enlace fijo del menú: se llega con el aviso, desde Ajustes o al abrir
+  la app sin configurar.
+- Paleta de comandos (Ctrl K): `paleta` (diálogo) con `paleta-input`; navega a cada pantalla y
+  ofrece "Nueva conversación", "Publicar un vídeo" y "Preguntar a la KB…".
+- Tema: `data-theme` en `<html>` (`dark` | `light`; sin atributo sigue al sistema), guardado en
+  localStorage (`seo-studio.tema`) hasta que el sidecar lo persista.
+- Aviso de actualización (`update-banner`) encima del contenido; instalar pide confirmación en un
+  diálogo.
 - Estados globales (sustituyen al layout entero):
   - `sidecar-arrancando`: texto "Arrancando el sidecar…".
   - `sidecar-error`: texto "No se pudo arrancar el sidecar: <motivo>".

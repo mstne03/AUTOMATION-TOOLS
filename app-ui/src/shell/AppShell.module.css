@@ -1,0 +1,18 @@
+.shell {
+  display: grid;
+  grid-template-columns: var(--size-sidebar) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+.principal,
+.principalSangre {
+  min-width: 0;
+  overflow: auto;
+}
+.principal {
+  padding: var(--space-20) var(--space-24);
+}
+.principalSangre {
+  display: flex;
+  flex-direction: column;
+}
