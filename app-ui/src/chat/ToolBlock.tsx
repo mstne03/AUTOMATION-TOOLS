@@ -1,5 +1,6 @@
 /** Bloque de llamada a tool dentro de un turno (docs/pantallas.md → Chat → Tool). */
-import type { Approval } from "../api/types";
+import type { Approval, Job } from "../api/types";
+import { useJobs } from "../state/jobs";
 import { ApprovalCard } from "./ApprovalCard";
 import { rutaResuelta, type BloqueTool } from "./turno";
 
@@ -25,7 +26,13 @@ export function estadoTool(b: BloqueTool): string {
   return "ejecutando";
 }
 
-export function ToolBlock({ bloque, onResolver }: Props) {
+/** El progreso llega por el sondeo del store de jobs; el job del stream puede ser más nuevo (job_finished). */
+const masNuevo = (a: Job | undefined, b: Job | undefined) => (a && b ? (a.updated_at >= b.updated_at ? a : b) : (a ?? b));
+
+export function ToolBlock({ bloque: original, onResolver }: Props) {
+  const vivo = useJobs((s) => (original.job ? s.jobs[original.job.id] : undefined));
+  const job = masNuevo(original.job, vivo);
+  const bloque = job === original.job ? original : { ...original, job };
   const estado = estadoTool(bloque);
   const ruta = rutaResuelta(bloque);
   const pendiente = bloque.approval?.status === "pending";

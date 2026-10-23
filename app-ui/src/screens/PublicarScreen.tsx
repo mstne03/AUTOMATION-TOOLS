@@ -1,24 +1,22 @@
 /** Publicar vídeo (docs/pantallas.md → Publicar): vídeo elegido con el explorador (o ruta
  *  escrita) dentro de allowed_dirs, transcripción como job, borrador generado por el agente
  *  y editable, subida con aprobación inline. */
-import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useClient } from "../api/context";
 import { useSettings } from "../api/queries";
-import type { Job } from "../api/types";
 import { TurnoView } from "../chat/ChatScreen";
 import { useChat } from "../chat/useChat";
 import { elegirVideo } from "../dialogo";
-
-interface Borrador {
-  title: string;
-  description: string;
-  tags: string;
-  privacy: "private" | "unlisted" | "public";
-  publishAt: string;
-}
-
-const vacio: Borrador = { title: "", description: "", tags: "", privacy: "private", publishAt: "" };
+import { useJobs, jobActivo } from "../state/jobs";
+import {
+  parcharBorrador,
+  setEsperandoBorrador,
+  setPath,
+  setTranscripcion,
+  transcribir,
+  usePublicar,
+  type Borrador,
+} from "../state/publicar";
 
 const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 
@@ -41,12 +39,9 @@ export function extraerJson(texto: string): Partial<Borrador> | null {
 export function PublicarScreen() {
   const client = useClient();
   const settings = useSettings();
-  const chat = useChat();
-  const [path, setPath] = useState("");
-  const [transcripcion, setTranscripcion] = useState<string | null>(null);
-  const [job, setJob] = useState<Job | null>(null);
-  const [borrador, setBorrador] = useState<Borrador>(vacio);
-  const [esperandoBorrador, setEsperandoBorrador] = useState(false);
+  const chat = useChat("publicar");
+  const { path, transcripcion, jobId, transcribiendo, errorTranscripcion, borrador, esperandoBorrador } = usePublicar();
+  const job = useJobs((s) => (jobId ? s.jobs[jobId] : undefined));
 
   const dirs = settings.data?.allowed_dirs ?? [];
   const pathOk = path.trim() !== "" && dirs.some((d) => norm(path).startsWith(norm(d.path) + "\\"));
@@ -72,23 +67,6 @@ export function PublicarScreen() {
         ? "Espera a que el agente termine la respuesta en curso."
         : null;
 
-  const transcribir = useMutation({
-    mutationFn: async () => {
-      let j = await client.createJob("transcribe", { file: path.trim() });
-      setJob(j);
-      while (j.status === "queued" || j.status === "running") {
-        await new Promise((r) => setTimeout(r, 1000));
-        j = await client.getJob(j.id);
-        setJob(j);
-      }
-      if (j.status === "failed") throw new Error(j.error ?? "La transcripción ha fallado.");
-      // El job devuelve el resultado de transcribe_local_video: el texto va en full_text.
-      const texto = (j.result as { full_text?: string } | null)?.full_text;
-      if (typeof texto !== "string") throw new Error("La transcripción no devolvió texto.");
-      setTranscripcion(texto);
-    },
-  });
-
   // Cuando el agente termina el turno del borrador, rellena los campos con su JSON.
   useEffect(() => {
     if (!esperandoBorrador || chat.enStream) return;
@@ -96,7 +74,7 @@ export function PublicarScreen() {
     if (ultimo?.role !== "assistant" || ultimo.turno.estado === "streaming") return;
     const texto = ultimo.turno.bloques.filter((b) => b.kind === "text").map((b) => b.text).join("\n");
     const j = extraerJson(texto);
-    if (j) setBorrador((b) => ({ ...b, ...Object.fromEntries(Object.entries(j).filter(([, v]) => v !== undefined)) }));
+    if (j) parcharBorrador(Object.fromEntries(Object.entries(j).filter(([, v]) => v !== undefined)));
     setEsperandoBorrador(false);
   }, [chat.mensajes, chat.enStream, esperandoBorrador]);
 
@@ -123,7 +101,7 @@ export function PublicarScreen() {
     );
   };
 
-  const set = (k: keyof Borrador) => (e: { target: { value: string } }) => setBorrador({ ...borrador, [k]: e.target.value });
+  const set = (k: keyof Borrador) => (e: { target: { value: string } }) => parcharBorrador({ [k]: e.target.value });
 
   return (
     <div className="publicar">
@@ -148,15 +126,15 @@ export function PublicarScreen() {
 
       <section>
         <h2>2. Transcripción (opcional, local)</h2>
-        <button data-testid="publicar-transcribir" disabled={!pathOk || transcribir.isPending} onClick={() => transcribir.mutate()}>
-          {transcribir.isPending ? "Transcribiendo…" : "Transcribir"}
+        <button data-testid="publicar-transcribir" disabled={!pathOk || transcribiendo} onClick={() => void transcribir(client)}>
+          {transcribiendo ? "Transcribiendo…" : "Transcribir"}
         </button>
-        {job && (job.status === "queued" || job.status === "running") && (
+        {job && jobActivo(job) && (
           <label data-testid="publicar-progreso">
             <progress value={job.progress} max={1} /> {Math.round(job.progress * 100)} %
           </label>
         )}
-        {transcribir.error && <p className="error">{transcribir.error.message}</p>}
+        {errorTranscripcion && <p className="error">{errorTranscripcion}</p>}
         {transcripcion !== null && !transcripcion.trim() && (
           <p data-testid="publicar-sin-voz">No se ha detectado voz en el vídeo: el borrador se generará sin transcripción.</p>
         )}
