@@ -15,15 +15,15 @@ export async function abrirUrl(url: string): Promise<void> {
 }
 
 /** Las URLs que escribe el modelo pueden ser cualquier cosa: lo que no sea https se pinta como texto. */
-export function EnlaceExterno({ href, children }: { href: string; children: ReactNode }) {
-  if (!esUrlHttps(href)) return <span>{children}</span>;
+export function EnlaceExterno({ href, children, className }: { href: string; children: ReactNode; className?: string }) {
+  if (!esUrlHttps(href)) return <span className={className}>{children}</span>;
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     if (!enTauri()) return;
     e.preventDefault();
     abrirUrl(href).catch((err) => console.error("abrir_url:", err));
   };
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick}>
+    <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} className={className}>
       {children}
     </a>
   );

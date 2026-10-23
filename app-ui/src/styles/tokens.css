@@ -101,6 +101,8 @@
   --color-sidebar: #0E0E13;
   --color-faint: #6B6B75;
   --color-nav-icon-active: #C9C0FF;
+  --color-risk-write-panel: #17130C;
+  --color-bubble: #1F1F27;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -155,6 +157,8 @@
     --color-sidebar: #F4F4F5;
     --color-faint: #71717A;
     --color-nav-icon-active: #5A48CF;
+    --color-risk-write-panel: #FFFBF2;
+    --color-bubble: #F0F0F2;
     --elevation-e0: none;
     --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
     --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);
@@ -209,6 +213,8 @@
   --color-sidebar: #0E0E13;
   --color-faint: #6B6B75;
   --color-nav-icon-active: #C9C0FF;
+  --color-risk-write-panel: #17130C;
+  --color-bubble: #1F1F27;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -262,6 +268,8 @@
   --color-sidebar: #F4F4F5;
   --color-faint: #71717A;
   --color-nav-icon-active: #5A48CF;
+  --color-risk-write-panel: #FFFBF2;
+  --color-bubble: #F0F0F2;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
   --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);

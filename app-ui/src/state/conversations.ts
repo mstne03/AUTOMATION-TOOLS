@@ -74,7 +74,15 @@ export function seleccionar(id: string) {
   if (id in useConversaciones.getState().conversaciones) useConversaciones.setState({ activa: id });
 }
 
-export async function enviar(client: Client, id: string, texto: string) {
+/** La UI no tiene (aún) un parámetro del sidecar para desactivar la KB: se le indica al agente en el mensaje. */
+const SIN_KB = "\n\n(Indicación de la interfaz: en esta respuesta no uses las herramientas de la base de conocimiento.)";
+
+export interface OpcionesEnvio {
+  /** El usuario ha apagado "Usar KB": el texto visible no cambia, solo lo que recibe el agente. */
+  sinKb?: boolean;
+}
+
+export async function enviar(client: Client, id: string, texto: string, opciones: OpcionesEnvio = {}) {
   const actual = useConversaciones.getState().conversaciones[id] ?? vacia(id);
   if (actual.enStream || !texto.trim()) return;
   parchar(id, (c) => ({
@@ -86,7 +94,7 @@ export async function enviar(client: Client, id: string, texto: string) {
   const abort = new AbortController();
   abortos.set(id, abort);
   try {
-    for await (const ev of client.chat({ message: texto, conversation_id: actual.conversationId }, abort.signal)) {
+    for await (const ev of client.chat({ message: opciones.sinKb ? texto + SIN_KB : texto, conversation_id: actual.conversationId }, abort.signal)) {
       if (ev.type === "done") parchar(id, (c) => ({ ...c, conversationId: ev.conversation_id }));
       actualizarTurno(id, (t) => reduceTurno(t, ev));
       if (ev.type === "job_started") seguirJob(client, ev.job);
