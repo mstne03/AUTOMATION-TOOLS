@@ -181,6 +181,79 @@ def listar_fuentes(plataforma: str | None = None) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Versiones estructuradas para la UI (app-backend). El texto de las tools de arriba sigue siendo lo
+# que lee el agente; estas devuelven los mismos datos como listas para pintar tarjetas.
+
+FRAGMENTO_CHARS = 400
+
+
+def buscar_estructurado(
+    query: str,
+    plataforma: str | None = None,
+    k: int = 5,
+    fuente: str | list[str] | None = None,
+) -> list[dict]:
+    """Bloques de `buscar_kb` como [{titulo, plataforma, plataformas, fecha, url, origen, fragmento}].
+
+    `origen` es "publica" o "privada". `url` es la de la página original cuando el documento es un
+    archivo local capturado a mano. El fragmento se recorta alrededor de lo más parecido a la consulta.
+    """
+    if not query.strip():
+        return []
+    qvec = embeddings.embed_query(query)
+    results = kb_search.search(query, platform=plataforma, sources=fuente, k=k, qvec=qvec)
+    puntuar = kb_search.puntuador(qvec)
+    salida = []
+    for g in formatting.agrupar(results):
+        plataformas = list(g.get("platforms") or [])
+        salida.append(
+            {
+                "titulo": g.get("title") or "Sin título",
+                "plataforma": plataformas[0] if plataformas else None,
+                "plataformas": plataformas,
+                "fecha": g.get("published_at"),
+                "url": g.get("url_original") or g.get("url"),
+                "origen": g.get("origen", "publica"),
+                "fragmento": formatting.recortar(g["content"], FRAGMENTO_CHARS, puntuar),
+            }
+        )
+    return salida
+
+
+def fuentes_estructuradas(plataforma: str | None = None) -> list[dict]:
+    """Documentos de la base como [{titulo, plataforma, plataformas, fecha, url, origen}]."""
+    out: list[dict] = []
+    if config.KB_BACKEND == "sqlite":
+        for origen, ruta in _bases_sqlite():
+            conn = sqlite_kb.connect(ruta)
+            try:
+                filas = sqlite_kb.listar_fuentes(conn, plataforma)
+            finally:
+                conn.close()
+            out.extend((origen, *f) for f in filas)
+    else:
+        sql = (
+            "SELECT title, url, published_at, platforms FROM documents "
+            "WHERE (%s::TEXT IS NULL OR platforms @> ARRAY[%s::TEXT]) "
+            "ORDER BY published_at DESC NULLS LAST, title"
+        )
+        with db.reader() as conn, conn.cursor() as cur:
+            cur.execute(sql, (plataforma, plataforma))
+            out.extend(("publica", *f) for f in cur.fetchall())
+    return [
+        {
+            "titulo": titulo or "Sin título",
+            "plataforma": (plataformas or [None])[0],
+            "plataformas": list(plataformas or []),
+            "fecha": str(fecha) if fecha else None,
+            "url": url,
+            "origen": origen,
+        }
+        for origen, titulo, url, fecha, plataformas in out
+    ]
+
+
 def _identificador(url: str) -> str:
     """Trozo corto y distintivo de la url, para pasarselo a buscar_kb(fuente=...)."""
     if not url.lower().startswith(("http://", "https://")):

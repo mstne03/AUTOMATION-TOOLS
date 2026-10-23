@@ -7,7 +7,7 @@ import s from "./AppShell.module.css";
 import { Sidebar } from "./Sidebar";
 
 /** Pantallas ya rediseñadas que gestionan su propio padding (a sangre); el resto conserva el margen heredado. */
-const A_SANGRE = ["/chat", "/publicar", "/canal", "/ajustes"];
+const A_SANGRE = ["/chat", "/publicar", "/canal", "/ajustes", "/kb"];
 
 export function AppShell() {
   const { pathname } = useLocation();
