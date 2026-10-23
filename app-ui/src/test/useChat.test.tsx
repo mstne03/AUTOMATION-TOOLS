@@ -113,6 +113,23 @@ describe("useChat", () => {
     expect(publicar.result.current.mensajes).toHaveLength(0);
   });
 
+  it("con 'Usar KB' apagado el agente recibe la indicación, pero el mensaje visible no cambia", async () => {
+    const mensajes: string[] = [];
+    const client = {
+      async *chat(req: { message: string }) {
+        mensajes.push(req.message);
+        yield fx.errorApi[0];
+      },
+    } as unknown as Client;
+    const { result } = montar(client);
+    await act(() => result.current.enviar("hola", { sinKb: true }));
+    expect(mensajes[0]).toContain("hola");
+    expect(mensajes[0]).toContain("no uses las herramientas de la base de conocimiento");
+    expect(result.current.mensajes[0]).toEqual({ role: "user", text: "hola" });
+    await act(() => result.current.enviar("otra"));
+    expect(mensajes[1]).toBe("otra");
+  });
+
   it("nueva() crea otra conversación y la deja activa", () => {
     expect(useConversaciones.getState().activa).toBe("chat:1");
     const id = nueva();

@@ -4,7 +4,7 @@
  *  Es comodidad, no control de acceso: el sidecar valida la ruta con `resolve_allowed`. */
 import { invoke } from "@tauri-apps/api/core";
 
-const enTauri = () => "__TAURI_INTERNALS__" in window;
+export const enTauri = () => "__TAURI_INTERNALS__" in window;
 
 /** Ruta elegida, o null si se cancela o no estamos en Tauri. */
 export async function elegirVideo(dirInicial: string): Promise<string | null> {

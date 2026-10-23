@@ -35,47 +35,73 @@ estados posibles. Lo que no está aquí no se exige.
 
 ## Chat (`/chat`)
 
-Layout vertical dentro de `main`:
+Referencia: artboard "Chat (oscuro)". La pantalla ocupa todo `main` (sin padding) y se divide en:
 
-1. Cabecera (`chat-header`): a la derecha, indicador de coste `chat-coste` con el texto
-   "≈ $X.XXXX · N tokens en caché" acumulado de todos los turnos de la sesión. Vacío hasta
-   el primer `done`.
-2. Lista de mensajes (`chat-mensajes`), con scroll, que crece hacia abajo y se mantiene
-   pegada al final mientras llega el stream.
-3. Compositor (`chat-form`): `textarea[data-testid=chat-input]` + botón `chat-enviar`
-   (texto "Enviar"). Enter envía, Shift+Enter hace salto de línea. Mientras hay un turno
-   en curso el botón pasa a "Cancelar" (`chat-cancelar`) y el textarea queda deshabilitado.
+1. Cabecera (`chat-header`): título de la conversación (h1; "Nueva conversación" hasta el
+   primer mensaje; después, las primeras palabras de este), selector de modelo `chat-modelo`
+   (menú de elección única con nombre y precio de cada modelo; guarda en `PUT /settings`),
+   indicador de coste `chat-coste` con el texto "≈ $X.XXXX · N tokens en caché" acumulado de
+   todos los turnos de la conversación (no existe hasta el primer `done`; precios de
+   `PRECIOS_MODELO`) y botón `chat-nueva` ("Nueva").
+2. Lista de mensajes (`chat-mensajes`), con scroll, hilo centrado de máx. 760 px, pegada al
+   final mientras llega el stream.
+3. Compositor (`chat-form`): `textarea[data-testid=chat-input]` que crece con el texto hasta
+   168 px (luego scroll), botón `chat-adjuntar` (abre el explorador nativo de vídeo e inserta
+   la ruta; fuera de Tauri avisa con un toast), interruptor `chat-usar-kb` ("Usar KB · sí/no",
+   `role=switch`; apagado, el agente recibe la indicación de no consultar la KB), y a la
+   derecha un botón de icono `chat-enviar` (aria-label "Enviar", deshabilitado sin texto) que
+   durante un turno pasa a `chat-cancelar` (aria-label "Cancelar"). Enter envía, Shift+Enter
+   hace salto de línea; el textarea queda deshabilitado mientras hay un turno en curso.
 
 Mensajes:
 
-- Usuario: `article[data-testid=msg-user]` alineado a la derecha, texto plano.
-- Agente: `article[data-testid=msg-assistant]`. Contiene bloques en orden:
-  - Texto (`bloque-texto`): párrafos; mientras `estado=streaming` y es el último bloque,
+- Usuario: `article[data-testid=msg-user]`, burbuja a la derecha, texto plano.
+- Agente: `article[data-testid=msg-assistant]` con avatar. Contiene, en el orden en que
+  llegaron:
+  - Texto (`bloque-texto`) renderizado como Markdown **sin HTML crudo**: párrafos, cabeceras
+    (h3–h5), listas, tablas en caja con scroll horizontal (`md-tabla`, con la alineación de las
+    columnas), citas, bloques de código, negrita, cursiva y código en línea. Las URLs https
+    se pintan como chip "n · dominio ↗" (mismo número para la misma URL en un mensaje) y los
+    enlaces `[texto](url)` conservan su texto; ambos abren con `abrir_url`. Una URL que no
+    sea https se pinta como texto. Mientras `estado=streaming` y es el último bloque,
     muestra un cursor `▍`.
-  - Tool (`bloque-tool`, atributo `data-tool=<nombre>`): tarjeta plegable con cabecera
-    "<nombre> · <riesgo>" y el estado (`tool-estado`) con uno de estos textos:
-    "ejecutando", "esperando aprobación", "rechazada", "aprobada", "en cola",
-    "subiendo N %", "transcribiendo N %", "hecho", "error".
-    El detalle plegado muestra `input` como JSON y, cuando hay resultado, `tool-resultado`
-    en una zona marcada "Datos" (texto monoespaciado). Si el resultado trae `file`
-    (ruta real resuelta), aparece en `tool-ruta` con la etiqueta "Fichero:".
-  - **Tarjeta de aprobación** (`approval-card`, atributo `data-risk`), dentro del bloque
-    tool cuando `approval.status=pending`:
-    - Título "El agente quiere ejecutar <tool>"; chip de riesgo `approval-risk` con el texto
-      "escritura" o "DESTRUCTIVA"; `approval-quota` con "Coste de cuota: N (<bucket>)" si
-      hay cuota.
-    - Tabla `approval-args` con una fila por argumento (clave, valor). `file_path` se
-      muestra con la nota "(la ruta real se resuelve al ejecutar)".
-    - Botones `approval-aprobar` ("Aprobar") y `approval-rechazar` ("Rechazar").
-    - Si `requires_confirm_id`: campo `approval-confirm` con placeholder "Escribe el
-      video_id para confirmar"; "Aprobar" está deshabilitado hasta que coincide
-      exactamente con `args.video_id`. Fondo rojo (`--danger-bg`). El ID se muestra
-      (`approval-video-id`) y se teclea en monoespaciada, y `approval-confirm-estado`
-      ("El ID coincide" / "El ID no coincide") avisa en vivo cuando el campo no está vacío.
+  - Grupo de pasos (`pasos`): las tools consecutivas forman un único bloque plegable cuyo
+    resumen dice "N pasos · <acciones legibles> · X u de cuota". Está abierto mientras alguna
+    tool no ha terminado y se pliega al acabar. Cada paso es un `bloque-tool` (atributo
+    `data-tool=<nombre técnico>`) con una fila: icono de estado, nombre legible
+    ("Subir vídeo a YouTube", mapa en `chat/herramientas.ts`), chip de riesgo en español
+    (Escritura / Destructiva; las de lectura no llevan chip; el riesgo sale de
+    `GET /youtube/tools`), estado `tool-estado` con uno de estos textos: "ejecutando",
+    "esperando aprobación", "rechazada", "aprobada", "en cola", "subiendo N %",
+    "transcribiendo N %", "hecho", "error", y la cuota ("1 u"). El detalle plegado muestra el
+    nombre técnico, los argumentos en JSON y, cuando hay resultado, `tool-resultado` en una
+    zona marcada "Datos" (monoespaciada). Si el resultado trae `file` (ruta real resuelta),
+    aparece en `tool-ruta` con la etiqueta "Fichero:".
+  - **Tarjeta de aprobación** (`approval-card`, atributo `data-risk`), justo debajo del grupo de
+    pasos mientras `approval.status=pending`; recibe el foco al aparecer:
+    - Cabecera con icono, título legible de la acción, subtítulo ("Nada se ejecuta hasta que
+      apruebes" / "No se puede deshacer", más `approval-quota` "N unidades de cuota (<bucket>)"
+      si hay cuota) y chip de riesgo `approval-risk` con el texto "Escritura" o "Destructiva".
+    - Tabla `approval-args` con una fila por argumento, con etiquetas en español (Fichero,
+      Título, Descripción, Etiquetas, Visibilidad, Programada, ID del vídeo): las etiquetas
+      se pintan como chips, la visibilidad traducida, la descripción larga se corta y se
+      despliega ("Ver completa" / "Ocultar"), `file_path` en monoespaciada con la nota
+      "(la ruta real se resuelve al ejecutar)".
+    - "Ver detalles técnicos" (`approval-tecnico`) muestra el nombre de la tool y el JSON
+      (`approval-json`); el JSON no se duplica en otro sitio mientras hay aprobación pendiente.
+    - Botones `approval-rechazar` ("Rechazar") y `approval-aprobar` ("Aprobar", "Aprobar y
+      subir" para subidas, "Borrar definitivamente" para borrados).
+    - Si `requires_confirm_id` (destructiva): miniatura (marcador de posición) y el ID en
+      monoespaciada (`approval-video-id`); campo `approval-confirm` (placeholder "Escribe el
+      video_id para confirmar", monoespaciada); "Aprobar" deshabilitado hasta que coincide
+      exactamente con `args.video_id`; `approval-confirm-estado` avisa en vivo ("Faltan N
+      caracteres" / "Falta 1 carácter" / "El ID no coincide" / "El ID coincide") cuando el campo
+      no está vacío. Fondo rojo apagado y borde rojo.
     - Mientras se envía la decisión, ambos botones deshabilitados.
     - Tras resolverse, la tarjeta desaparece y `tool-estado` pasa a "aprobada" /
       "rechazada". Un rechazo **no** se pinta como error.
-  - Error del turno (`turno-error`): caja con "Error: <mensaje>" al final del artículo.
+  - Error del turno (`turno-error`, `role=alert`): caja con "Error: <mensaje>" al final del
+    artículo.
 - Separación visual entre datos (resultado de tools, monoespaciado, etiqueta "Datos") y
   texto del modelo (proporcional, sin etiqueta). Esto es lo que el handoff llama
   "distinguir datos de inferencias".

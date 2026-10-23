@@ -9,7 +9,7 @@ export type { Mensaje } from "../state/conversations";
 export function useChat(id: string) {
   const client = useClient();
   const c = store.useConversaciones(store.seleccionarConversacion(id));
-  const enviar = useCallback((texto: string) => store.enviar(client, id, texto), [client, id]);
+  const enviar = useCallback((texto: string, opciones?: store.OpcionesEnvio) => store.enviar(client, id, texto, opciones), [client, id]);
   const resolver = useCallback(
     (approval: Approval, decision: "approve" | "reject", confirmId?: string) =>
       store.resolver(client, id, approval, decision, confirmId),
