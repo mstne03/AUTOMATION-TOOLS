@@ -17,3 +17,9 @@ export async function elegirCarpeta(dirInicial: string): Promise<string | null> 
   if (!enTauri()) return null;
   return invoke<string | null>("elegir_carpeta", { dirInicial });
 }
+
+/** Ruta del client_secret.json elegida, o null si se cancela o no estamos en Tauri (Onboarding). */
+export async function elegirClientSecret(): Promise<string | null> {
+  if (!enTauri()) return null;
+  return invoke<string | null>("elegir_client_secret");
+}

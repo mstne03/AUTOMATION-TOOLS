@@ -151,3 +151,21 @@ async def test_cors_solo_origenes_de_tauri(client):
     # Sin token sigue siendo 401 aunque el origen sea el bueno.
     r = await client.get("/settings", headers={"Origin": "http://tauri.localhost"})
     assert r.status_code == 401
+
+
+async def test_validate_key_con_clave_buena_mala_y_sin_clave(client):
+    antes = (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"]
+    if not antes:
+        r = await client.post("/settings/validate-key", headers=AUTH, json={})
+        assert r.status_code == 400  # sin clave guardada ni enviada
+
+    r = await client.post("/settings/validate-key", headers=AUTH, json={"api_key": "sk-ant-buena"})
+    assert r.status_code == 200 and r.json() == {"valida": True, "detalle": None}
+    assert client.fake.headers[-1]["x-api-key"] == "sk-ant-buena"
+
+    r = await client.post("/settings/validate-key", headers=AUTH, json={"api_key": "sk-ant-mala"})
+    assert r.status_code == 200
+    assert r.json()["valida"] is False and "no reconoce" in r.json()["detalle"]
+    assert (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"] == antes  # validar no guarda nada
+
+    assert (await client.post("/settings/validate-key", json={"api_key": "x"})).status_code == 401

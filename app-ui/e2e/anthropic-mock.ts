@@ -117,6 +117,16 @@ function elegir(body: { messages: { role: string; content: unknown }[] }): [Bloc
 
 export function startAnthropicMock(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url?.startsWith("/v1/models")) {
+      // validación de la clave del onboarding: una clave que termina en "mala" no es válida
+      if (String(req.headers["x-api-key"] ?? "").endsWith("mala")) {
+        res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }));
+        return;
+      }
+      const modelo = { id: "claude-opus-5-5", type: "model", display_name: "Claude Opus 5.5", created_at: "2026-01-01T00:00:00Z" };
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ data: [modelo], has_more: false, first_id: modelo.id, last_id: modelo.id }));
+      return;
+    }
     if (req.method !== "POST" || !req.url?.startsWith("/v1/messages")) {
       res.writeHead(404).end();
       return;

@@ -13,6 +13,7 @@ import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
+import { Toaster } from "./ui";
 
 // Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
 const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
@@ -21,6 +22,8 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
+  // El asistente de bienvenida va a ancho completo, fuera de la barra lateral.
+  { path: "onboarding", element: <OnboardingScreen /> },
   {
     element: <AppShell />,
     children: [
@@ -30,7 +33,6 @@ const router = createHashRouter([
       { path: "canal", element: <CanalScreen /> },
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },
-      { path: "onboarding", element: <OnboardingScreen /> },
       ...(Catalogo ? [{ path: "catalogo", element: <Suspense fallback={null}><Catalogo /></Suspense> }] : []),
     ],
   },
@@ -74,6 +76,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ClientContext.Provider value={client}>
         <RouterProvider router={router} />
+        <Toaster />
       </ClientContext.Provider>
     </QueryClientProvider>
   );
