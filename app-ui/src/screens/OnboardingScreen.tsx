@@ -9,7 +9,7 @@ import { useClient } from "../api/context";
 import { useSettings, useYoutubeStatus } from "../api/queries";
 import { elegirClientSecret } from "../dialogo";
 import { EnlaceExterno } from "../enlaces";
-import { Button, Field, Input, Progress, Textarea, toast } from "../ui";
+import { Button, Estado, Field, Input, Progress, Textarea, toast } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./OnboardingScreen.module.css";
 
@@ -91,8 +91,8 @@ export function OnboardingScreen() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["youtube"] }),
   });
 
-  if (settings.isPending) return <p className="estado">Cargando…</p>;
-  if (settings.isError) return <p className="estado error">Error: {settings.error.message}</p>;
+  if (settings.isPending) return <Estado>Cargando…</Estado>;
+  if (settings.isError) return <Estado error>Error: {settings.error.message}</Estado>;
   const st = settings.data;
 
   const hechos = [st.has_anthropic_key, st.has_client_secret, !!yt.data?.auth.authenticated, kb.isSuccess];

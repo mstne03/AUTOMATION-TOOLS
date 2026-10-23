@@ -6,6 +6,7 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
   timeout: 60_000,
   expect: { timeout: 10_000 },
+  snapshotPathTemplate: "{testDir}/__capturas__/{arg}{ext}",
   fullyParallel: false,
   workers: 1, // el sidecar admite un turno de chat a la vez y comparte estado
   reporter: "list",

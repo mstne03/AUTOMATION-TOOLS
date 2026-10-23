@@ -1,5 +1,6 @@
 export { Button, type ButtonProps } from "./Button";
 export { Card, type CardProps } from "./Card";
+export { Estado } from "./Estado";
 export { Chip, type ChipProps, type ChipTone } from "./Chip";
 export { ConfirmDialog, Dialog, type ConfirmDialogProps, type DialogProps } from "./Dialog";
 export { DropdownMenu, type DropdownMenuProps, type MenuItem } from "./DropdownMenu";

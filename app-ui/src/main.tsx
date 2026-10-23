@@ -6,7 +6,6 @@ import "@fontsource/jetbrains-mono/latin-400.css";
 import "@fontsource/jetbrains-mono/latin-500.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
-import "./styles.css";
 
 iniciarTema();
 

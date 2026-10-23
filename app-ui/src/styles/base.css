@@ -42,6 +42,14 @@ textarea,
 select {
   font: inherit;
 }
+button {
+  color: inherit;
+}
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 code,
 kbd,
 samp,
