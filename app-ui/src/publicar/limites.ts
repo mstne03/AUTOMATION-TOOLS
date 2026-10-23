@@ -101,12 +101,17 @@ export interface Diferencia {
 
 const norm = (s: unknown) => (typeof s === "string" ? s.trim() : "");
 
-/** Compara lo que el agente propone subir con el borrador del usuario (UI-08). */
+/** Ruta de Windows comparable: separadores \, sin barra final y sin distinguir mayúsculas. */
+export const normRuta = (p: string) => p.trim().replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+
+/** Compara lo que el agente propone subir con el borrador del usuario (UI-08). El fichero también:
+ *  el modelo puede proponer otro (o un nombre suelto que el sidecar resuelve en otra carpeta). */
 export function compararConBorrador(
   args: Record<string, unknown>,
-  b: { title: string; description: string; tags: string[]; privacy: string; publishAt: string },
+  b: { filePath: string; title: string; description: string; tags: string[]; privacy: string; publishAt: string },
 ): Diferencia[] {
   const d: Diferencia[] = [];
+  if (normRuta(norm(args.file_path)) !== normRuta(b.filePath)) d.push({ campo: "Fichero", borrador: b.filePath.trim(), propuesto: norm(args.file_path) });
   if (norm(args.title) !== b.title.trim()) d.push({ campo: "Título", borrador: b.title.trim(), propuesto: norm(args.title) });
   if (norm(args.description) !== b.description.trim()) d.push({ campo: "Descripción", borrador: b.description.trim(), propuesto: norm(args.description) });
   const tagsArg = Array.isArray(args.tags) ? args.tags.map(String) : [];

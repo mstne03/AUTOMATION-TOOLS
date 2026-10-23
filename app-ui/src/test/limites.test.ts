@@ -40,10 +40,20 @@ describe("límites de YouTube", () => {
   });
 
   it("compara lo que propone el agente con el borrador", () => {
-    const b = { title: "T", description: "D", tags: ["a", "b"], privacy: "private", publishAt: "" };
-    const igual = { title: " T ", description: "D", tags: ["B", "a"], privacy_status: "private", publish_at: null };
+    const b = { filePath: "C:\\Videos\\demo.mp4", title: "T", description: "D", tags: ["a", "b"], privacy: "private", publishAt: "" };
+    const igual = { file_path: "c:/videos/DEMO.mp4", title: " T ", description: "D", tags: ["B", "a"], privacy_status: "private", publish_at: null };
     expect(compararConBorrador(igual, b)).toEqual([]);
     const dif = compararConBorrador({ ...igual, title: "Otro", privacy_status: "public" }, b);
     expect(dif.map((d) => d.campo)).toEqual(["Título", "Visibilidad"]);
+  });
+
+  it("si el agente propone otro fichero (o un nombre suelto), es una diferencia", () => {
+    const b = { filePath: "C:\\Videos\\demo.mp4", title: "T", description: "", tags: [], privacy: "private", publishAt: "" };
+    const resto = { title: "T", description: "", tags: [], privacy_status: "private" };
+    for (const otro of ["C:\\Videos\\privado.mp4", "demo.mp4", "", undefined]) {
+      const d = compararConBorrador({ ...resto, file_path: otro }, b);
+      expect(d.map((x) => x.campo)).toEqual(["Fichero"]);
+      expect(d[0]).toMatchObject({ borrador: "C:\\Videos\\demo.mp4", propuesto: otro ?? "" });
+    }
   });
 });

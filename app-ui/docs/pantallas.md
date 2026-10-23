@@ -226,7 +226,7 @@ a cambiar de pantalla.
 - La propuesta de subida del agente se abre en un diálogo no descartable "Revisar y subir"
   (`publicar-aprobacion`) con la tarjeta de aprobación del chat y, debajo, o bien
   `publicar-coincide` ("Coincide con tu borrador") o `publicar-diferencias` con cada campo
-  que difiere (título, descripción, etiquetas, visibilidad, fecha); con diferencias, "Aprobar"
+  que difiere (fichero, título, descripción, etiquetas, visibilidad, fecha); con diferencias, "Aprobar"
   queda bloqueado hasta marcar `publicar-acepto`. La respuesta del agente (estado de la tool,
   progreso de la subida, errores) se ve en `publicar-turnos`, sin tarjetas de aprobación.
 

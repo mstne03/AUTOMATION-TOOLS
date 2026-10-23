@@ -8,6 +8,9 @@ type Block =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
 
+/** Marcador: se sustituye por la ruta de "Sube el vídeo <ruta> a YouTube" del último mensaje. */
+const RUTA_PEDIDA = "<ruta pedida>";
+
 export const GUIONES: Record<string, Block[]> = {
   "E2E-TEXTO": [{ type: "text", text: "Hola **Marc**, esto es un texto de prueba.\n\n- uno\n- dos" }],
   "E2E-RECHAZO": [
@@ -48,6 +51,22 @@ export const GUIONES: Record<string, Block[]> = {
       name: "youtube_upload_video",
       input: {
         file_path: "demo cs finance",
+        title: "CS Finance: controla tu inventario de skins en 60 segundos",
+        description: "Te enseño cómo seguir el valor de tus skins de CS2 con CS Finance. ".repeat(4),
+        tags: ["cs2", "skins", "cs finance"],
+        privacy_status: "private",
+        publish_at: null,
+      },
+    },
+  ],
+  // Como E2E-SUBIR, pero el agente sube el fichero que le pide el mensaje de Publicar.
+  "E2E-FIEL": [
+    {
+      type: "tool_use",
+      id: "tu_e2e_4",
+      name: "youtube_upload_video",
+      input: {
+        file_path: RUTA_PEDIDA,
         title: "CS Finance: controla tu inventario de skins en 60 segundos",
         description: "Te enseño cómo seguir el valor de tus skins de CS2 con CS Finance. ".repeat(4),
         tags: ["cs2", "skins", "cs finance"],
@@ -107,8 +126,10 @@ function elegir(body: { messages: { role: string; content: unknown }[] }): [Bloc
     const rechazado = contenido.includes("ha rechazado");
     return [[{ type: "text", text: rechazado ? "Vale, no lo hago." : "Hecho." }], "end_turn"];
   }
-  for (const [marca, bloques] of Object.entries(GUIONES)) {
+  const ruta = typeof ultimo?.content === "string" ? ultimo.content.match(/Sube el vídeo (.+?) a YouTube/)?.[1] : undefined;
+  for (const [marca, guion] of Object.entries(GUIONES)) {
     if (contenido.includes(marca)) {
+      const bloques = guion.map((b) => (b.type === "tool_use" && b.input.file_path === RUTA_PEDIDA ? { ...b, input: { ...b.input, file_path: ruta } } : b));
       return [bloques, bloques.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn"];
     }
   }

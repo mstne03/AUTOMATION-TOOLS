@@ -9,14 +9,12 @@ import { ApprovalCard } from "../chat/ApprovalCard";
 import { TurnoView } from "../chat/ChatScreen";
 import { useChat } from "../chat/useChat";
 import { elegirVideo } from "../dialogo";
-import { comprobar, compararConBorrador, motivoBloqueo, zonaHoraria, MAX_DESCRIPCION_BYTES, MAX_ETIQUETAS, MAX_TITULO, bytesUtf8, longitudEtiquetas, type Nivel } from "../publicar/limites";
+import { comprobar, compararConBorrador, motivoBloqueo, normRuta, zonaHoraria, MAX_DESCRIPCION_BYTES, MAX_ETIQUETAS, MAX_TITULO, bytesUtf8, longitudEtiquetas, type Nivel } from "../publicar/limites";
 import { jobActivo, useJobs } from "../state/jobs";
 import { descartar, parcharBorrador, setEsperandoBorrador, setPath, setTranscripcion, transcribir, usePublicar, type Borrador } from "../state/publicar";
 import { Button, ConfirmDialog, Dialog, Field, Input, Mono, Progress, SegmentedControl, TagInput, Textarea } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./PublicarScreen.module.css";
-
-const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 
 /** Extrae el primer objeto JSON de un texto del modelo. */
 export function extraerJson(texto: string): Partial<Borrador> | null {
@@ -51,7 +49,7 @@ export function PublicarScreen() {
   const campoTitulo = useRef<HTMLInputElement>(null);
 
   const dirs = settings.data?.allowed_dirs ?? [];
-  const pathOk = path.trim() !== "" && dirs.some((d) => norm(path).startsWith(norm(d.path) + "\\"));
+  const pathOk = path.trim() !== "" && dirs.some((d) => normRuta(path).startsWith(normRuta(d.path) + "\\"));
   const pathError = path.trim() !== "" && !pathOk;
   const tags = useMemo(() => borrador.tags.split(",").map((t) => t.trim()).filter(Boolean), [borrador.tags]);
   const cuota = youtube.data?.quota.buckets.video_insert;
@@ -77,8 +75,8 @@ export function PublicarScreen() {
     return null;
   }, [chat.mensajes]);
   const diferencias = useMemo(
-    () => (pendiente?.tool === "youtube_upload_video" ? compararConBorrador(pendiente.args, { title: borrador.title, description: borrador.description, tags, privacy: borrador.privacy, publishAt: borrador.publishAt }) : []),
-    [pendiente, borrador, tags],
+    () => (pendiente?.tool === "youtube_upload_video" ? compararConBorrador(pendiente.args, { filePath: path, title: borrador.title, description: borrador.description, tags, privacy: borrador.privacy, publishAt: borrador.publishAt }) : []),
+    [pendiente, path, borrador, tags],
   );
   useEffect(() => setAceptaDiferencias(false), [pendiente?.id]);
 

@@ -98,7 +98,7 @@ test.describe("Publicar rediseñado", () => {
   });
 
   test("la aprobación se abre en un diálogo y, si coincide con el borrador, lo dice", async ({ page }) => {
-    await conRuta(page, "demo E2E-SUBIR.mp4");
+    await conRuta(page, "demo E2E-FIEL.mp4");
     await page.getByTestId("borrador-title").fill(TITULO);
     await page.getByTestId("borrador-description").fill(DESCRIPCION.trim());
     const tags = page.getByTestId("borrador-tags");
@@ -119,8 +119,29 @@ test.describe("Publicar rediseñado", () => {
     await expect(page.getByTestId("publicar-turnos").getByTestId("tool-estado")).toHaveText("rechazada");
   });
 
+  test("si el agente propone subir otro fichero, no dice que coincide y 'Aprobar' queda bloqueado", async ({ page }) => {
+    const s = await conRuta(page, "demo E2E-SUBIR.mp4");
+    await page.getByTestId("borrador-title").fill(TITULO);
+    await page.getByTestId("borrador-description").fill(DESCRIPCION.trim());
+    const tags = page.getByTestId("borrador-tags");
+    for (const t of ["cs2", "skins", "cs finance"]) {
+      await tags.fill(t);
+      await tags.press("Enter");
+    }
+    await page.getByTestId("publicar-subir").click();
+    const dialogo = page.getByRole("dialog", { name: "Revisar y subir" });
+    const dif = dialogo.getByTestId("publicar-diferencias");
+    await expect(dif).toContainText("Fichero");
+    await expect(dif).toContainText(`${s.allowed_dirs[0].path}\\demo E2E-SUBIR.mp4`);
+    await expect(dif).toContainText("demo cs finance"); // lo que propone el agente
+    await expect(dialogo.getByTestId("publicar-coincide")).toHaveCount(0);
+    await expect(dialogo.getByTestId("approval-aprobar")).toBeDisabled();
+    await dialogo.getByTestId("approval-rechazar").click();
+    await expect(dialogo).toHaveCount(0);
+  });
+
   test("si el agente cambia algo, se marcan las diferencias y 'Aprobar' queda bloqueado hasta aceptarlas", async ({ page }) => {
-    await conRuta(page, "demo E2E-SUBIR.mp4");
+    await conRuta(page, "demo E2E-FIEL.mp4");
     await page.getByTestId("borrador-title").fill("Mi título propio");
     await page.getByTestId("publicar-subir").click();
     const dialogo = page.getByRole("dialog", { name: "Revisar y subir" });
