@@ -2,7 +2,8 @@
 // Los tokens con grupo `dark` / `light` (color, elevation) son los que cambian con el tema:
 //   :root                          -> oscuro (valor por defecto)
 //   @media (prefers-color-scheme: light) :root:not([data-theme]) -> claro cuando el sistema lo pide
-//   :root[data-theme="dark|light"] -> preferencia explícita (la pone AppShell, DS-04)
+//   [data-theme="dark|light"]      -> preferencia explícita en <html> (la pone AppShell, DS-04) o en
+//                                  cualquier contenedor (el catálogo pinta los dos temas a la vez)
 // El resto de tokens es común. El CSS generado se commitea: CI no necesita este paso.
 import StyleDictionary from "style-dictionary";
 
@@ -26,9 +27,9 @@ StyleDictionary.registerFormat({
       "\n@media (prefers-color-scheme: light) {\n" +
       bloque(":root:not([data-theme])", ["color-scheme: light;", ...porTema.light], "  ") +
       "}\n\n" +
-      bloque(':root[data-theme="dark"]', ["color-scheme: dark;", ...porTema.dark]) +
+      bloque('[data-theme="dark"]', ["color-scheme: dark;", ...porTema.dark]) +
       "\n" +
-      bloque(':root[data-theme="light"]', ["color-scheme: light;", ...porTema.light])
+      bloque('[data-theme="light"]', ["color-scheme: light;", ...porTema.light])
     );
   },
 });

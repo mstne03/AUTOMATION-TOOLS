@@ -1,0 +1,38 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+.label {
+  font-size: var(--text-13);
+  line-height: var(--text-13-lh);
+  font-weight: 500;
+  color: var(--color-text);
+}
+.contador {
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  color: var(--color-subtle);
+}
+.pasado {
+  color: var(--color-risk-destructive-text);
+}
+.ayuda,
+.error {
+  margin: 0;
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+}
+.ayuda {
+  color: var(--color-subtle);
+}
+.error {
+  color: var(--color-risk-destructive-text);
+}

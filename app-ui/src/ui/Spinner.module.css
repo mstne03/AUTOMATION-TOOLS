@@ -1,0 +1,9 @@
+.spinner {
+  display: inline-flex;
+  animation: girar 800ms linear infinite;
+}
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -7,11 +7,11 @@
   --border: var(--color-border);
   --panel: var(--color-surface);
   --accent: var(--color-accent);
-  --warn-bg: var(--color-risk-write-soft);
-  --warn-fg: var(--color-risk-write-text);
-  --danger-bg: var(--color-risk-destructive-soft);
-  --danger-fg: var(--color-risk-destructive-text);
-  --ok-fg: var(--color-success-text);
+  --warn-bg: var(--color-risk-write-bg);
+  --warn-fg: var(--color-risk-write-fg);
+  --danger-bg: var(--color-risk-destructive-bg);
+  --danger-fg: var(--color-risk-destructive-fg);
+  --ok-fg: var(--color-success-fg);
 }
 pre {
   white-space: pre-wrap;
