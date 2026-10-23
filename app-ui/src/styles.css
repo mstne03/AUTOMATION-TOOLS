@@ -280,6 +280,9 @@ select {
 .approval-card td {
   word-break: break-word;
 }
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
 .nota {
   color: var(--muted);
   font-size: 0.85em;

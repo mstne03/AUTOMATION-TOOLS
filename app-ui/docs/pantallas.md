@@ -53,7 +53,9 @@ Mensajes:
     - Botones `approval-aprobar` ("Aprobar") y `approval-rechazar` ("Rechazar").
     - Si `requires_confirm_id`: campo `approval-confirm` con placeholder "Escribe el
       video_id para confirmar"; "Aprobar" está deshabilitado hasta que coincide
-      exactamente con `args.video_id`. Fondo rojo (`--danger-bg`).
+      exactamente con `args.video_id`. Fondo rojo (`--danger-bg`). El ID se muestra
+      (`approval-video-id`) y se teclea en monoespaciada, y `approval-confirm-estado`
+      ("El ID coincide" / "El ID no coincide") avisa en vivo cuando el campo no está vacío.
     - Mientras se envía la decisión, ambos botones deshabilitados.
     - Tras resolverse, la tarjeta desaparece y `tool-estado` pasa a "aprobada" /
       "rechazada". Un rechazo **no** se pinta como error.

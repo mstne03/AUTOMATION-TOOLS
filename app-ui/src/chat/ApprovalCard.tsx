@@ -45,7 +45,7 @@ export function ApprovalCard({ approval, onResolver }: Props) {
             <tr key={k}>
               <th scope="row">{k}</th>
               <td>
-                {formatear(v)}
+                {k === "video_id" ? <code className="mono" data-testid="approval-video-id">{formatear(v)}</code> : formatear(v)}
                 {k === "file_path" && <em className="nota"> (la ruta real se resuelve al ejecutar)</em>}
               </td>
             </tr>
@@ -55,12 +55,19 @@ export function ApprovalCard({ approval, onResolver }: Props) {
       {approval.requires_confirm_id && (
         <input
           data-testid="approval-confirm"
+          className="mono"
           placeholder="Escribe el video_id para confirmar"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           disabled={enviando}
           autoComplete="off"
+          spellCheck={false}
         />
+      )}
+      {approval.requires_confirm_id && confirm !== "" && (
+        <p className={confirm === videoId ? "nota" : "error"} data-testid="approval-confirm-estado" role="status">
+          {confirm === videoId ? "El ID coincide" : "El ID no coincide"}
+        </p>
       )}
       <div className="acciones">
         <button data-testid="approval-aprobar" onClick={() => decidir("approve")} disabled={!puedeAprobar}>
