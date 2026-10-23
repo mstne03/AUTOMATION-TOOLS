@@ -2,6 +2,7 @@
  *  cada petición; el token vive en memoria y no se registra en ningún sitio. */
 import { parseSse } from "./sse";
 import type {
+  CanalPanel,
   Approval,
   ChatEvent,
   Job,
@@ -37,6 +38,7 @@ export interface Client {
   youtubeStatus(): Promise<YouTubeStatus>;
   youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<unknown>;
   youtubeTools(): Promise<ToolInfo[]>;
+  youtubeChannel(refresh?: boolean): Promise<CanalPanel>;
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   importClientSecret(body: { path?: string; json_text?: string }): Promise<Settings>;
@@ -89,6 +91,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     youtubeStatus: () => req("/youtube/status"),
     youtubeAuth: (body) => req("/youtube/auth", { method: "POST", body: JSON.stringify(body) }),
     youtubeTools: () => req("/youtube/tools"),
+    youtubeChannel: (refresh) => req(`/youtube/channel${refresh ? "?refresh=true" : ""}`),
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
     importClientSecret: (body) =>

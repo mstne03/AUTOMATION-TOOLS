@@ -87,6 +87,33 @@ export interface YouTubeStatus {
   };
 }
 
+/** GET /youtube/channel: datos del Panel de canal (caché de 10 min en el sidecar). */
+export interface CanalPanel {
+  canal: { id: string; titulo: string; handle: string | null; avatar: string | null; suscriptores: number; visualizaciones_totales: number; videos: number };
+  metricas: {
+    inicio: string;
+    fin: string;
+    visualizaciones: number;
+    visualizaciones_delta_pct: number | null;
+    horas_vistas: number;
+    suscriptores_netos: number;
+    retencion_media: number;
+  } | null;
+  metricas_error: string | null;
+  videos: Array<{
+    id: string;
+    titulo: string | null;
+    publicado: string | null;
+    visualizaciones: number;
+    es_short: boolean;
+    miniatura: string | null;
+    estado: "private" | "public" | "unlisted" | null;
+    programado_para: string | null;
+  }>;
+  actualizado: string;
+  cache: boolean;
+}
+
 export interface ToolInfo {
   name: string;
   risk: Risk;

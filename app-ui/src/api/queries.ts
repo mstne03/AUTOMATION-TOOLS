@@ -13,6 +13,12 @@ export function useYoutubeStatus() {
   return useQuery({ queryKey: ["youtube", "status"], queryFn: () => client.youtubeStatus() });
 }
 
+/** Panel de canal: el sidecar cachea 10 min, así que aquí basta con no repetir la petición al volver. */
+export function useCanal(activo: boolean) {
+  const client = useClient();
+  return useQuery({ queryKey: ["youtube", "canal"], queryFn: () => client.youtubeChannel(), enabled: activo, staleTime: 5 * 60_000 });
+}
+
 /** Riesgo y cuota de cada tool, por nombre (casi nunca cambia: se pide una vez por sesión). */
 export function useYoutubeTools() {
   const client = useClient();

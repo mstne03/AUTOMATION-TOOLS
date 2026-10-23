@@ -204,9 +204,30 @@ a cambiar de pantalla.
 
 ## Panel de canal (`/canal`)
 
-- `canal-estado`: perfil, autorizado o no, tres barras de cuota.
-- `canal-pregunta`: botón que lanza al chat "Analiza mi canal" (reutiliza el chat; el
-  análisis del modelo se muestra como texto, los datos de tools como "Datos").
+Referencia: artboard "Panel de canal (oscuro)". Pantalla a sangre con padding propio. Datos de
+`GET /youtube/channel` (caché de 10 min en el sidecar; solo se pide si el canal está autorizado).
+
+- `canal-estado` (cabecera): avatar con la inicial (las miniaturas de YouTube no se cargan: la CSP
+  de la app solo admite `img-src 'self' data:`; decisión pendiente, ver abajo), h1 con el
+  `@handle` (o el nombre), "Perfil <perfil> · datos de hace N min", chip "Autorizado" /
+  "Sin autorizar", `canal-cambiar` ("Cambiar de canal", va a Ajustes) y `canal-pregunta`
+  ("Analizar con el agente"; lanza al chat "Analiza mi canal"; deshabilitado sin autorizar).
+- Cuatro tarjetas de métricas (`canal-metrica-suscriptores`, `-visualizaciones`, `-horas`,
+  `-retencion`): suscriptores con la variación neta de 28 días, visualizaciones de 28 días
+  con el % frente a los 28 días previos, horas vistas y retención media (Analytics API: sin
+  cuota de la Data API). Si Analytics no está disponible, el resto del panel se pinta y las
+  tarjetas dicen "Analytics no disponible".
+- `canal-videos`: tabla de los últimos 10 vídeos (`canal-video-<id>`): título, fecha, "Short",
+  ID en monoespaciada, chip de estado (Privado / Público / Oculto / Programado) y vistas;
+  acción por fila `canal-video-accion-<id>`: "Analizar" (públicos) o "Editar" (privados y
+  programados), que abren el chat con un mensaje inicial. `canal-actualizar` vuelve a pedirlo.
+- `canal-cuota` (columna derecha): "Cuota de hoy" con la hora local de reinicio (medianoche del
+  Pacífico) y una fila `cuota-<cubo>` por cubo con nombre legible ("Unidades", "Búsquedas",
+  "Subidas"), "154 de 10.000" con separador de miles y `data-nivel` = `normal` | `alto` (≥ 80 %)
+  | `critico` (≥ 95 %) que cambia el color de la barra.
+- Tres preguntas sugeridas `canal-sugerencia-1..3` (abren el chat con esa pregunta).
+- Estados: sin autorizar (estado vacío, sin consultar el canal), cargando, error del sidecar
+  (`canal-error`, `role=alert`).
 
 ## Base de conocimiento (`/kb`)
 

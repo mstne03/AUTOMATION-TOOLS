@@ -1,0 +1,258 @@
+.pantalla {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-20);
+  padding: var(--space-24) var(--space-32);
+  overflow-y: auto;
+}
+
+.cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-14);
+}
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  background: var(--color-risk-write-bg);
+  color: var(--color-risk-write-fg);
+  font-size: 18px;
+  font-weight: 600;
+}
+.identidad {
+  display: flex;
+  flex: 1;
+  min-width: 200px;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.titulo {
+  margin: 0;
+  font-size: var(--text-24);
+  line-height: var(--text-24-lh);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.subtitulo {
+  font-size: var(--text-13);
+  color: var(--color-muted);
+}
+
+.metricas {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+.metrica,
+.panel,
+.videos {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+.metrica {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-16);
+}
+.metricaTitulo {
+  font-size: var(--text-13);
+  color: var(--color-muted);
+}
+.metricaValor {
+  font-size: 28px;
+  line-height: var(--text-32-lh);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.metricaDetalle {
+  font-size: var(--text-12);
+  color: var(--color-subtle);
+}
+
+.cuerpo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-20);
+}
+.videos {
+  flex: 3 1 520px;
+  min-width: 0;
+  overflow: hidden;
+}
+.videosCabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-10) var(--space-16);
+  border-bottom: 1px solid var(--color-divider);
+}
+.h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: var(--text-20-lh);
+  font-weight: 600;
+}
+.tablaCaja {
+  overflow-x: auto;
+}
+.tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-14);
+}
+.tabla th {
+  padding: var(--space-10) var(--space-8);
+  color: var(--color-subtle);
+  font-size: var(--text-12);
+  font-weight: 500;
+  text-align: left;
+}
+.tabla th:first-child,
+.tabla td:first-child {
+  padding-left: var(--space-16);
+}
+.tabla th:last-child,
+.tabla td:last-child {
+  padding-right: var(--space-16);
+}
+.tabla td {
+  padding: var(--space-10) var(--space-8);
+  border-top: 1px solid var(--color-divider);
+}
+.derecha {
+  text-align: right !important;
+}
+.vistas {
+  font-family: var(--font-mono);
+}
+.videoCelda {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.miniatura {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bubble);
+  color: var(--color-subtle);
+}
+.videoTexto {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.videoTitulo {
+  font-weight: 500;
+}
+.videoMeta {
+  font-size: var(--text-12);
+  color: var(--color-subtle);
+}
+.vacio {
+  margin: 0;
+  padding: var(--space-16);
+  color: var(--color-muted);
+}
+
+.lateral {
+  display: flex;
+  flex: 2 1 300px;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-16);
+}
+.cuotaCabecera {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.cuota {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cuotaFila {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-13);
+}
+.barra {
+  height: var(--size-bar);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+}
+.barraRelleno {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+}
+.cuota[data-nivel="alto"] .barraRelleno {
+  background: var(--color-risk-write);
+}
+.cuota[data-nivel="critico"] .barraRelleno {
+  background: var(--color-risk-destructive);
+}
+.sugerencia {
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-group);
+  background: var(--color-surface-2);
+  color: var(--color-text-soft);
+  font-family: inherit;
+  font-size: var(--text-13);
+  text-align: left;
+  cursor: pointer;
+}
+.sugerencia:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+.sugerencia:disabled {
+  color: var(--color-disabled);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.suave {
+  font-size: var(--text-12);
+  color: var(--color-subtle);
+}
+.error {
+  margin: 0;
+  color: var(--color-risk-destructive-text);
+}
+.soloLectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+@media (max-width: 1100px) {
+  .metricas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
