@@ -54,48 +54,6 @@ select {
   color: var(--danger-fg);
 }
 
-/* Marco común */
-.layout {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  height: 100%;
-}
-.layout nav {
-  border-right: 1px solid var(--border);
-  padding: 1rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.layout nav h2 {
-  margin: 0 0.5rem 1rem;
-  font-size: 1.1rem;
-}
-.layout nav a {
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  color: var(--fg);
-  text-decoration: none;
-}
-.layout nav a[aria-current="page"] {
-  background: var(--accent);
-  color: var(--color-on-accent);
-}
-.layout main {
-  min-width: 0;
-  overflow: auto;
-  padding: 1.25rem 1.5rem;
-}
-.update-banner {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin: -0.5rem 0 1rem;
-  padding: 0.6rem 0.9rem;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-}
-
 /* Chat */
 .chat {
   display: flex;

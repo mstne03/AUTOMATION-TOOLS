@@ -5,12 +5,13 @@ import { createClient, type Client } from "./api/client";
 import { ClientContext } from "./api/context";
 import { useSettings } from "./api/queries";
 import { ChatScreen } from "./chat/ChatScreen";
-import { Layout } from "./Layout";
+
 import { CanalScreen } from "./screens/CanalScreen";
 import { KbScreen } from "./screens/KbScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
 
 // Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
@@ -21,7 +22,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
   {
-    element: <Layout />,
+    element: <AppShell />,
     children: [
       { index: true, element: <Inicio /> },
       { path: "chat", element: <ChatScreen /> },

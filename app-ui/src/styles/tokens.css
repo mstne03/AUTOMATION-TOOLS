@@ -52,6 +52,9 @@
   --size-icon-md: 20px;
   --size-swatch: 8px;
   --size-bar: 6px;
+  --size-sidebar: 248px;
+  --size-logo: 26px;
+  --size-avatar: 28px;
   color-scheme: dark;
   --color-bg: #0B0B0F;
   --color-surface: #121218;
@@ -95,6 +98,9 @@
   --color-overlay: rgba(0, 0, 0, 0.6);
   --color-toast-bg: #1C1C24;
   --color-toast-fg: #EDEDF0;
+  --color-sidebar: #0E0E13;
+  --color-faint: #6B6B75;
+  --color-nav-icon-active: #C9C0FF;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -146,6 +152,9 @@
     --color-overlay: rgba(24, 24, 27, 0.4);
     --color-toast-bg: #18181B;
     --color-toast-fg: #FAFAFA;
+    --color-sidebar: #F4F4F5;
+    --color-faint: #71717A;
+    --color-nav-icon-active: #5A48CF;
     --elevation-e0: none;
     --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
     --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);
@@ -197,6 +206,9 @@
   --color-overlay: rgba(0, 0, 0, 0.6);
   --color-toast-bg: #1C1C24;
   --color-toast-fg: #EDEDF0;
+  --color-sidebar: #0E0E13;
+  --color-faint: #6B6B75;
+  --color-nav-icon-active: #C9C0FF;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(0, 0, 0, 0.35);
   --elevation-e2: 0 16px 40px rgba(0, 0, 0, 0.5);
@@ -247,6 +259,9 @@
   --color-overlay: rgba(24, 24, 27, 0.4);
   --color-toast-bg: #18181B;
   --color-toast-fg: #FAFAFA;
+  --color-sidebar: #F4F4F5;
+  --color-faint: #71717A;
+  --color-nav-icon-active: #5A48CF;
   --elevation-e0: none;
   --elevation-e1: 0 4px 12px rgba(24, 24, 27, 0.08);
   --elevation-e2: 0 8px 24px rgba(24, 24, 27, 0.18);

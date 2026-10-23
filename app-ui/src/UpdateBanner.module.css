@@ -1,0 +1,19 @@
+.aviso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+  padding: var(--space-10) var(--space-14);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-size: var(--text-13);
+}
+.texto {
+  flex: 1;
+}
+.error {
+  color: var(--color-risk-destructive-text);
+}

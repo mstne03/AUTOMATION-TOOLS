@@ -1,9 +1,10 @@
 /** Aviso de actualización encima del contenido: se comprueba una vez al arrancar; si hay una
- *  versión nueva, se avisa y solo se descarga e instala cuando el usuario confirma en un ConfirmDialog. Un fallo al
- *  comprobar (sin red, latest.json ausente) no muestra nada: no es un error para el usuario. */
+ *  versión nueva, se avisa y solo se descarga e instala cuando el usuario confirma en un ConfirmDialog.
+ *  Un fallo al comprobar (sin red, latest.json ausente) no muestra nada: no es un error para el usuario. */
 import { useEffect, useState } from "react";
+import s from "./UpdateBanner.module.css";
+import { Button, ConfirmDialog } from "./ui";
 import { checkForUpdate, installUpdate, type UpdateInfo } from "./updater";
-import { ConfirmDialog } from "./ui";
 
 export function UpdateBanner() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -30,17 +31,19 @@ export function UpdateBanner() {
   };
 
   return (
-    <aside className="update-banner" data-testid="update-banner" role="status">
-      <span>
+    <aside className={s.aviso} data-testid="update-banner" role="status">
+      <span className={s.texto}>
         Hay una versión nueva: <strong>{update.version}</strong>
         {update.notes ? ` — ${update.notes}` : ""}
       </span>
       {estado === "instalando" ? (
         <span>Descargando e instalando…</span>
       ) : (
-        <button type="button" onClick={() => setConfirmando(true)}>Instalar y reiniciar</button>
+        <Button variant="primary" size="sm" onClick={() => setConfirmando(true)}>
+          Instalar y reiniciar
+        </Button>
       )}
-      {estado === "error" && <span className="error">No se pudo actualizar: {error}</span>}
+      {estado === "error" && <span className={s.error}>No se pudo actualizar: {error}</span>}
       <ConfirmDialog
         open={confirmando}
         onOpenChange={setConfirmando}
