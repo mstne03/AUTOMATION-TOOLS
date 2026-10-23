@@ -1,0 +1,30 @@
+.cuota {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.fila {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-13);
+}
+.suave {
+  color: var(--color-muted);
+}
+.barra {
+  height: var(--size-bar);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+}
+.relleno {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+}
+.cuota[data-nivel="alto"] .relleno {
+  background: var(--color-risk-write);
+}
+.cuota[data-nivel="critico"] .relleno {
+  background: var(--color-risk-destructive);
+}

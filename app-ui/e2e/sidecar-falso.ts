@@ -8,8 +8,13 @@ const CORS = {
   "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
 };
 
-/** `rutas`: ruta (sin query) -> cuerpo JSON, o función (url) => [status, cuerpo]. */
-export async function simularRutas(page: Page, rutas: Record<string, unknown | ((url: URL) => [number, unknown])>) {
+export interface Peticion {
+  metodo: string;
+  cuerpo: unknown;
+}
+
+/** `rutas`: ruta (sin query) -> cuerpo JSON, o función (url, petición) => [status, cuerpo]. */
+export async function simularRutas(page: Page, rutas: Record<string, unknown | ((url: URL, p: Peticion) => [number, unknown])>) {
   const llamadas: Record<string, number> = {};
   await page.route(/127\.0\.0\.1:\d+\//, async (route) => {
     const url = new URL(route.request().url());
@@ -17,7 +22,8 @@ export async function simularRutas(page: Page, rutas: Record<string, unknown | (
     if (r === undefined) return route.continue();
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: CORS });
     llamadas[url.pathname] = (llamadas[url.pathname] ?? 0) + 1;
-    const [status, cuerpo] = typeof r === "function" ? (r as (u: URL) => [number, unknown])(url) : [200, r];
+    const peticion: Peticion = { metodo: route.request().method(), cuerpo: route.request().postDataJSON?.() ?? null };
+    const [status, cuerpo] = typeof r === "function" ? (r as (u: URL, p: Peticion) => [number, unknown])(url, peticion) : [200, r];
     return route.fulfill({ status, headers: CORS, contentType: "application/json", body: JSON.stringify(cuerpo) });
   });
   return llamadas;
