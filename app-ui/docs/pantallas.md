@@ -98,13 +98,16 @@ Pasos numerados en una columna (`onboarding-pasos`), cada uno con `data-estado`
 2. `paso-google`: asistente de Google Cloud en sub-pasos con validador:
    a) crear proyecto y activar YouTube Data API v3 (enlace externo, checkbox manual),
    b) crear credenciales OAuth de tipo "Aplicación de escritorio" y descargar el JSON,
-   c) importar el JSON: `textarea[data-testid=google-json]` o ruta `google-path`
+   c) publicar la app OAuth (`google-paso-c`, enlace a Google Auth Platform → Público): en
+      "Prueba" los refresh tokens caducan a los 7 días. `google-importar` exige a), b) y c),
+   d) importar el JSON: `textarea[data-testid=google-json]` o ruta `google-path`
       + botón `google-importar`. Validador: el JSON debe tener `installed.client_id` y
       `installed.client_secret`; si no, error `google-error` sin enviar nada.
    Hecho si `has_client_secret`.
 3. `paso-oauth`: botón `oauth-autorizar` ("Autorizar canal de YouTube"), que llama a
-   `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras espera. Hecho si
-   `auth.authenticated`.
+   `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras espera. Nota
+   `oauth-no-verificada`: explica el aviso de Google "app no verificada" (proyecto propio sin
+   verificar) y cómo continuar. Hecho si `auth.authenticated`.
 4. `paso-kb`: muestra `GET /kb/estado` (texto). Hecho si la llamada responde.
 
 Botón `onboarding-terminar` ("Ir al chat"), habilitado cuando 1–3 están hechos.

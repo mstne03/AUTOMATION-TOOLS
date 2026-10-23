@@ -30,10 +30,12 @@ test.describe("Onboarding", () => {
   test("asistente de Google: el validador rechaza JSON malos sin llamar al sidecar", async ({ page }) => {
     const llamadas: string[] = [];
     page.on("request", (r) => r.url().includes("/settings/client-secret") && llamadas.push(r.url()));
-    // Importar exige marcar los dos sub-pasos manuales.
+    // Importar exige marcar los tres sub-pasos manuales (el último, publicar la app OAuth).
     await expect(page.getByTestId("google-importar")).toBeDisabled();
     await page.getByTestId("google-paso-a").check();
     await page.getByTestId("google-paso-b").check();
+    await expect(page.getByTestId("google-importar")).toBeDisabled();
+    await page.getByTestId("google-paso-c").check();
     await expect(page.getByTestId("google-importar")).toBeEnabled();
 
     await page.getByTestId("google-importar").click();
@@ -53,6 +55,7 @@ test.describe("Onboarding", () => {
   test("asistente de Google: un JSON válido se importa y el paso queda hecho", async ({ page }) => {
     await page.getByTestId("google-paso-a").check();
     await page.getByTestId("google-paso-b").check();
+    await page.getByTestId("google-paso-c").check();
     await page.getByTestId("google-json").fill(
       JSON.stringify({ installed: { client_id: "id-e2e.apps.googleusercontent.com", client_secret: "secreto-e2e", auth_uri: "https://accounts.google.com/o/oauth2/auth", token_uri: "https://oauth2.googleapis.com/token", redirect_uris: ["http://localhost"] } }),
     );
