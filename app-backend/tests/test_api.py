@@ -23,7 +23,11 @@ async def client(tmp_path, fake_anthropic):
         sse_message([{"type": "text", "text": "No estas autenticado."}], "end_turn"),
     ])
     app = create_app(
-        TOKEN, client_factory=fake.factory, jobs_path=tmp_path / "jobs.sqlite", kb_auto_update=False
+        TOKEN,
+        client_factory=fake.factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
     )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -168,6 +172,26 @@ async def test_chat_requires_api_key_then_streams(client):
     r = await client.post("/chat", headers=AUTH, json={"message": "seguro?", "conversation_id": conv})
     assert r.status_code == 200
     assert len(client.fake.requests[-1]["messages"]) == 5
+
+    # La conversación queda en la lista (con su perfil) y se puede reabrir y borrar.
+    assert (await client.get("/conversations")).status_code == 401
+    lista = (await client.get("/conversations", headers=AUTH)).json()
+    assert [(c["id"], c["titulo"], c["perfil"]) for c in lista] == [(conv, "estoy autenticado?", "default")]
+    detalle = (await client.get(f"/conversations/{conv}", headers=AUTH)).json()
+    assert [t["texto"] for t in detalle["turnos"]] == ["estoy autenticado?", "seguro?"]
+    assert detalle["turnos"][1]["eventos"] == [{"type": "text", "delta": "Si."}, detalle["turnos"][1]["eventos"][-1]]
+    assert (await client.delete(f"/conversations/{conv}")).status_code == 401
+    assert (await client.delete(f"/conversations/{conv}", headers=AUTH)).json() == {"borrada": conv}
+    assert (await client.get(f"/conversations/{conv}", headers=AUTH)).status_code == 404
+    assert (await client.delete(f"/conversations/{conv}", headers=AUTH)).status_code == 404
+    assert (await client.get("/conversations/..%2Fsettings", headers=AUTH)).status_code == 404
+    assert (await client.get("/conversations", headers=AUTH)).json() == []
+
+    # Publicar (persistir=false) no aparece en la lista.
+    client.fake.responses.append(sse_message([{"type": "text", "text": "Borrador."}], "end_turn"))
+    r = await client.post("/chat", headers=AUTH, json={"message": "borrador", "persistir": False})
+    assert r.status_code == 200
+    assert (await client.get("/conversations", headers=AUTH)).json() == []
     await client.put("/settings", headers=AUTH, json={"anthropic_api_key": ""})
 
 

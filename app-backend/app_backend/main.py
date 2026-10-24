@@ -33,9 +33,10 @@ from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
 from app_backend import config, registry
-from app_backend.agent import Agent
+from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
+from app_backend.conversaciones import Almacen
 from app_backend.jobs import Jobs
 from app_backend.kb_update import KBUpdateError, KBUpdater
 
@@ -88,6 +89,7 @@ def create_app(
     kb_updater: KBUpdater | None = None,
     kb_auto_update: bool = True,
     canal_fuentes: Fuentes | None = None,
+    conversaciones_dir: str | Path | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -102,7 +104,13 @@ def create_app(
             {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()},
         )
         app.state.jobs.start()
-        app.state.agent = Agent(specs, approvals, app.state.jobs, client_factory=client_factory)
+        app.state.agent = Agent(
+            specs,
+            approvals,
+            app.state.jobs,
+            client_factory=client_factory,
+            almacen=Almacen(conversaciones_dir or config.STATE_DIR / "conversaciones"),
+        )
         app.state.kb_updater = kb_updater or KBUpdater(
             config.KB_UPDATE_URL, config.KB_MINISIGN_PUBKEY, config.KB_PUBLIC_PATH
         )
@@ -145,6 +153,10 @@ def create_app(
     class ChatIn(BaseModel):
         message: str = Field(min_length=1)
         conversation_id: str | None = None
+        # "Usar KB" apagado: el sidecar se lo indica al modelo sin tocar el texto guardado.
+        sin_kb: bool = False
+        # Publicar usa conversaciones de trabajo que no van a la lista de chats.
+        persistir: bool = True
 
     @app.post("/chat", dependencies=protegido)
     async def chat(body: ChatIn, request: Request):
@@ -153,7 +165,7 @@ def create_app(
         api_key = config.anthropic_api_key(yt_auth.store)
         if not api_key:
             raise HTTPException(status_code=409, detail="Falta la clave de Anthropic (PUT /settings).")
-        conv = agent.conversation(body.conversation_id)
+        conv = agent.conversation(body.conversation_id, perfil=yt_auth.profile, persistir=body.persistir)
         if conv.lock.locked():
             raise HTTPException(status_code=409, detail="Esta conversacion ya tiene un turno en curso.")
 
@@ -162,7 +174,7 @@ def create_app(
         async def turno():
             async with conv.lock:
                 await agent.run_turn(
-                    conv, body.message, events, api_key=api_key, model=settings["model"]
+                    conv, body.message, events, api_key=api_key, model=settings["model"], sin_kb=body.sin_kb
                 )
 
         task = asyncio.create_task(turno())
@@ -179,6 +191,27 @@ def create_app(
                     task.cancel()  # cliente desconectado: cancela el turno y sus aprobaciones
 
         return EventSourceResponse(generar())
+
+    @app.get("/conversations", dependencies=protegido)
+    async def list_conversations():
+        return await asyncio.to_thread(app.state.agent.listar)
+
+    @app.get("/conversations/{conversation_id}", dependencies=protegido)
+    async def get_conversation(conversation_id: str):
+        datos = await asyncio.to_thread(app.state.agent.detalle, conversation_id)
+        if datos is None:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+        return datos
+
+    @app.delete("/conversations/{conversation_id}", dependencies=protegido)
+    async def delete_conversation(conversation_id: str):
+        try:
+            borrada = app.state.agent.borrar(conversation_id)
+        except ConversacionOcupada:
+            raise HTTPException(status_code=409, detail="La conversación tiene una respuesta en curso: cancélala antes de borrarla.")
+        if not borrada:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+        return {"borrada": conversation_id}
 
     # -------------------------------------------------------------- approvals
 
