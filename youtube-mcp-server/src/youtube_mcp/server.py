@@ -46,12 +46,19 @@ def youtube_auth(profile: str | None = None, reauthorize: bool = False) -> dict:
         if profile:
             auth.use_profile(profile)
         auth.authenticate(interactive=True, force_consent=reauthorize)
-        return {"status": "authenticated", "detail": auth.status()}
     except AuthError as e:
         # Un alta cancelada o fallida no deja en uso un perfil sin token.
         if auth.profile != previo:
             auth.use_profile(previo)
         return {"status": "error", "detail": str(e)}
+    # Qué canal se ha autorizado: el token no lo dice y la UI debe mostrarlo (no es crítico).
+    try:
+        canal = auth.remember_channel()
+    except Exception:  # noqa: BLE001 - sin red o sin canal: la autorización sigue siendo válida
+        canal = None
+    estado = auth.status()
+    duplicado = sorted(p for p, c in estado["channels"].items() if canal and p != auth.profile and c.get("id") == canal.get("id"))
+    return {"status": "authenticated", "detail": estado, "duplicated_in": duplicado}
 
 
 @mcp.tool()

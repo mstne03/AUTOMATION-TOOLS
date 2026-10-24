@@ -83,6 +83,37 @@ async def test_client_secret_import(client):
     assert r.status_code == 200 and r.json()["has_client_secret"] is True
 
 
+def _cliente(client_id: str, project_id: str) -> str:
+    return json.dumps({"installed": {"client_id": client_id, "client_secret": "s", "project_id": project_id, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}})
+
+
+async def test_un_solo_proyecto_de_google_para_todos_los_canales(client):
+    from app_backend.main import yt_auth
+
+    # Sin proyecto no se puede autorizar ningún canal: se dice qué falta, no un fallo de OAuth.
+    r = await client.delete("/settings/client-secret", headers=AUTH)
+    assert r.status_code == 200 and r.json()["google_project"] is None and r.json()["has_client_secret"] is False
+    r = await client.post("/youtube/auth", headers=AUTH, json={"profile": "default"})
+    assert r.status_code == 409 and "client_secret.json" in r.json()["detail"]
+
+    r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": _cliente("111111111111-aaaa.apps.googleusercontent.com", "proyecto-a")})
+    assert r.status_code == 200 and r.json()["google_project"] == {"project_id": "proyecto-a", "client_id": "111111…aaaa"}
+    yt_auth.store.set("token:default", json.dumps({"token": "t", "refresh_token": "r", "client_id": "111111111111-aaaa.apps.googleusercontent.com", "client_secret": "s", "token_uri": "https://oauth2.googleapis.com/token", "expiry": "2099-01-01T00:00:00Z"}))
+
+    # Otro proyecto desautoriza los canales: el sidecar no lo sustituye sin confirmación.
+    otro = _cliente("222222222222-bbbb.apps.googleusercontent.com", "proyecto-b")
+    r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": otro})
+    assert r.status_code == 409 and "default" in r.json()["detail"]
+    assert (await client.get("/settings", headers=AUTH)).json()["google_project"]["project_id"] == "proyecto-a"
+    r = await client.post("/settings/client-secret", headers=AUTH, json={"json_text": otro, "replace": True})
+    assert r.status_code == 200 and r.json()["desautorizados"] == ["default"]
+    assert r.json()["google_project"]["project_id"] == "proyecto-b"
+    assert yt_auth.profiles() == []
+
+    r = await client.delete("/settings/client-secret", headers=AUTH)
+    assert r.status_code == 200 and r.json()["has_client_secret"] is False
+    assert (await client.delete("/settings/client-secret")).status_code == 401
+
 async def test_youtube_status_and_tools(client):
     r = await client.get("/youtube/status", headers=AUTH)
     assert r.status_code == 200

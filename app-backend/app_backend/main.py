@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
-from youtube_mcp.auth import AuthError
+from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
@@ -387,6 +387,11 @@ def create_app(
     @app.post("/youtube/auth", dependencies=protegido)
     async def youtube_authorize(body: YouTubeAuthIn):
         # Unica ruta que abre el navegador: la pide el usuario desde la UI, no el modelo.
+        if not yt_auth.has_client_secret():
+            raise HTTPException(
+                status_code=409,
+                detail="Falta el client_secret.json del proyecto de Google Cloud: impórtalo antes de autorizar un canal.",
+            )
         r = await asyncio.to_thread(youtube_auth, body.profile, body.reauthorize)
         if r.get("status") == "error":
             raise HTTPException(status_code=400, detail=r.get("detail", "Fallo al autorizar."))
@@ -416,6 +421,8 @@ def create_app(
     class ClientSecretIn(BaseModel):
         path: str | None = None
         json_text: str | None = None
+        # Sustituir un proyecto de Google por otro desautoriza todos los canales: la UI lo confirma antes.
+        replace: bool = False
 
     def settings_out() -> dict:
         s = config.load_settings()
@@ -424,6 +431,7 @@ def create_app(
             "models": list(config.MODELS),
             "has_anthropic_key": config.anthropic_api_key(yt_auth.store) is not None,
             "has_client_secret": yt_auth.has_client_secret(),
+            "google_project": yt_auth.client_info(),
             "state_dir": str(config.STATE_DIR),
             "secret_store": type(yt_auth.store).__name__,
             # Diagnostico para el smoke test: debe ser None (si no, Whisper no puede bajar su modelo).
@@ -490,10 +498,18 @@ def create_app(
         if not source:
             raise HTTPException(status_code=400, detail="Indica path o json_text.")
         try:
-            yt_auth.import_client_secret(source)
+            r = yt_auth.import_client_secret(source, replace=body.replace)
+        except ClientSecretConflict as e:
+            raise HTTPException(status_code=409, detail=str(e))
         except (AuthError, OSError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return settings_out()
+        return {**settings_out(), "desautorizados": r["desautorizados"]}
+
+    @app.delete("/settings/client-secret", dependencies=protegido)
+    async def delete_client_secret():
+        """Quita el proyecto de Google y, con él, la autorización de todos los canales."""
+        desautorizados = yt_auth.remove_client_secret()
+        return {**settings_out(), "desautorizados": desautorizados}
 
     return app
 
