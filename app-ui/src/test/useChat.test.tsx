@@ -130,6 +130,21 @@ describe("useChat", () => {
     expect(mensajes[1]).toBe("otra");
   });
 
+  it("si el stream se corta sin done ni error, el turno acaba en error y la aprobación pendiente se cancela", async () => {
+    const client = {
+      async *chat() {
+        yield* fx.publicacionRechazada.slice(0, 4); // hasta approval_required, y el sidecar desaparece
+      },
+    } as unknown as Client;
+    const { result } = montar(client);
+    await act(() => result.current.enviar("sube el vídeo"));
+    const t = result.current.mensajes[1];
+    expect(t.role === "assistant" && t.turno.estado).toBe("error");
+    expect(t.role === "assistant" && t.turno.error).toContain("se cortó");
+    expect(t.role === "assistant" && (t.turno.bloques[1] as BloqueTool).approval?.status).toBe("cancelled");
+    expect(result.current.enStream).toBe(false);
+  });
+
   it("nueva() crea otra conversación y la deja activa", () => {
     expect(useConversaciones.getState().activa).toBe("chat:1");
     const id = nueva();

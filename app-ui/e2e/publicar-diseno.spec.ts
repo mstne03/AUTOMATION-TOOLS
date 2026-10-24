@@ -170,3 +170,30 @@ test.describe("Publicar rediseñado", () => {
     await expect(page.getByTestId("publicar-path")).toHaveValue("");
   });
 });
+
+test.describe("Publicar: aprobación huérfana", () => {
+  test("si el stream se corta con la subida pendiente, el diálogo no se queda abierto sin salida", async ({ page }) => {
+    const ruta = "C:/Videos/demo.mp4";
+    const args = { file_path: ruta, title: "Corte", description: "", tags: [], privacy_status: "private", publish_at: null };
+    const eventos = [
+      { type: "tool_use", id: "tu_corte", name: "youtube_upload_video", input: args },
+      { type: "approval_required", approval: { id: "ap_corte", tool: "youtube_upload_video", args, risk: "write", quota: { bucket: "video_insert", cost: 1 }, status: "pending", requires_confirm_id: false } },
+    ]; // y el sidecar desaparece: sin done ni error
+    await page.route(/127\.0\.0\.1:\d+\/chat$/, (route) =>
+      route.request().method() === "OPTIONS"
+        ? route.fulfill({ status: 204, headers: { "access-control-allow-origin": "http://localhost:1420", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "POST, OPTIONS" } })
+        : route.fulfill({
+            status: 200,
+            headers: { "access-control-allow-origin": "http://localhost:1420", "content-type": "text/event-stream" },
+            body: eventos.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""),
+          }),
+    );
+    await conRuta(page);
+    await page.getByTestId("borrador-title").fill("Corte");
+    await page.getByTestId("publicar-subir").click();
+    await expect(page.getByTestId("publicar-turnos").getByTestId("turno-error")).toContainText("se cortó");
+    await expect(page.getByTestId("publicar-turnos").getByTestId("tool-estado")).toHaveText("cancelada");
+    await expect(page.getByRole("dialog", { name: "Revisar y subir" })).toHaveCount(0);
+    await expect(page.getByTestId("publicar-subir")).toBeEnabled(); // se puede volver a intentar
+  });
+});

@@ -64,6 +64,14 @@ describe("reduceTurno", () => {
     expect(t.error).toContain("InternalServerError");
     expect(t.bloques[0]).toEqual({ kind: "text", text: "Un momento" });
   });
+
+  it("si el turno acaba con una aprobación pendiente, queda cancelada (el sidecar ya la canceló)", () => {
+    const hastaLaPropuesta = fx.publicacionRechazada.slice(0, 4); // text, text, tool_use, approval_required
+    const t = reproducir([...hastaLaPropuesta, { type: "error", message: "Se cortó la conexión" }]);
+    expect((t.bloques[1] as BloqueTool).approval?.status).toBe("cancelled");
+    const resuelta = reproducir(fx.publicacionRechazada); // una ya resuelta no cambia
+    expect((resuelta.bloques[1] as BloqueTool).approval?.status).toBe("rejected");
+  });
 });
 
 describe("costeUsd", () => {

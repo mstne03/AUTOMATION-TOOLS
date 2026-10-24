@@ -91,15 +91,26 @@ export function reduceTurno(turno: Turno, ev: ChatEvent): Turno {
       );
     case "done":
       return {
-        ...turno,
+        ...sinPendientes(turno),
         estado: "done",
         conversation_id: ev.conversation_id,
         stop_reason: ev.stop_reason,
         usage: ev.usage,
       };
     case "error":
-      return { ...turno, estado: "error", error: ev.message };
+      return { ...sinPendientes(turno), estado: "error", error: ev.message };
   }
+}
+
+/** Al cerrarse el turno, el sidecar cancela las propuestas que seguían esperando (Approvals.wait):
+ *  aquí también, para que ninguna tarjeta ni el diálogo de Publicar se queden esperando una
+ *  decisión que ya no se puede tomar. */
+function sinPendientes(turno: Turno): Turno {
+  if (!turno.bloques.some((b) => b.kind === "tool" && b.approval?.status === "pending")) return turno;
+  return {
+    ...turno,
+    bloques: turno.bloques.map((b) => (b.kind === "tool" && b.approval?.status === "pending" ? { ...b, approval: { ...b.approval, status: "cancelled" as const } } : b)),
+  };
 }
 
 /** Ruta real resuelta por la lista blanca (viene en el resultado, no en lo que pidió el modelo). */

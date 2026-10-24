@@ -99,6 +99,8 @@ export async function enviar(client: Client, id: string, texto: string, opciones
       actualizarTurno(id, (t) => reduceTurno(t, ev));
       if (ev.type === "job_started") seguirJob(client, ev.job);
     }
+    // El stream terminó sin done ni error: el sidecar se cerró o se cayó a mitad de respuesta.
+    actualizarTurno(id, (t) => (t.estado === "streaming" ? reduceTurno(t, { type: "error", message: "La conexión con el sidecar se cortó antes de terminar la respuesta." }) : t));
   } catch (e) {
     const msg = e instanceof ApiError ? e.detail : (e as Error).message;
     actualizarTurno(id, (t) => reduceTurno(t, { type: "error", message: msg }));

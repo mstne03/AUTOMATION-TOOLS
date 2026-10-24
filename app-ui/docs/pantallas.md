@@ -72,7 +72,7 @@ Mensajes:
     ("Subir vídeo a YouTube", mapa en `chat/herramientas.ts`), chip de riesgo en español
     (Escritura / Destructiva; las de lectura no llevan chip; el riesgo sale de
     `GET /youtube/tools`), estado `tool-estado` con uno de estos textos: "ejecutando",
-    "esperando aprobación", "rechazada", "aprobada", "en cola", "subiendo N %",
+    "esperando aprobación", "rechazada", "aprobada", "cancelada", "en cola", "subiendo N %",
     "transcribiendo N %", "hecho", "error", y la cuota ("1 u"). El detalle plegado muestra el
     nombre técnico, los argumentos en JSON y, cuando hay resultado, `tool-resultado` en una
     zona marcada "Datos" (monoespaciada). Si el resultado trae `file` (ruta real resuelta),
@@ -100,8 +100,12 @@ Mensajes:
     - Mientras se envía la decisión, ambos botones deshabilitados.
     - Tras resolverse, la tarjeta desaparece y `tool-estado` pasa a "aprobada" /
       "rechazada". Un rechazo **no** se pinta como error.
+    - Si el turno termina (error, cancelación o el stream se corta) con la propuesta aún
+      pendiente, el sidecar ya la ha cancelado: la tarjeta desaparece, `tool-estado` pasa a
+      "cancelada" y en Publicar se cierra el diálogo "Revisar y subir".
   - Error del turno (`turno-error`, `role=alert`): caja con "Error: <mensaje>" al final del
-    artículo.
+    artículo. Si el stream se corta sin `done` ni `error`, el turno acaba en error con "La
+    conexión con el sidecar se cortó antes de terminar la respuesta.".
 - Separación visual entre datos (resultado de tools, monoespaciado, etiqueta "Datos") y
   texto del modelo (proporcional, sin etiqueta). Esto es lo que el handoff llama
   "distinguir datos de inferencias".

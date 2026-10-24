@@ -22,6 +22,7 @@ export function estadoTool(b: BloqueTool): string {
   if (b.approval) {
     if (b.approval.status === "pending") return "esperando aprobación";
     if (b.approval.status === "approved") return "aprobada";
+    if (b.approval.status === "cancelled") return "cancelada";
     return "rechazada";
   }
   return "ejecutando";
