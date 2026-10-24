@@ -76,6 +76,7 @@ for (const tema of ["dark", "light"] as const) {
             "/youtube/channel": CANAL,
             "/kb/estado": KB_ESTADO,
             "/kb/privada/fuentes": [],
+            "/conversations": [],
           });
           await page.goto(pantalla.ruta);
           await pantalla.listo(page);

@@ -136,6 +136,25 @@
   background: var(--color-surface-2);
   color: var(--color-text);
 }
+/* Fila de la lista: el botón de borrar aparece al pasar por encima, con el foco o en la activa. */
+.fila {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.fila .conv {
+  padding-right: var(--space-32); /* el título no pasa por debajo del botón de borrar */
+}
+.borrar {
+  position: absolute;
+  right: var(--space-4);
+  opacity: 0;
+}
+.fila:hover .borrar,
+.fila:focus-within .borrar,
+.convActiva + .borrar {
+  opacity: 1;
+}
 
 .pie {
   display: flex;

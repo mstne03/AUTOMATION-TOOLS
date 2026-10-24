@@ -14,7 +14,14 @@ estados posibles. Lo que no está aquí no se exige.
   ("Publicar"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento"); el activo lleva
   `aria-current="page"`; lista de conversaciones (`nav-conversaciones`) con el botón
   `conv-nueva` ("Nueva conversación") y un botón `conv-<id>` por conversación (título = primeras
-  palabras del primer mensaje; la activa lleva `aria-current="true"`); en el pie, aviso
+  palabras del primer mensaje; la activa lleva `aria-current="true"`). Los chats se guardan en el
+  sidecar (`GET /conversations`) y siguen ahí al reabrir la app: los guardados tienen id
+  `chat:<id del sidecar>` y van delante de los de la sesión, que arranca en un chat vacío. Solo se
+  ven los chats del canal (perfil) en uso, más los aún sin enviar; al cambiar de canal, si el chat
+  abierto era de otro, pasa a uno vacío. Cada fila tiene `conv-borrar-<id>` (icono, visible al
+  pasar por encima, con el foco o en la activa; "Borrar la conversación «<título>»"), que pide
+  confirmación ("¿Borrar la conversación?", "Borrar") y la borra del sidecar
+  (`DELETE /conversations/{id}`); si era la abierta, se abre otra del canal o una vacía. En el pie, aviso
   `nav-onboarding` ("Completa la configuración") **solo si falta algún paso** (clave de
   Anthropic, client_secret o canal autorizado), tarjeta `nav-job` con el progreso del job activo
   (subida o transcripción; al terminar, un toast con el resultado o el error) y el enlace de
@@ -114,6 +121,10 @@ Mensajes:
 Estados de la pantalla:
 
 - Vacía: `chat-vacio` con el texto "Pregunta al agente o pídele que publique un vídeo."
+- Chat guardado de otra sesión: mientras se descarga, `chat-cargando` ("Cargando la conversación…");
+  después se pinta reproduciendo sus eventos con el mismo reducer que el stream. Una respuesta que
+  se cortó (se cerró la app a mitad) acaba en `turno-error` ("La respuesta se interrumpió…") y sus
+  propuestas quedan canceladas.
 - Sin clave de Anthropic (`POST /chat` → 409 "Falta la clave"): el turno acaba en
   `turno-error` con ese detalle y un enlace a Ajustes (`chat-ir-ajustes`).
 - Turno en curso en otra pestaña (409): igual, `turno-error` con el detalle del sidecar.

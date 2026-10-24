@@ -109,6 +109,20 @@ export interface YouTubeStatus {
   };
 }
 
+/** Conversación guardada en el sidecar (GET /conversations): `perfil`, el canal activo al crearla. */
+export interface ConversacionResumen {
+  id: string;
+  titulo: string;
+  perfil: string | null;
+  creada: number;
+  actualizada: number;
+}
+
+/** GET /conversations/{id}: cada turno, con el texto del usuario y los eventos SSE de la respuesta. */
+export interface ConversacionDetalle extends ConversacionResumen {
+  turnos: Array<{ texto: string; eventos: ChatEvent[] }>;
+}
+
 /** POST /youtube/auth: `duplicated_in`, otros perfiles que ya tenían autorizado este mismo canal. */
 export interface YouTubeAuthOut {
   status: "authenticated";

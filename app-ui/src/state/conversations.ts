@@ -1,10 +1,14 @@
 /** Store de conversaciones, por encima del router: una conversación (y su stream SSE, y una
  *  aprobación pendiente) sobrevive a cambiar de pantalla (UI-01). Chat usa "chat:<n>" y Publicar
  *  "publicar". El reducer de turnos (chat/turno.ts) no cambia. Un turno a la vez por conversación
- *  (el sidecar responde 409 si hay otro). */
+ *  (el sidecar responde 409 si hay otro).
+ *
+ *  Los chats se guardan en el sidecar (SEO-100): al arrancar se carga la lista (`cargarLista`) y el
+ *  contenido de cada uno al abrirlo (`abrir`), reproduciendo los eventos guardados con el reducer.
+ *  Cada chat pertenece al perfil (canal) activo al crearlo; Publicar no se guarda. */
 import { create } from "zustand";
 import { ApiError, type Client } from "../api/client";
-import type { Approval } from "../api/types";
+import type { Approval, ConversacionDetalle } from "../api/types";
 import { reduceTurno, turnoVacio, type Turno } from "../chat/turno";
 import { seguirJob } from "./jobs";
 
@@ -16,6 +20,10 @@ export interface Conversacion {
   mensajes: Mensaje[];
   conversationId?: string;
   enStream: boolean;
+  /** Perfil (canal) con el que se creó; sin él (aún sin enviar nada), se ve en todos. */
+  perfil?: string | null;
+  /** Guardada en el sidecar y aún sin descargar su contenido. */
+  pendiente?: boolean;
 }
 
 interface Estado {
@@ -58,11 +66,11 @@ export function tituloDe(texto: string): string {
   return palabras.length > 40 ? palabras.slice(0, 39) + "…" : palabras;
 }
 
-export function nueva(): string {
+export function nueva(perfil?: string): string {
   const n = useConversaciones.getState().contador + 1;
   const id = `chat:${n}`;
   useConversaciones.setState((s) => ({
-    conversaciones: { ...s.conversaciones, [id]: vacia(id) },
+    conversaciones: { ...s.conversaciones, [id]: { ...vacia(id), perfil } },
     orden: [...s.orden, id],
     activa: id,
     contador: n,
@@ -74,12 +82,99 @@ export function seleccionar(id: string) {
   if (id in useConversaciones.getState().conversaciones) useConversaciones.setState({ activa: id });
 }
 
-/** La UI no tiene (aún) un parámetro del sidecar para desactivar la KB: se le indica al agente en el mensaje. */
-const SIN_KB = "\n\n(Indicación de la interfaz: en esta respuesta no uses las herramientas de la base de conocimiento.)";
-
 export interface OpcionesEnvio {
-  /** El usuario ha apagado "Usar KB": el texto visible no cambia, solo lo que recibe el agente. */
+  /** El usuario ha apagado "Usar KB": el sidecar se lo indica al agente; el texto visible no cambia. */
   sinKb?: boolean;
+  /** Perfil activo: la conversación queda asociada a él al enviar el primer mensaje. */
+  perfil?: string;
+}
+
+const INTERRUMPIDA = "La respuesta se interrumpió antes de terminar (se cerró la app o se cortó la conexión).";
+
+/** Vuelve a montar los mensajes de una conversación guardada con el mismo reducer que el stream.
+ *  Un turno sin done ni error se cortó: se marca como error, lo que cancela su propuesta pendiente. */
+export function reproducir(turnos: ConversacionDetalle["turnos"]): Mensaje[] {
+  return turnos.flatMap((t): Mensaje[] => {
+    let turno = t.eventos.reduce(reduceTurno, turnoVacio());
+    if (turno.estado === "streaming") turno = reduceTurno(turno, { type: "error", message: INTERRUMPIDA });
+    return [
+      { role: "user", text: t.texto },
+      { role: "assistant", turno },
+    ];
+  });
+}
+
+/** Añade a la lista las conversaciones guardadas en el sidecar que aún no estén (al arrancar). */
+export async function cargarLista(client: Client) {
+  const lista = await client.listConversations();
+  useConversaciones.setState((s) => {
+    const conocidas = new Set(Object.values(s.conversaciones).map((c) => c.conversationId));
+    const nuevas = lista.filter((r) => !conocidas.has(r.id));
+    if (!nuevas.length) return s;
+    const conversaciones = { ...s.conversaciones };
+    for (const r of nuevas) {
+      conversaciones[`chat:${r.id}`] = { id: `chat:${r.id}`, titulo: r.titulo, perfil: r.perfil, conversationId: r.id, mensajes: [], enStream: false, pendiente: true };
+    }
+    // Las guardadas son anteriores a las creadas en esta sesión: van delante, en orden de creación.
+    return { conversaciones, orden: [...nuevas.map((r) => `chat:${r.id}`), ...s.orden] };
+  });
+}
+
+/** Descarga el contenido de una conversación guardada la primera vez que se abre. */
+export async function abrir(client: Client, id: string) {
+  const c = useConversaciones.getState().conversaciones[id];
+  if (!c?.pendiente || !c.conversationId) return;
+  try {
+    const d = await client.getConversation(c.conversationId);
+    parchar(id, (actual) => ({ ...actual, titulo: d.titulo || actual.titulo, mensajes: reproducir(d.turnos), pendiente: false }));
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) quitar(id); // borrada desde otro sitio
+    throw e;
+  }
+}
+
+function quitar(id: string) {
+  useConversaciones.setState((s) => {
+    const { [id]: _quitada, ...conversaciones } = s.conversaciones;
+    return { conversaciones, orden: s.orden.filter((o) => o !== id) };
+  });
+}
+
+/** Conversaciones visibles con el perfil activo: las suyas y las que aún no tienen perfil. */
+export function delPerfil(s: Pick<Estado, "orden" | "conversaciones">, perfil: string | undefined): string[] {
+  return s.orden.filter((id) => {
+    const p = s.conversaciones[id]?.perfil;
+    return !p || !perfil || p === perfil;
+  });
+}
+
+/** Si la conversación activa es de otro perfil, pasa a la última del perfil nuevo (o a una vacía). */
+export function alCambiarDePerfil(perfil: string) {
+  const s = useConversaciones.getState();
+  const activa = s.conversaciones[s.activa];
+  if (!activa?.perfil || activa.perfil === perfil) return;
+  const ultima = delPerfil(s, perfil).at(-1);
+  if (ultima) useConversaciones.setState({ activa: ultima });
+  else nueva(perfil);
+}
+
+/** Borra una conversación (en el sidecar, si ya estaba guardada) y, si era la activa, pasa a otra. */
+export async function borrar(client: Client, id: string) {
+  const c = useConversaciones.getState().conversaciones[id];
+  if (!c || c.enStream) return;
+  if (c.conversationId) {
+    try {
+      await client.deleteConversation(c.conversationId);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    }
+  }
+  quitar(id);
+  const s = useConversaciones.getState();
+  if (s.activa !== id) return;
+  const siguiente = delPerfil(s, c.perfil ?? undefined).at(-1);
+  if (siguiente) useConversaciones.setState({ activa: siguiente });
+  else nueva(c.perfil ?? undefined);
 }
 
 export async function enviar(client: Client, id: string, texto: string, opciones: OpcionesEnvio = {}) {
@@ -88,13 +183,15 @@ export async function enviar(client: Client, id: string, texto: string, opciones
   parchar(id, (c) => ({
     ...c,
     titulo: c.titulo || tituloDe(texto),
+    perfil: c.perfil ?? opciones.perfil,
     enStream: true,
     mensajes: [...c.mensajes, { role: "user", text: texto }, { role: "assistant", turno: turnoVacio() }],
   }));
   const abort = new AbortController();
   abortos.set(id, abort);
   try {
-    for await (const ev of client.chat({ message: opciones.sinKb ? texto + SIN_KB : texto, conversation_id: actual.conversationId }, abort.signal)) {
+    const cuerpo = { message: texto, conversation_id: actual.conversationId, sin_kb: opciones.sinKb || undefined, persistir: id.startsWith("chat:") };
+    for await (const ev of client.chat(cuerpo, abort.signal)) {
       if (ev.type === "done") parchar(id, (c) => ({ ...c, conversationId: ev.conversation_id }));
       actualizarTurno(id, (t) => reduceTurno(t, ev));
       if (ev.type === "job_started") seguirJob(client, ev.job);

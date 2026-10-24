@@ -16,5 +16,5 @@ export function useChat(id: string) {
     [client, id],
   );
   const cancelar = useCallback(() => store.cancelar(id), [id]);
-  return { mensajes: c.mensajes, conversationId: c.conversationId, enStream: c.enStream, titulo: c.titulo, enviar, resolver, cancelar };
+  return { mensajes: c.mensajes, conversationId: c.conversationId, enStream: c.enStream, titulo: c.titulo, pendiente: !!c.pendiente, enviar, resolver, cancelar };
 }

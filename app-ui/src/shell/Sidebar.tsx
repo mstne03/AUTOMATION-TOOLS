@@ -1,12 +1,14 @@
 /** Barra lateral: logo, paleta, navegación, conversaciones, job activo, aviso de configuración y
  *  pie con el canal activo. Los testids nav / nav-* se conservan (docs/pantallas.md). */
-import { BookOpen, ChartLine, MessageSquare, Play, Plus, Search, TriangleAlert, Upload, type LucideIcon } from "lucide-react";
+import { BookOpen, ChartLine, MessageSquare, Play, Plus, Search, Trash2, TriangleAlert, Upload, type LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router";
+import { useClient } from "../api/context";
 import { useSettings, useYoutubeStatus } from "../api/queries";
 import { abrirPaleta } from "../CommandPalette";
-import { nueva, seleccionar, useConversaciones } from "../state/conversations";
+import { alCambiarDePerfil, borrar, cargarLista, delPerfil, nueva, seleccionar, useConversaciones } from "../state/conversations";
 import { jobActivo, useJobs } from "../state/jobs";
-import { IconButton, Kbd, Progress } from "../ui";
+import { ConfirmDialog, IconButton, Kbd, Progress, toast } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./Sidebar.module.css";
 
@@ -33,9 +35,23 @@ function JobActivo() {
   );
 }
 
-function Conversaciones() {
+/** Chats del perfil (canal) activo, guardados en el sidecar: se cargan al arrancar y se borran con
+ *  confirmación. Al cambiar de perfil, el chat abierto pasa a uno de ese perfil. */
+function Conversaciones({ perfil }: { perfil?: string }) {
+  const client = useClient();
   const navegar = useNavigate();
-  const { orden, conversaciones, activa } = useConversaciones();
+  const estado = useConversaciones();
+  const { conversaciones, activa } = estado;
+  const [borrando, setBorrando] = useState<string | null>(null);
+
+  useEffect(() => {
+    cargarLista(client).catch((e: Error) => toast({ title: "No se pudieron cargar las conversaciones", description: e.message, tone: "error" }));
+  }, [client]);
+  useEffect(() => {
+    if (perfil) alCambiarDePerfil(perfil);
+  }, [perfil]);
+
+  const titulo = (id: string) => conversaciones[id]?.titulo || "Nueva conversación";
   return (
     <section className={s.conversaciones} aria-label="Conversaciones" data-testid="nav-conversaciones">
       <div className={s.cabecera}>
@@ -47,14 +63,14 @@ function Conversaciones() {
           aria-label="Nueva conversación"
           data-testid="conv-nueva"
           onClick={() => {
-            nueva();
+            nueva(perfil);
             navegar("/chat");
           }}
         />
       </div>
       <ul className={s.lista}>
-        {orden.map((id) => (
-          <li key={id}>
+        {delPerfil(estado, perfil).map((id) => (
+          <li key={id} className={s.fila}>
             <button
               type="button"
               className={cx(s.conv, id === activa && s.convActiva)}
@@ -65,11 +81,38 @@ function Conversaciones() {
                 navegar("/chat");
               }}
             >
-              {conversaciones[id]?.titulo || "Nueva conversación"}
+              {titulo(id)}
             </button>
+            <IconButton
+              icon={Trash2}
+              size="xs"
+              variant="ghost"
+              className={s.borrar}
+              aria-label={`Borrar la conversación «${titulo(id)}»`}
+              data-testid={`conv-borrar-${id}`}
+              disabled={conversaciones[id]?.enStream}
+              onClick={() => setBorrando(id)}
+            />
           </li>
         ))}
       </ul>
+      <ConfirmDialog
+        open={borrando !== null}
+        onOpenChange={(a) => !a && setBorrando(null)}
+        title="¿Borrar la conversación?"
+        description={borrando ? `«${titulo(borrando)}» se borrará de este equipo y no se podrá recuperar.` : undefined}
+        confirmLabel="Borrar"
+        tone="danger"
+        onConfirm={async () => {
+          if (!borrando) return;
+          try {
+            await borrar(client, borrando);
+            toast({ title: "Conversación borrada" });
+          } catch (e) {
+            toast({ title: "No se pudo borrar la conversación", description: (e as Error).message, tone: "error" });
+          }
+        }}
+      />
     </section>
   );
 }
@@ -108,7 +151,7 @@ export function Sidebar() {
         ))}
       </div>
 
-      <Conversaciones />
+      <Conversaciones perfil={settings.data?.profile} />
 
       <div className={s.pie}>
         {faltaConfigurar && (

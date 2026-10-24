@@ -2,10 +2,11 @@
 import { ArrowUp, ChevronDown, Paperclip, Plus, Sparkles, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useLocation } from "react-router";
+import { useClient } from "../api/context";
 import { usePutSettings, useSettings } from "../api/queries";
 import type { Model } from "../api/types";
 import { elegirVideo, enTauri } from "../dialogo";
-import { nueva, useConversaciones } from "../state/conversations";
+import { abrir, nueva, useConversaciones } from "../state/conversations";
 import { Button, DropdownMenu, IconButton, toast } from "../ui";
 import { ApprovalCard } from "./ApprovalCard";
 import s from "./ChatScreen.module.css";
@@ -19,8 +20,11 @@ const ALTO_MAXIMO_COMPOSITOR = 168;
 const SUGERENCIAS_BIENVENIDA = ["Analiza mi canal y dime qué mejorar", "¿Cuál es la mejor hora para publicar Shorts?", "Prepárame un borrador para un vídeo nuevo"];
 
 export function ChatScreen() {
-  const chat = useChat(useConversaciones((st) => st.activa));
+  const client = useClient();
+  const activa = useConversaciones((st) => st.activa);
+  const chat = useChat(activa);
   const settings = useSettings();
+  const perfil = settings.data?.profile;
   const guardarAjustes = usePutSettings();
   const [texto, setTexto] = useState("");
   const [usarKb, setUsarKb] = useState(true);
@@ -40,9 +44,14 @@ export function ChatScreen() {
     if (!m) return;
     inicial.current = undefined;
     window.history.replaceState({}, "");
-    void chat.enviar(m);
+    void chat.enviar(m, { perfil });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Un chat guardado de una sesión anterior se descarga al abrirlo.
+  useEffect(() => {
+    abrir(client, activa).catch((e: Error) => toast({ title: "No se pudo abrir la conversación", description: e.message, tone: "error" }));
+  }, [client, activa]);
 
   useEffect(() => {
     lista.current?.scrollTo({ top: lista.current.scrollHeight });
@@ -74,7 +83,7 @@ export function ChatScreen() {
     const t = texto.trim();
     if (!t) return;
     setTexto("");
-    void chat.enviar(t, { sinKb: !usarKb });
+    void chat.enviar(t, { sinKb: !usarKb, perfil });
   };
   const teclas = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -119,7 +128,7 @@ export function ChatScreen() {
             ≈ ${coste.usd.toFixed(4)} · {coste.cache.toLocaleString("es-ES")} tokens en caché
           </span>
         )}
-        <Button size="sm" icon={Plus} data-testid="chat-nueva" onClick={() => nueva()}>
+        <Button size="sm" icon={Plus} data-testid="chat-nueva" onClick={() => nueva(perfil)}>
           Nueva
         </Button>
       </header>
@@ -136,7 +145,7 @@ export function ChatScreen() {
                 <p>Soy tu agente de SEO para YouTube. Puedo analizar tu canal, consultar la base de conocimiento y preparar o subir vídeos; todo lo que cambie algo en YouTube te lo pido antes de hacerlo.</p>
                 <div className={s.sugerencias}>
                   {SUGERENCIAS_BIENVENIDA.map((q, i) => (
-                    <button key={q} type="button" className={s.sugerencia} data-testid={`chat-sugerencia-${i + 1}`} onClick={() => void chat.enviar(q, { sinKb: !usarKb })}>
+                    <button key={q} type="button" className={s.sugerencia} data-testid={`chat-sugerencia-${i + 1}`} onClick={() => void chat.enviar(q, { sinKb: !usarKb, perfil })}>
                       {q}
                     </button>
                   ))}
@@ -144,7 +153,12 @@ export function ChatScreen() {
               </div>
             </section>
           )}
-          {chat.mensajes.length === 0 && !bienvenida && (
+          {chat.pendiente && (
+            <p className={s.vacio} data-testid="chat-cargando" role="status">
+              Cargando la conversación…
+            </p>
+          )}
+          {chat.mensajes.length === 0 && !bienvenida && !chat.pendiente && (
             <p className={s.vacio} data-testid="chat-vacio">
               Pregunta al agente o pídele que publique un vídeo.
             </p>

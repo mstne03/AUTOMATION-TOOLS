@@ -9,6 +9,8 @@ import type {
   CanalPanel,
   Approval,
   ChatEvent,
+  ConversacionDetalle,
+  ConversacionResumen,
   Job,
   JobKind,
   Settings,
@@ -30,10 +32,14 @@ export class ApiError extends Error {
 }
 
 export interface Client {
+  /** `sin_kb`: "Usar KB" apagado. `persistir: false`: conversación de trabajo (Publicar) que no se guarda. */
   chat(
-    body: { message: string; conversation_id?: string },
+    body: { message: string; conversation_id?: string; sin_kb?: boolean; persistir?: boolean },
     signal?: AbortSignal,
   ): AsyncGenerator<ChatEvent>;
+  listConversations(): Promise<ConversacionResumen[]>;
+  getConversation(id: string): Promise<ConversacionDetalle>;
+  deleteConversation(id: string): Promise<{ borrada: string }>;
   resolveApproval(id: string, decision: "approve" | "reject", confirmId?: string): Promise<Approval>;
   listJobs(): Promise<Job[]>;
   getJob(id: string): Promise<Job>;
@@ -93,6 +99,9 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
         yield JSON.parse(msg.data) as ChatEvent;
       }
     },
+    listConversations: () => req("/conversations"),
+    getConversation: (id) => req(`/conversations/${encodeURIComponent(id)}`),
+    deleteConversation: (id) => req(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
     resolveApproval: (id, decision, confirmId) =>
       req(`/approvals/${encodeURIComponent(id)}`, {
         method: "POST",

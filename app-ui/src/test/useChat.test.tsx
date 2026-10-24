@@ -113,21 +113,20 @@ describe("useChat", () => {
     expect(publicar.result.current.mensajes).toHaveLength(0);
   });
 
-  it("con 'Usar KB' apagado el agente recibe la indicación, pero el mensaje visible no cambia", async () => {
-    const mensajes: string[] = [];
+  it("con 'Usar KB' apagado se lo pide al sidecar, y el mensaje visible no cambia", async () => {
+    const peticiones: Array<{ message: string; sin_kb?: boolean; persistir?: boolean }> = [];
     const client = {
-      async *chat(req: { message: string }) {
-        mensajes.push(req.message);
+      async *chat(req: { message: string; sin_kb?: boolean; persistir?: boolean }) {
+        peticiones.push(req);
         yield fx.errorApi[0];
       },
     } as unknown as Client;
     const { result } = montar(client);
     await act(() => result.current.enviar("hola", { sinKb: true }));
-    expect(mensajes[0]).toContain("hola");
-    expect(mensajes[0]).toContain("no uses las herramientas de la base de conocimiento");
+    expect(peticiones[0]).toMatchObject({ message: "hola", sin_kb: true, persistir: true });
     expect(result.current.mensajes[0]).toEqual({ role: "user", text: "hola" });
     await act(() => result.current.enviar("otra"));
-    expect(mensajes[1]).toBe("otra");
+    expect(peticiones[1]).toMatchObject({ message: "otra", sin_kb: undefined });
   });
 
   it("si el stream se corta sin done ni error, el turno acaba en error y la aprobación pendiente se cancela", async () => {
