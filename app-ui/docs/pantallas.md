@@ -162,8 +162,10 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
   pendiente; con 1–3 hechos, también al cuarto).
 - `onboarding-pasos` (`ol`) contiene los cuatro `li` en este orden, cada uno con `data-estado`
   `pendiente|hecho`; solo el paso actual es visible (los demás llevan `hidden`). Mientras el usuario
-  no navegue, el asistente avanza solo al primer paso pendiente (o abre en el primero si todo está
-  hecho). Debajo: `onboarding-atras`, `onboarding-continuar` (habilitado si el paso actual está
+  no navegue, el asistente avanza solo al primer paso pendiente; con 1–3 hechos abre en el último
+  (`paso-kb`, con `onboarding-listo` "Todo listo…"), nunca en un paso ya hecho. Completar un paso
+  (clave, credenciales o autorización) devuelve el asistente a esa regla aunque el usuario hubiera
+  navegado a mano. Debajo: `onboarding-atras`, `onboarding-continuar` (habilitado si el paso actual está
   hecho; no existe en el último) y `onboarding-terminar` ("Ir al chat", habilitado cuando 1–3 están
   hechos; va al chat con `state.bienvenida`).
 1. `paso-clave`: `clave-input` (password) y `clave-guardar` ("Validar y guardar"). Antes de guardar
@@ -185,8 +187,11 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
    credenciales), que llama a `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras
    espera, con `oauth-cancelar` ("Cancelar", `POST /youtube/auth/cancel`) al lado; el fallo o la
    cancelación se muestran en `oauth-error`. Nota `oauth-no-verificada`: explica el aviso de
-   Google "app no verificada". Hecho si
-   `auth.authenticated`.
+   Google "app no verificada". Hecho si `auth.authenticated` (el sidecar renueva el token de acceso
+   caducado con el de refresco antes de responder). Hecho: `oauth-estado` ("Canal autorizado ·
+   perfil <perfil>") y el botón pasa a "Volver a autorizar" (secundario, `reauthorize: true`). No
+   hecho con `auth.reason` (Google rechazó la autorización guardada): `oauth-motivo` con ese texto.
+   Autorizar con éxito muestra el aviso "Canal autorizado".
 4. `paso-kb`: muestra `GET /kb/estado` (`kb-estado-texto`). Hecho si la llamada responde.
 
 Al terminar, el chat muestra `chat-bienvenida` ("¡Todo listo!") con tres preguntas sugeridas

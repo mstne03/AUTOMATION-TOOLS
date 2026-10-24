@@ -73,6 +73,7 @@ export function OnboardingScreen() {
       qc.setQueryData(["settings"], datos);
       setApiKey("");
       setClaveError(null);
+      setElegido(null); // al completar un paso, el asistente sigue al siguiente pendiente
       toast({ title: "Clave validada y guardada" });
     },
     onError: (e) => setClaveError(e.message),
@@ -85,13 +86,19 @@ export function OnboardingScreen() {
       setPath("");
       setFichero(null);
       setGoogleError(null);
+      setElegido(null);
       toast({ title: "Credenciales de Google importadas" });
     },
     onError: (e) => setGoogleError(e.message),
   });
+  /** `reautorizar`: ignora el token guardado y vuelve a pedir el consentimiento de Google. */
   const oauth = useMutation({
-    mutationFn: () => client.youtubeAuth({}),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["youtube"] }),
+    mutationFn: (reautorizar: boolean) => client.youtubeAuth(reautorizar ? { reauthorize: true } : {}),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["youtube"] });
+      setElegido(null);
+      toast({ title: "Canal autorizado" });
+    },
   });
 
   if (settings.isPending) return <Estado>Cargando…</Estado>;
@@ -100,8 +107,9 @@ export function OnboardingScreen() {
 
   const hechos = [st.has_anthropic_key, st.has_client_secret, !!yt.data?.auth.authenticated, kb.isSuccess];
   const primerPendiente = hechos.slice(0, 3).findIndex((h) => !h);
-  // Mientras el usuario no navegue, el asistente avanza solo al primer paso pendiente (o al primero, si todo está hecho).
-  const actual = elegido ?? (primerPendiente === -1 ? 0 : primerPendiente);
+  // Mientras el usuario no navegue, el asistente va al primer paso pendiente; con todo hecho, al final
+  // ("Todo listo"), nunca a un paso ya hecho. Completar un paso vuelve a esta regla (setElegido(null)).
+  const actual = elegido ?? (primerPendiente === -1 ? PASOS.length - 1 : primerPendiente);
   const alcanzable = (i: number) => i <= (primerPendiente === -1 ? 3 : primerPendiente);
   const listo = hechos[0] && hechos[1] && hechos[2];
   const hechosEnTotal = hechos.filter(Boolean).length;
@@ -229,7 +237,7 @@ export function OnboardingScreen() {
             >
               {fichero ? (
                 <>
-                  <FileCheck aria-hidden size="1.6em" className={s.ficheroListo} />
+                  <FileCheck aria-hidden size="1.6em" className={s.ok} />
                   <span data-testid="google-elegido" role="status">
                     <Mono>{fichero}</Mono> listo para importar
                   </span>
@@ -294,9 +302,20 @@ export function OnboardingScreen() {
             <p className={s.aviso} data-testid="oauth-no-verificada">
               Google avisará de que «no ha verificado esta app»: es tu propio proyecto y es normal. Pulsa «Configuración avanzada» y luego «Ir a …» para continuar.
             </p>
+            {hechos[2] && (
+              <p className={s.ok} data-testid="oauth-estado">
+                <Check aria-hidden size="1em" /> Canal autorizado · perfil <Mono>{yt.data?.auth.profile}</Mono>
+              </p>
+            )}
+            {!hechos[2] && typeof yt.data?.auth.reason === "string" && (
+              <p className={s.aviso} data-testid="oauth-motivo" role="alert">
+                {yt.data.auth.reason}
+              </p>
+            )}
             <div className={s.fila}>
-              <Button variant="primary" data-testid="oauth-autorizar" disabled={!hechos[1]} loading={oauth.isPending} onClick={() => oauth.mutate()}>
-                {oauth.isPending ? "Se ha abierto el navegador…" : "Autorizar canal de YouTube"}
+              {/* Ya autorizado: "Volver a autorizar" pide de nuevo el consentimiento (p. ej. para cambiar de cuenta). */}
+              <Button variant={hechos[2] ? "secondary" : "primary"} data-testid="oauth-autorizar" disabled={!hechos[1]} loading={oauth.isPending} onClick={() => oauth.mutate(hechos[2])}>
+                {oauth.isPending ? "Se ha abierto el navegador…" : hechos[2] ? "Volver a autorizar" : "Autorizar canal de YouTube"}
               </Button>
               {/* Si se cierra la pestaña de Google, el sidecar esperaría hasta su límite: esto lo corta. */}
               {oauth.isPending && (
@@ -314,6 +333,11 @@ export function OnboardingScreen() {
           </Paso>
 
           <Paso id="paso-kb" titulo="Base de conocimiento" hecho={hechos[3]} visible={actual === 3}>
+            {listo && (
+              <p className={s.ok} data-testid="onboarding-listo" role="status">
+                <Check aria-hidden size="1em" /> Todo listo: clave, proyecto de Google y canal configurados. Ya puedes ir al chat.
+              </p>
+            )}
             <p className={s.ayuda}>El agente consulta una base de conocimiento de SEO en redes (se actualiza sola). Este es su estado:</p>
             {kb.isPending && <p className={s.suave}>Comprobando…</p>}
             {kb.isError && <p className={s.error}>{kb.error.message}</p>}

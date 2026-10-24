@@ -114,7 +114,13 @@ test.describe("Onboarding", () => {
   test("con todo hecho: navegar entre pasos, ver la KB y terminar en un chat de bienvenida con sugerencias", async ({ page }) => {
     await simularRutas(page, { "/youtube/status": ESTADO_AUTORIZADO });
     await page.reload(); // el beforeEach ya cargó la app: recargamos para que use el estado simulado
-    await expect(page.getByTestId("onboarding-progreso")).toHaveText("Paso 1 de 4"); // todo hecho: se abre en el primero
+    // todo hecho: se abre en el final ("Todo listo"), no en un paso ya hecho
+    await expect(page.getByTestId("onboarding-progreso")).toHaveText("Paso 4 de 4");
+    await expect(page.getByTestId("paso-kb")).toBeVisible();
+    await expect(page.getByTestId("onboarding-listo")).toContainText("Todo listo");
+    await expect(page.getByTestId("kb-estado-texto")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("onboarding-continuar")).toHaveCount(0); // último paso
+    await page.getByTestId("onboarding-ir-paso-clave").click();
     await expect(page.getByTestId("paso-clave")).toBeVisible();
     await expect(page.getByTestId("onboarding-atras")).toBeDisabled();
     await page.getByTestId("onboarding-continuar").click();
@@ -123,8 +129,6 @@ test.describe("Onboarding", () => {
     await expect(page.getByTestId("paso-oauth")).toBeVisible();
     await page.getByTestId("onboarding-continuar").click();
     await expect(page.getByTestId("paso-kb")).toBeVisible();
-    await expect(page.getByTestId("kb-estado-texto")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("onboarding-continuar")).toHaveCount(0); // último paso
     await page.getByTestId("onboarding-atras").click();
     await expect(page.getByTestId("paso-oauth")).toBeVisible();
     await page.getByTestId("onboarding-ir-paso-kb").click();
@@ -208,5 +212,65 @@ test.describe("Onboarding: elegir el client_secret.json", () => {
     await expect(page.getByTestId("google-elegir")).toHaveCount(0); // sin Tauri no hay explorador nativo
     await page.getByTestId("google-fichero").setInputFiles({ name: "mi_secreto.json", mimeType: "application/json", buffer: Buffer.from('{"installed":{}}') });
     await expect(page.getByTestId("google-elegido")).toHaveText("mi_secreto.json listo para importar");
+  });
+});
+
+test.describe("Onboarding: recorrido desde el aviso de configuración (sidecar simulado)", () => {
+  /** Clave y client_secret hechos; el canal sin autorizar hasta que POST /youtube/auth responde. */
+  async function conCanalPendiente(page: import("@playwright/test").Page, auth: Record<string, unknown> = {}) {
+    const s = await settings();
+    let autorizado = false;
+    const peticiones: unknown[] = [];
+    await simularRutas(page, {
+      "/settings": { ...s, has_anthropic_key: true, has_client_secret: true },
+      "/youtube/status": () => [200, { ...ESTADO_AUTORIZADO, auth: { ...ESTADO_AUTORIZADO.auth, authenticated: autorizado, ...(autorizado ? {} : auth) } }],
+      "/youtube/auth": (_u, p) => {
+        peticiones.push(p.cuerpo);
+        autorizado = true;
+        return [200, { status: "authenticated" }];
+      },
+    });
+    return peticiones;
+  }
+
+  test("al autorizar el canal pendiente, termina en 'Todo listo' y no vuelve a un paso hecho", async ({ page }) => {
+    await conCanalPendiente(page);
+    await page.goto("/#/chat");
+    await page.getByTestId("nav-onboarding").click();
+    await expect(page.getByTestId("paso-oauth")).toBeVisible();
+    await page.getByTestId("oauth-autorizar").click();
+    await expect(page.getByRole("status").filter({ hasText: "Canal autorizado" }).first()).toBeVisible();
+    await expect(page.getByTestId("paso-kb")).toBeVisible();
+    await expect(page.getByTestId("onboarding-progreso")).toHaveText("Paso 4 de 4");
+    await expect(page.getByTestId("onboarding-listo")).toContainText("Todo listo");
+    await expect(page.getByTestId("onboarding-terminar")).toBeEnabled();
+  });
+
+  test("si se navega a mano a un paso pendiente y se completa, avanza al siguiente", async ({ page }) => {
+    await conCanalPendiente(page);
+    await page.goto("/#/onboarding");
+    await page.getByTestId("onboarding-ir-paso-google").click(); // el usuario vuelve atrás
+    await page.getByTestId("onboarding-continuar").click(); // y avanza a mano al de autorizar
+    await page.getByTestId("oauth-autorizar").click();
+    await expect(page.getByTestId("paso-kb")).toBeVisible();
+  });
+
+  test("con el canal ya autorizado, el paso lo dice y 'Volver a autorizar' fuerza el consentimiento", async ({ page }) => {
+    const peticiones = await conCanalPendiente(page);
+    await page.goto("/#/onboarding");
+    await page.getByTestId("oauth-autorizar").click(); // primera autorización
+    await expect(page.getByTestId("paso-kb")).toBeVisible();
+    await page.getByTestId("onboarding-ir-paso-oauth").click();
+    await expect(page.getByTestId("oauth-estado")).toHaveText("Canal autorizado · perfil default");
+    await expect(page.getByTestId("oauth-autorizar")).toHaveText("Volver a autorizar");
+    await page.getByTestId("oauth-autorizar").click();
+    await expect.poll(() => peticiones.length).toBe(2);
+    expect(peticiones).toEqual([{}, { reauthorize: true }]);
+  });
+
+  test("si Google rechazó la autorización guardada, el paso explica el motivo", async ({ page }) => {
+    await conCanalPendiente(page, { expired: true, reason: "Google ha rechazado la autorización guardada: vuelve a autorizar el canal." });
+    await page.goto("/#/onboarding");
+    await expect(page.getByTestId("oauth-motivo")).toContainText("vuelve a autorizar el canal");
   });
 });
