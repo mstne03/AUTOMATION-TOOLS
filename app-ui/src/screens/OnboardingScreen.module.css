@@ -225,11 +225,8 @@
   background: var(--color-accent-soft);
   color: var(--color-accent-text);
 }
-.ficheroNativo {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--text-12);
+.ficheroListo {
+  color: var(--color-success-fg);
 }
 .mono {
   font-family: var(--font-mono);

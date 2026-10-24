@@ -173,8 +173,11 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
 2. `paso-google`: checklist informativa (`google-paso-a|b|c`: crear proyecto y activar YouTube Data
    API v3, crear credenciales de "Aplicación de escritorio", publicar la app OAuth; en "Prueba" los
    refresh tokens caducan a los 7 días) que **no bloquea** "Importar". Zona `google-soltar` para
-   soltar el `client_secret.json` (o `google-fichero`, selector del navegador) y `google-elegir`
-   ("Elegir fichero…", diálogo nativo con el comando Rust `elegir_client_secret`); también
+   soltar el `client_secret.json` con **un solo selector**: en la app, `google-elegir` ("Elegir
+   fichero…", diálogo nativo con el comando Rust `elegir_client_secret`, que rellena
+   `google-path`); fuera de Tauri, `google-fichero` (selector del navegador). Con un fichero
+   elegido o soltado, la zona muestra `google-elegido` ("<nombre> listo para importar") y el botón
+   pasa a "Elegir otro…"; editar el JSON o la ruta a mano lo quita. También
    `textarea[data-testid=google-json]` y la ruta `google-path`, y `google-importar`. Validador: el
    JSON debe tener `installed.client_id` y `installed.client_secret`; si no, `google-error` sin
    enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`.

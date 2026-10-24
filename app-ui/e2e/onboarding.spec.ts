@@ -172,3 +172,41 @@ test.describe("Onboarding: autorización interrumpida (sidecar simulado)", () =>
     expect(llamadas["/youtube/auth/cancel"]).toBe(1);
   });
 });
+
+test.describe("Onboarding: elegir el client_secret.json", () => {
+  const RUTA = String.raw`C:\Users\Marc\.secrets\client_secret.json`;
+
+  test("en la app de escritorio, 'Elegir fichero…' muestra el fichero elegido y no hay un segundo selector", async ({ page }) => {
+    const s = await settings();
+    const sidecar = new URL(process.env.E2E_SIDECAR!);
+    // Tauri simulado: el sidecar sale de sidecar_info y el explorador nativo devuelve RUTA.
+    await page.addInitScript(
+      ({ port, token, ruta }) => {
+        (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+          invoke: async (cmd: string) => (cmd === "sidecar_info" ? { port, token } : cmd === "elegir_client_secret" ? ruta : null),
+          transformCallback: () => 0,
+        };
+      },
+      { port: Number(sidecar.port), token: process.env.E2E_TOKEN!, ruta: RUTA },
+    );
+    await simularRutas(page, { "/settings": { ...s, has_anthropic_key: true, has_client_secret: false } });
+    await page.goto("/#/onboarding");
+    await expect(page.getByTestId("paso-google")).toBeVisible();
+    await expect(page.getByTestId("google-fichero")).toHaveCount(0); // un solo selector
+    await page.getByTestId("google-elegir").click();
+    await expect(page.getByTestId("google-elegido")).toHaveText("client_secret.json listo para importar");
+    await expect(page.getByTestId("google-elegir")).toHaveText("Elegir otro…");
+    await expect(page.getByTestId("google-path")).toHaveValue(RUTA);
+    await page.getByTestId("google-path").fill(""); // si se edita a mano, deja de ser "el fichero elegido"
+    await expect(page.getByTestId("google-elegido")).toHaveCount(0);
+  });
+
+  test("en el navegador, el selector de ficheros también muestra el fichero elegido", async ({ page }) => {
+    const s = await settings();
+    await simularRutas(page, { "/settings": { ...s, has_anthropic_key: true, has_client_secret: false } });
+    await page.goto("/#/onboarding");
+    await expect(page.getByTestId("google-elegir")).toHaveCount(0); // sin Tauri no hay explorador nativo
+    await page.getByTestId("google-fichero").setInputFiles({ name: "mi_secreto.json", mimeType: "application/json", buffer: Buffer.from('{"installed":{}}') });
+    await expect(page.getByTestId("google-elegido")).toHaveText("mi_secreto.json listo para importar");
+  });
+});

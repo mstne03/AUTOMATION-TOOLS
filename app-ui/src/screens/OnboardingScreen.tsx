@@ -2,12 +2,12 @@
  *  lateral, con un paso visible cada vez: clave de Anthropic, proyecto de Google Cloud, autorizar el
  *  canal y base de conocimiento. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FileJson, Play } from "lucide-react";
+import { Check, FileCheck, FileJson, Play } from "lucide-react";
 import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClient } from "../api/context";
 import { useSettings, useYoutubeStatus } from "../api/queries";
-import { elegirClientSecret } from "../dialogo";
+import { elegirClientSecret, enTauri } from "../dialogo";
 import { EnlaceExterno } from "../enlaces";
 import { Button, Estado, Field, Input, Progress, Textarea, toast } from "../ui";
 import { cx } from "../ui/cx";
@@ -55,6 +55,8 @@ export function OnboardingScreen() {
   const [paso2c, setPaso2c] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [path, setPath] = useState("");
+  /** Nombre del fichero elegido o soltado; se olvida si el usuario edita el JSON o la ruta a mano. */
+  const [fichero, setFichero] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const [elegido, setElegido] = useState<number | null>(null);
@@ -81,6 +83,7 @@ export function OnboardingScreen() {
       qc.setQueryData(["settings"], data);
       setJsonText("");
       setPath("");
+      setFichero(null);
       setGoogleError(null);
       toast({ title: "Credenciales de Google importadas" });
     },
@@ -117,6 +120,7 @@ export function OnboardingScreen() {
     const texto = await f.text();
     setJsonText(texto);
     setPath("");
+    setFichero(f.name);
     setGoogleError(validarClientSecret(texto));
   };
   const soltar = (e: DragEvent) => {
@@ -131,6 +135,7 @@ export function OnboardingScreen() {
       if (ruta) {
         setJsonText("");
         setPath(ruta);
+        setFichero(ruta.split(/[\\/]/).pop() ?? ruta);
         setGoogleError(null);
       }
     } catch (e) {
@@ -222,26 +227,55 @@ export function OnboardingScreen() {
               onDragLeave={() => setArrastrando(false)}
               onDrop={soltar}
             >
-              <FileJson aria-hidden size="1.6em" />
-              <span>Suelta aquí el <Mono>client_secret.json</Mono> descargado</span>
-              <span className={s.suave}>o</span>
-              <div className={s.fila}>
+              {fichero ? (
+                <>
+                  <FileCheck aria-hidden size="1.6em" className={s.ficheroListo} />
+                  <span data-testid="google-elegido" role="status">
+                    <Mono>{fichero}</Mono> listo para importar
+                  </span>
+                </>
+              ) : (
+                <>
+                  <FileJson aria-hidden size="1.6em" />
+                  <span>Suelta aquí el <Mono>client_secret.json</Mono> descargado</span>
+                  <span className={s.suave}>o</span>
+                </>
+              )}
+              {/* Un solo selector: en la app, el explorador nativo (Rust); fuera de Tauri (E2E, pnpm dev),
+                  el del navegador. Los dos a la vez se contradecían al usar uno de ellos. */}
+              {enTauri() ? (
                 <Button size="sm" data-testid="google-elegir" onClick={() => void elegirFichero()}>
-                  Elegir fichero…
+                  {fichero ? "Elegir otro…" : "Elegir fichero…"}
                 </Button>
-                <label className={s.ficheroNativo}>
-                  <span className={s.suave}>o desde el navegador:</span>
-                  <input type="file" accept=".json,application/json" data-testid="google-fichero" onChange={(e) => e.target.files?.[0] && void leerFichero(e.target.files[0])} />
-                </label>
-              </div>
+              ) : (
+                <input type="file" accept=".json,application/json" aria-label="Elegir el client_secret.json" data-testid="google-fichero" onChange={(e) => e.target.files?.[0] && void leerFichero(e.target.files[0])} />
+              )}
             </div>
 
             <Field label="O pega aquí el contenido del JSON">
-              <Textarea data-testid="google-json" rows={4} placeholder='{"installed": {"client_id": …}}' value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
+              <Textarea
+                data-testid="google-json"
+                rows={4}
+                placeholder='{"installed": {"client_id": …}}'
+                value={jsonText}
+                onChange={(e) => {
+                  setJsonText(e.target.value);
+                  setFichero(null);
+                }}
+              />
             </Field>
             <div className={s.fila}>
               <Field label="O la ruta del fichero" className={s.crece}>
-                <Input mono data-testid="google-path" placeholder="C:\Users\…\client_secret_….json" value={path} onChange={(e) => setPath(e.target.value)} />
+                <Input
+                  mono
+                  data-testid="google-path"
+                  placeholder="C:\Users\…\client_secret_….json"
+                  value={path}
+                  onChange={(e) => {
+                    setPath(e.target.value);
+                    setFichero(null);
+                  }}
+                />
               </Field>
               <Button variant="primary" data-testid="google-importar" loading={importar.isPending} onClick={onImportar}>
                 Importar
