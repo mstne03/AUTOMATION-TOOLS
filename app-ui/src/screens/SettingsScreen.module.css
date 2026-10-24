@@ -270,3 +270,35 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Proyecto de Google Cloud: uno para todos los canales, encima de la lista de perfiles. */
+.proyecto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+.importar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+}
+.aviso {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  margin-top: var(--space-12);
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--color-risk-write-border);
+  border-radius: var(--radius-md);
+  background: var(--color-risk-write-bg);
+  color: var(--color-risk-write-fg);
+  font-size: var(--text-13);
+}
+.aviso p {
+  margin: 0;
+}

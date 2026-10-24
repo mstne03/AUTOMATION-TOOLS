@@ -79,6 +79,8 @@ export function Sidebar() {
   const youtube = useYoutubeStatus();
   const perfil = youtube.data?.auth.profile ?? settings.data?.profile ?? "default";
   const autorizado = youtube.data?.auth.authenticated ?? false;
+  // El título del canal (de YouTube, texto plano) si el sidecar lo sabe; si no, el nombre del perfil.
+  const nombre = youtube.data?.auth.channel?.title ?? perfil;
   // Falta algún paso del asistente de bienvenida (clave, proyecto de Google Cloud o canal autorizado).
   const faltaConfigurar = settings.data ? !settings.data.has_anthropic_key || !settings.data.has_client_secret || (youtube.data ? !autorizado : false) : false;
 
@@ -118,10 +120,12 @@ export function Sidebar() {
         <JobActivo />
         <NavLink to="/ajustes" data-testid="nav-ajustes" className={({ isActive }) => cx(s.perfil, isActive && s.activo)}>
           <span className={s.avatar} aria-hidden>
-            {perfil.slice(0, 1).toUpperCase()}
+            {nombre.slice(0, 1).toUpperCase()}
           </span>
           <span className={s.perfilTexto}>
-            <span className={s.perfilNombre}>{perfil}</span>
+            <span className={s.perfilNombre} data-testid="nav-canal-activo">
+              {nombre}
+            </span>
             <span className={s.perfilSub}>{autorizado ? "Canal autorizado" : "Sin autorizar"} · Ajustes</span>
           </span>
         </NavLink>

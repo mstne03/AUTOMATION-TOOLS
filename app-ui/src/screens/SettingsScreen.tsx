@@ -9,10 +9,12 @@ import { usePutSettings, useSettings, useYoutubeStatus } from "../api/queries";
 import type { AllowedDir, Model, SettingsPatch } from "../api/types";
 import { descripcionModelo, nombreModelo, precioModelo } from "../chat/modelos";
 import { elegirCarpeta } from "../dialogo";
+import { EnlaceExterno } from "../enlaces";
 import { setTema, useTema, type Tema } from "../state/tema";
 import { Button, Chip, ConfirmDialog, Dialog, Estado, Field, IconButton, Input, Mono, SegmentedControl, Select, toast } from "../ui";
 import { cx } from "../ui/cx";
 import { CuotaLista } from "./CuotaLista";
+import { avisarCanalAutorizado, CREDENCIALES, ImportarClientSecret, PUBLICO } from "./ProyectoGoogle";
 import s from "./SettingsScreen.module.css";
 
 const SECCIONES = [
@@ -66,6 +68,8 @@ function Ajustes() {
   const [errorCarpeta, setErrorCarpeta] = useState<string | null>(null);
   const [anadiendo, setAnadiendo] = useState(false);
   const [nombreCanal, setNombreCanal] = useState("");
+  const [sustituyendo, setSustituyendo] = useState(false);
+  const [quitandoProyecto, setQuitandoProyecto] = useState(false);
 
   /** Guarda al momento lo que cambia y avisa. Cambiar de perfil valida el token OAuth en el sidecar. */
   const guardar = (patch: SettingsPatch, aviso: string, despues?: () => void) => {
@@ -84,9 +88,9 @@ function Ajustes() {
 
   const reautorizar = useMutation({
     mutationFn: (perfil: string) => client.youtubeAuth({ profile: perfil, reauthorize: true }),
-    onSuccess: () => {
+    onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["youtube"] });
-      toast({ title: "Canal autorizado" });
+      avisarCanalAutorizado(r);
     },
     onError: (e) => toast(e.message === CANCELADA ? { title: CANCELADA } : { title: "No se pudo autorizar", description: e.message, tone: "error" }),
   });
@@ -96,16 +100,27 @@ function Ajustes() {
 
   const anadirCanal = useMutation({
     mutationFn: async (perfil: string) => {
-      await client.youtubeAuth({ profile: perfil, reauthorize: true });
-      return client.putSettings({ profile: perfil });
+      const auth = await client.youtubeAuth({ profile: perfil, reauthorize: true });
+      return { auth, datos: await client.putSettings({ profile: perfil }) };
     },
-    onSuccess: (datos) => {
+    onSuccess: ({ auth, datos }) => {
       qc.setQueryData(["settings"], datos);
       void qc.invalidateQueries({ queryKey: ["youtube"] });
       setAnadiendo(false);
       setNombreCanal("");
-      toast({ title: "Canal añadido y en uso" });
+      avisarCanalAutorizado(auth, "Canal añadido y en uso");
     },
+  });
+
+  /** Quitar el proyecto de Google desautoriza todos los canales (sus tokens son de ese cliente OAuth). */
+  const quitarProyecto = useMutation({
+    mutationFn: () => client.removeClientSecret(),
+    onSuccess: (r) => {
+      qc.setQueryData(["settings"], r);
+      void qc.invalidateQueries({ queryKey: ["youtube"] });
+      toast({ title: "Proyecto de Google quitado", description: r.desautorizados.length ? `Desautorizados: ${r.desautorizados.join(", ")}.` : undefined });
+    },
+    onError: (e) => toast({ title: "No se pudo quitar el proyecto", description: e.message, tone: "error" }),
   });
 
   /** Cerrar el diálogo (Cancelar o Escape) también corta la autorización si está esperando al navegador. */
@@ -114,9 +129,12 @@ function Ajustes() {
     setAnadiendo(false);
   };
 
-  const perfiles = [...new Set([...(yt.data?.auth.profiles ?? []), s0.profile])];
+  const perfilesAutorizados = yt.data?.auth.profiles ?? [];
+  const perfiles = [...new Set([...perfilesAutorizados, s0.profile])];
   const nombreValido = PERFIL_VALIDO.test(nombreCanal.trim().toLowerCase());
   const autorizado = yt.data?.auth.authenticated ?? false;
+  const canales = yt.data?.auth.channels ?? {};
+  const proyecto = s0.google_project;
   const dirs = s0.allowed_dirs;
 
   const irA = (id: string) => {
@@ -213,7 +231,7 @@ function Ajustes() {
                 <h2 id="s-canales" className={s.h2}>
                   Canales de YouTube
                 </h2>
-                <p className={s.ayuda}>Cada canal es un perfil con su propia autorización.</p>
+                <p className={s.ayuda}>Cada canal es un perfil con su propia autorización; todos usan el mismo proyecto de Google Cloud y comparten su cuota diaria.</p>
               </div>
               <Button
                 icon={Plus}
@@ -226,17 +244,43 @@ function Ajustes() {
                 Añadir canal
               </Button>
             </div>
+            <div className={s.proyecto} data-testid="ajustes-google-proyecto">
+              <span className={s.perfilTexto}>
+                <span className={s.perfilNombre}>Proyecto de Google Cloud</span>
+                <span className={s.ayuda}>
+                  {proyecto ? (
+                    <>
+                      <Mono>{proyecto.project_id ?? "sin nombre"}</Mono> · cliente <Mono>{proyecto.client_id}</Mono>
+                    </>
+                  ) : (
+                    "Sin proyecto: importa el client_secret.json para poder autorizar canales."
+                  )}
+                </span>
+              </span>
+              <Button size="sm" variant={proyecto ? "secondary" : "primary"} data-testid="ajustes-google-sustituir" onClick={() => setSustituyendo(true)}>
+                {proyecto ? "Sustituir…" : "Importar client_secret.json"}
+              </Button>
+              {proyecto && (
+                <Button size="sm" variant="ghost" data-testid="ajustes-google-eliminar" loading={quitarProyecto.isPending} onClick={() => setQuitandoProyecto(true)}>
+                  Quitar
+                </Button>
+              )}
+            </div>
             <ul className={s.perfiles} data-testid="ajustes-profile">
               {perfiles.map((p) => {
                 const enUso = p === s0.profile;
+                const canal = canales[p];
                 return (
                   <li key={p} className={cx(s.perfil, enUso && s.perfilActivo)} data-testid={`ajustes-profile-${p}`} aria-current={enUso ? "true" : undefined}>
                     <span className={s.avatar} aria-hidden>
-                      {p.slice(0, 1).toUpperCase()}
+                      {(canal?.title ?? p).slice(0, 1).toUpperCase()}
                     </span>
                     <span className={s.perfilTexto}>
-                      <span className={s.perfilNombre}>{p}</span>
-                      <span className={s.ayuda}>{enUso ? "Perfil en uso" : "Perfil guardado"}</span>
+                      {/* El título del canal viene de YouTube: se pinta como texto, nunca como HTML. */}
+                      <span className={s.perfilNombre} data-testid={`ajustes-canal-${p}`}>
+                        {canal?.title ?? p}
+                      </span>
+                      <span className={s.ayuda}>{[canal ? `Perfil ${p}` : null, canal?.handle, enUso ? "En uso" : "Guardado"].filter(Boolean).join(" · ")}</span>
                     </span>
                     {enUso && (
                       <span data-testid="ajustes-yt-estado">
@@ -414,6 +458,27 @@ function Ajustes() {
         onConfirm={() => guardar({ anthropic_api_key: "" }, "Clave borrada")}
       />
 
+      <ConfirmDialog
+        open={quitandoProyecto}
+        onOpenChange={setQuitandoProyecto}
+        title="¿Quitar el proyecto de Google?"
+        description={`Se desautorizarán todos los canales${perfilesAutorizados.length ? ` (${perfilesAutorizados.join(", ")})` : ""}. Para volver a usarlos tendrás que importar un client_secret.json y autorizarlos de nuevo.`}
+        confirmLabel="Quitar y desautorizar"
+        tone="danger"
+        onConfirm={() => quitarProyecto.mutate()}
+      />
+
+      <Dialog
+        open={sustituyendo}
+        onOpenChange={setSustituyendo}
+        title={proyecto ? "Sustituir el proyecto de Google" : "Importar el proyecto de Google"}
+        description="El client_secret.json de un ID de cliente OAuth de tipo «Aplicación de escritorio». Si es de otro proyecto, los canales autorizados tendrán que volver a autorizarse."
+      >
+        <div className={s.importar}>
+          <ImportarClientSecret onImportado={() => setSustituyendo(false)} />
+        </div>
+      </Dialog>
+
       <Dialog
         open={anadiendo}
         onOpenChange={(a) => (a ? setAnadiendo(true) : cerrarAlta())}
@@ -424,7 +489,7 @@ function Ajustes() {
             <Button variant="ghost" onClick={cerrarAlta}>
               Cancelar
             </Button>
-            <Button variant="primary" data-testid="ajustes-yt-anadir-ok" disabled={!nombreValido} loading={anadirCanal.isPending} onClick={() => anadirCanal.mutate(nombreCanal.trim().toLowerCase())}>
+            <Button variant="primary" data-testid="ajustes-yt-anadir-ok" disabled={!nombreValido || !s0.has_client_secret} loading={anadirCanal.isPending} onClick={() => anadirCanal.mutate(nombreCanal.trim().toLowerCase())}>
               {anadirCanal.isPending ? "Se ha abierto el navegador…" : "Autorizar canal"}
             </Button>
           </>
@@ -433,6 +498,41 @@ function Ajustes() {
         <Field label="Nombre del perfil" help="Letras minúsculas, números, guion y guion bajo (máx. 32)." error={nombreCanal !== "" && !nombreValido ? "Nombre no válido" : (anadirCanal.error?.message ?? undefined)}>
           <Input data-testid="ajustes-yt-nombre" value={nombreCanal} onChange={(e) => setNombreCanal(e.target.value)} placeholder="smooth" autoComplete="off" disabled={anadirCanal.isPending} />
         </Field>
+        {!s0.has_client_secret && (
+          <div className={s.aviso} data-testid="ajustes-yt-sin-proyecto" role="alert">
+            <p>Para autorizar un canal hace falta el proyecto de Google Cloud de la app (su client_secret.json).</p>
+            <Button
+              size="sm"
+              onClick={() => {
+                setAnadiendo(false);
+                setSustituyendo(true);
+              }}
+            >
+              Importar client_secret.json
+            </Button>
+          </div>
+        )}
+        {anadirCanal.isPending && (
+          <p className={s.ayuda} data-testid="ajustes-yt-ayuda-google">
+            Elige en el navegador la cuenta de Google de ese canal. Si Google bloquea el acceso, la cuenta no es usuario de prueba del proyecto: añádela o publica la app en <EnlaceExterno href={PUBLICO}>Público</EnlaceExterno>.
+          </p>
+        )}
+        {anadirCanal.error && anadirCanal.error.message !== CANCELADA && s0.has_client_secret && (
+          <div className={s.aviso} data-testid="ajustes-yt-error-ayuda">
+            <p>
+              Si el problema es el proyecto de Google, revisa sus <EnlaceExterno href={CREDENCIALES}>credenciales</EnlaceExterno> o importa otro client_secret.json.
+            </p>
+            <Button
+              size="sm"
+              onClick={() => {
+                setAnadiendo(false);
+                setSustituyendo(true);
+              }}
+            >
+              Sustituir client_secret.json
+            </Button>
+          </div>
+        )}
       </Dialog>
     </div>
   );

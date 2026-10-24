@@ -2,36 +2,16 @@
  *  lateral, con un paso visible cada vez: clave de Anthropic, proyecto de Google Cloud, autorizar el
  *  canal y base de conocimiento. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FileCheck, FileJson, Play } from "lucide-react";
-import { useRef, useState, type DragEvent, type ReactNode } from "react";
+import { Check, Play } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClient } from "../api/context";
 import { useSettings, useYoutubeStatus } from "../api/queries";
-import { elegirClientSecret, enTauri } from "../dialogo";
 import { EnlaceExterno } from "../enlaces";
-import { Button, Estado, Field, Input, Progress, Textarea, toast } from "../ui";
+import { Button, Estado, Field, Input, Progress, toast } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./OnboardingScreen.module.css";
-
-const CONSOLE = "https://console.cloud.google.com/apis/library/youtube.googleapis.com";
-const CREDENCIALES = "https://console.cloud.google.com/apis/credentials";
-// En estado "Prueba" Google emite refresh tokens que caducan a los 7 días: hay que publicar la app.
-const PUBLICO = "https://console.cloud.google.com/auth/audience";
-
-/** Validador del client_secret.json de una app "de escritorio". Devuelve el motivo del fallo. */
-export function validarClientSecret(texto: string): string | null {
-  let j: unknown;
-  try {
-    j = JSON.parse(texto);
-  } catch {
-    return "No es JSON válido.";
-  }
-  const inst = (j as { installed?: Record<string, unknown> })?.installed;
-  if (!inst) return 'Falta la clave "installed": las credenciales deben ser de tipo "Aplicación de escritorio".';
-  if (typeof inst.client_id !== "string" || !inst.client_id) return 'Falta "installed.client_id".';
-  if (typeof inst.client_secret !== "string" || !inst.client_secret) return 'Falta "installed.client_secret".';
-  return null;
-}
+import { avisarCanalAutorizado, CONSOLE, CREDENCIALES, ImportarClientSecret, nombreCanal, PUBLICO } from "./ProyectoGoogle";
 
 const PASOS = [
   { id: "paso-clave", titulo: "Clave de Anthropic" },
@@ -53,14 +33,7 @@ export function OnboardingScreen() {
   const [paso2a, setPaso2a] = useState(false);
   const [paso2b, setPaso2b] = useState(false);
   const [paso2c, setPaso2c] = useState(false);
-  const [jsonText, setJsonText] = useState("");
-  const [path, setPath] = useState("");
-  /** Nombre del fichero elegido o soltado; se olvida si el usuario edita el JSON o la ruta a mano. */
-  const [fichero, setFichero] = useState<string | null>(null);
-  const [googleError, setGoogleError] = useState<string | null>(null);
-  const [arrastrando, setArrastrando] = useState(false);
   const [elegido, setElegido] = useState<number | null>(null);
-  const zona = useRef<HTMLDivElement>(null);
 
   const guardarClave = useMutation({
     mutationFn: async (clave: string) => {
@@ -78,26 +51,13 @@ export function OnboardingScreen() {
     },
     onError: (e) => setClaveError(e.message),
   });
-  const importar = useMutation({
-    mutationFn: (body: { json_text?: string; path?: string }) => client.importClientSecret(body),
-    onSuccess: (data) => {
-      qc.setQueryData(["settings"], data);
-      setJsonText("");
-      setPath("");
-      setFichero(null);
-      setGoogleError(null);
-      setElegido(null);
-      toast({ title: "Credenciales de Google importadas" });
-    },
-    onError: (e) => setGoogleError(e.message),
-  });
   /** `reautorizar`: ignora el token guardado y vuelve a pedir el consentimiento de Google. */
   const oauth = useMutation({
     mutationFn: (reautorizar: boolean) => client.youtubeAuth(reautorizar ? { reauthorize: true } : {}),
-    onSuccess: async () => {
+    onSuccess: async (r) => {
       await qc.invalidateQueries({ queryKey: ["youtube"] });
       setElegido(null);
-      toast({ title: "Canal autorizado" });
+      avisarCanalAutorizado(r);
     },
   });
 
@@ -113,43 +73,6 @@ export function OnboardingScreen() {
   const alcanzable = (i: number) => i <= (primerPendiente === -1 ? 3 : primerPendiente);
   const listo = hechos[0] && hechos[1] && hechos[2];
   const hechosEnTotal = hechos.filter(Boolean).length;
-
-  const onImportar = () => {
-    if (jsonText.trim()) {
-      const err = validarClientSecret(jsonText);
-      if (err) return setGoogleError(err);
-      return importar.mutate({ json_text: jsonText });
-    }
-    if (path.trim()) return importar.mutate({ path: path.trim() });
-    setGoogleError("Pega el JSON, suéltalo aquí o indica la ruta del fichero.");
-  };
-
-  const leerFichero = async (f: File) => {
-    const texto = await f.text();
-    setJsonText(texto);
-    setPath("");
-    setFichero(f.name);
-    setGoogleError(validarClientSecret(texto));
-  };
-  const soltar = (e: DragEvent) => {
-    e.preventDefault();
-    setArrastrando(false);
-    const f = e.dataTransfer.files[0];
-    if (f) void leerFichero(f);
-  };
-  const elegirFichero = async () => {
-    try {
-      const ruta = await elegirClientSecret();
-      if (ruta) {
-        setJsonText("");
-        setPath(ruta);
-        setFichero(ruta.split(/[\\/]/).pop() ?? ruta);
-        setGoogleError(null);
-      }
-    } catch (e) {
-      setGoogleError(String((e as Error)?.message ?? e));
-    }
-  };
 
   return (
     <div className={s.pantalla} data-testid="onboarding">
@@ -224,77 +147,13 @@ export function OnboardingScreen() {
               </li>
             </ul>
 
-            <div
-              ref={zona}
-              className={cx(s.soltar, arrastrando && s.soltarActivo)}
-              data-testid="google-soltar"
-              onDragOver={(e) => {
-                e.preventDefault();
-                setArrastrando(true);
-              }}
-              onDragLeave={() => setArrastrando(false)}
-              onDrop={soltar}
-            >
-              {fichero ? (
-                <>
-                  <FileCheck aria-hidden size="1.6em" className={s.ok} />
-                  <span data-testid="google-elegido" role="status">
-                    <Mono>{fichero}</Mono> listo para importar
-                  </span>
-                </>
-              ) : (
-                <>
-                  <FileJson aria-hidden size="1.6em" />
-                  <span>Suelta aquí el <Mono>client_secret.json</Mono> descargado</span>
-                  <span className={s.suave}>o</span>
-                </>
-              )}
-              {/* Un solo selector: en la app, el explorador nativo (Rust); fuera de Tauri (E2E, pnpm dev),
-                  el del navegador. Los dos a la vez se contradecían al usar uno de ellos. */}
-              {enTauri() ? (
-                <Button size="sm" data-testid="google-elegir" onClick={() => void elegirFichero()}>
-                  {fichero ? "Elegir otro…" : "Elegir fichero…"}
-                </Button>
-              ) : (
-                <input type="file" accept=".json,application/json" aria-label="Elegir el client_secret.json" data-testid="google-fichero" onChange={(e) => e.target.files?.[0] && void leerFichero(e.target.files[0])} />
-              )}
-            </div>
-
-            <Field label="O pega aquí el contenido del JSON">
-              <Textarea
-                data-testid="google-json"
-                rows={4}
-                placeholder='{"installed": {"client_id": …}}'
-                value={jsonText}
-                onChange={(e) => {
-                  setJsonText(e.target.value);
-                  setFichero(null);
-                }}
-              />
-            </Field>
-            <div className={s.fila}>
-              <Field label="O la ruta del fichero" className={s.crece}>
-                <Input
-                  mono
-                  data-testid="google-path"
-                  placeholder="C:\Users\…\client_secret_….json"
-                  value={path}
-                  onChange={(e) => {
-                    setPath(e.target.value);
-                    setFichero(null);
-                  }}
-                />
-              </Field>
-              <Button variant="primary" data-testid="google-importar" loading={importar.isPending} onClick={onImportar}>
-                Importar
-              </Button>
-            </div>
-            <p className={s.ayuda}>Se guarda cifrado; el fichero original puedes borrarlo.</p>
-            {googleError && (
-              <p className={s.error} data-testid="google-error" role="alert">
-                {googleError}
+            {st.google_project && (
+              <p className={s.ok} data-testid="google-proyecto">
+                <Check aria-hidden size="1em" /> Proyecto <Mono>{st.google_project.project_id ?? "sin nombre"}</Mono> · cliente <Mono>{st.google_project.client_id}</Mono>
               </p>
             )}
+            <p className={s.ayuda}>Es un solo proyecto para toda la app: todos tus canales lo usan y comparten su cuota diaria.</p>
+            <ImportarClientSecret onImportado={() => setElegido(null)} />
           </Paso>
 
           <Paso id="paso-oauth" titulo="Autorizar tu canal de YouTube" hecho={hechos[2]} visible={actual === 2}>
@@ -304,7 +163,7 @@ export function OnboardingScreen() {
             </p>
             {hechos[2] && (
               <p className={s.ok} data-testid="oauth-estado">
-                <Check aria-hidden size="1em" /> Canal autorizado · perfil <Mono>{yt.data?.auth.profile}</Mono>
+                <Check aria-hidden size="1em" /> Canal autorizado · {nombreCanal(yt.data?.auth.channel) ?? <>perfil <Mono>{yt.data?.auth.profile}</Mono></>}
               </p>
             )}
             {!hechos[2] && typeof yt.data?.auth.reason === "string" && (
@@ -324,11 +183,21 @@ export function OnboardingScreen() {
                 </Button>
               )}
             </div>
+            {oauth.isPending && (
+              <p className={s.ayuda} data-testid="oauth-ayuda-google">
+                Elige en el navegador la cuenta de Google del canal. Si Google bloquea el acceso, esa cuenta no es usuario de prueba del proyecto: añádela o publica la app en <EnlaceExterno href={PUBLICO}>Público</EnlaceExterno>.
+              </p>
+            )}
             {!hechos[1] && <p className={s.ayuda}>Primero importa las credenciales de Google.</p>}
             {oauth.error && (
-              <p className={s.error} data-testid="oauth-error">
-                {oauth.error.message}
-              </p>
+              <div className={s.fila}>
+                <p className={s.error} data-testid="oauth-error">
+                  {oauth.error.message}
+                </p>
+                <Button size="sm" variant="ghost" data-testid="oauth-ir-google" onClick={() => setElegido(1)}>
+                  Revisar el proyecto de Google
+                </Button>
+              </div>
             )}
           </Paso>
 

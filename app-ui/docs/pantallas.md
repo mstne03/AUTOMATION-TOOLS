@@ -18,7 +18,8 @@ estados posibles. Lo que no está aquí no se exige.
   `nav-onboarding` ("Completa la configuración") **solo si falta algún paso** (clave de
   Anthropic, client_secret o canal autorizado), tarjeta `nav-job` con el progreso del job activo
   (subida o transcripción; al terminar, un toast con el resultado o el error) y el enlace de
-  perfil `nav-ajustes` (canal activo y estado de autorización).
+  perfil `nav-ajustes` (canal activo y estado de autorización): `nav-canal-activo` con el título
+  del canal de YouTube del perfil en uso (`auth.channel.title`) o, si no se conoce, el nombre del perfil.
 - Onboarding ya no es un enlace fijo del menú: se llega con el aviso, desde Ajustes o al abrir
   la app sin configurar.
 - Paleta de comandos (Ctrl K): `paleta` (diálogo) con `paleta-input`; navega a cada pantalla y
@@ -130,11 +131,30 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
   `ajustes-model-<id>` por modelo de `models`, con nombre, descripción y precio de la tabla
   única de `PRECIOS_MODELO`); apariencia `ajustes-tema` (Sistema / Claro / Oscuro; se aplica como
   `data-theme` y se guarda en localStorage).
-- **Canales de YouTube**: botón `ajustes-yt-anadir` ("Añadir canal") que abre un diálogo con el
+- **Canales de YouTube**: un solo proyecto de Google Cloud (client_secret.json) para toda la app y
+  un token por canal; todos los canales comparten la cuota diaria del proyecto. Tarjeta
+  `ajustes-google-proyecto` encima de la lista: "<project_id> · cliente <client_id enmascarado>"
+  (`google_project` de `GET /settings`) o "Sin proyecto…"; `ajustes-google-sustituir`
+  ("Sustituir…", o "Importar client_secret.json" sin proyecto) abre un diálogo con el mismo
+  importador que el Onboarding (`google-*`); si el fichero es de otro proyecto y hay canales
+  autorizados, el sidecar responde 409 y se pide confirmación ("¿Sustituir el proyecto de
+  Google?", con el detalle del sidecar y el botón "Sustituir y desautorizar", que repite con
+  `replace: true`); al terminar, un aviso con los perfiles que hay que volver a autorizar.
+  `ajustes-google-eliminar` ("Quitar", solo con proyecto) pide confirmación ("Quitar y
+  desautorizar", `DELETE /settings/client-secret`). Botón `ajustes-yt-anadir` ("Añadir canal")
+  que abre un diálogo con el
   nombre del perfil (minúsculas, números, `-`, `_`; máx. 32; `ajustes-yt-nombre`) y, al aceptar
   (`ajustes-yt-anadir-ok`), lanza el OAuth de ese perfil (`POST /youtube/auth`) y lo deja en uso
-  (`PUT /settings`). Lista `ajustes-profile` con una tarjeta `ajustes-profile-<nombre>` por perfil
-  (`auth.profiles` más el actual; el actual con `aria-current="true"`): el actual muestra
+  (`PUT /settings`). Sin proyecto, el diálogo muestra `ajustes-yt-sin-proyecto` con "Importar
+  client_secret.json" (abre el importador) y `ajustes-yt-anadir-ok` queda deshabilitado. Mientras
+  espera al navegador, `ajustes-yt-ayuda-google` explica qué hacer si Google bloquea la cuenta
+  (no es usuario de prueba: añadirla o publicar la app); si la autorización falla (no por
+  cancelarla), `ajustes-yt-error-ayuda` enlaza a las credenciales de Google Cloud y ofrece
+  "Sustituir client_secret.json". Si el canal autorizado ya estaba en otro
+  perfil (`duplicated_in`), el aviso lo dice. Lista `ajustes-profile` con una tarjeta
+  `ajustes-profile-<nombre>` por perfil (`auth.profiles` más el actual; el actual con
+  `aria-current="true"`), con `ajustes-canal-<nombre>` (título del canal de `auth.channels`, o el
+  nombre del perfil) y debajo "Perfil <nombre> · @handle · En uso|Guardado". El actual muestra
   `ajustes-yt-estado` (chip "Autorizado" / "Sin autorizar") y `ajustes-yt-reauth` ("Volver a
   autorizar"; mientras espera al navegador, "Se ha abierto el navegador…" y al lado
   `ajustes-yt-reauth-cancelar`); los demás, `ajustes-yt-usar-<nombre>` ("Usar este").
@@ -186,14 +206,18 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
    pasa a "Elegir otro…"; editar el JSON o la ruta a mano lo quita. También
    `textarea[data-testid=google-json]` y la ruta `google-path`, y `google-importar`. Validador: el
    JSON debe tener `installed.client_id` y `installed.client_secret`; si no, `google-error` sin
-   enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`.
+   enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`; con proyecto,
+   `google-proyecto` ("Proyecto <project_id> · cliente <client_id enmascarado>"). El importador es
+   el mismo de Ajustes (con su confirmación al sustituir un proyecto con canales autorizados).
 3. `paso-oauth`: `oauth-autorizar` ("Autorizar canal de YouTube", deshabilitado hasta tener las
    credenciales), que llama a `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras
-   espera, con `oauth-cancelar` ("Cancelar", `POST /youtube/auth/cancel`) al lado; el fallo o la
-   cancelación se muestran en `oauth-error`. Nota `oauth-no-verificada`: explica el aviso de
+   espera, con `oauth-cancelar` ("Cancelar", `POST /youtube/auth/cancel`) al lado y
+   `oauth-ayuda-google` (qué hacer si Google bloquea la cuenta); el fallo o la cancelación se
+   muestran en `oauth-error`, con `oauth-ir-google` ("Revisar el proyecto de Google") que vuelve
+   al paso 2. Nota `oauth-no-verificada`: explica el aviso de
    Google "app no verificada". Hecho si `auth.authenticated` (el sidecar renueva el token de acceso
    caducado con el de refresco antes de responder). Hecho: `oauth-estado` ("Canal autorizado ·
-   perfil <perfil>") y el botón pasa a "Volver a autorizar" (secundario, `reauthorize: true`). No
+   <título> (@handle)" con `auth.channel`, o "Canal autorizado · perfil <perfil>" si no se conoce) y el botón pasa a "Volver a autorizar" (secundario, `reauthorize: true`). No
    hecho con `auth.reason` (Google rechazó la autorización guardada): `oauth-motivo` con ese texto.
    Autorizar con éxito muestra el aviso "Canal autorizado".
 4. `paso-kb`: muestra `GET /kb/estado` (`kb-estado-texto`). Hecho si la llamada responde.

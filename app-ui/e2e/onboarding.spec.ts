@@ -168,12 +168,18 @@ test.describe("Onboarding: autorización interrumpida (sidecar simulado)", () =>
     const autorizar = page.getByTestId("oauth-autorizar");
     await autorizar.click();
     await expect(autorizar).toHaveText("Se ha abierto el navegador…");
+    // Mientras espera: qué hacer si Google bloquea la cuenta (no es usuario de prueba del proyecto).
+    await expect(page.getByTestId("oauth-ayuda-google")).toContainText("usuario de prueba");
     await page.getByTestId("oauth-cancelar").click();
     await expect(page.getByTestId("oauth-error")).toHaveText("Autorización cancelada.");
+    await expect(page.getByTestId("oauth-ayuda-google")).toHaveCount(0);
     await expect(autorizar).toHaveText("Autorizar canal de YouTube");
     await expect(autorizar).toBeEnabled();
     await expect(page.getByTestId("oauth-cancelar")).toHaveCount(0);
     expect(llamadas["/youtube/auth/cancel"]).toBe(1);
+    // El fallo lleva a revisar el proyecto de Google.
+    await page.getByTestId("oauth-ir-google").click();
+    await expect(page.getByTestId("paso-google")).toBeVisible();
   });
 });
 
@@ -227,7 +233,7 @@ test.describe("Onboarding: recorrido desde el aviso de configuración (sidecar s
       "/youtube/auth": (_u, p) => {
         peticiones.push(p.cuerpo);
         autorizado = true;
-        return [200, { status: "authenticated" }];
+        return [200, { status: "authenticated", detail: { ...ESTADO_AUTORIZADO.auth, authenticated: true }, duplicated_in: [] }];
       },
     });
     return peticiones;
@@ -266,6 +272,19 @@ test.describe("Onboarding: recorrido desde el aviso de configuración (sidecar s
     await page.getByTestId("oauth-autorizar").click();
     await expect.poll(() => peticiones.length).toBe(2);
     expect(peticiones).toEqual([{}, { reauthorize: true }]);
+  });
+
+  test("el paso de autorizar dice qué canal está autorizado y el de Google, qué proyecto", async ({ page }) => {
+    const s = await settings();
+    await simularRutas(page, {
+      "/settings": { ...s, has_anthropic_key: true, has_client_secret: true, google_project: { project_id: "mi-proyecto", client_id: "123456…wxyz" } },
+      "/youtube/status": { ...ESTADO_AUTORIZADO, auth: { ...ESTADO_AUTORIZADO.auth, channel: { id: "UC1", title: "Canal A", handle: "@a" } } },
+    });
+    await page.goto("/#/onboarding");
+    await page.getByTestId("onboarding-ir-paso-oauth").click();
+    await expect(page.getByTestId("oauth-estado")).toHaveText("Canal autorizado · Canal A (@a)");
+    await page.getByTestId("onboarding-ir-paso-google").click();
+    await expect(page.getByTestId("google-proyecto")).toHaveText("Proyecto mi-proyecto · cliente 123456…wxyz");
   });
 
   test("si Google rechazó la autorización guardada, el paso explica el motivo", async ({ page }) => {

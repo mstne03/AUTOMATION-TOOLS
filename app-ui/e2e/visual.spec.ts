@@ -15,6 +15,7 @@ const AJUSTES = {
   profile: "default",
   has_anthropic_key: true,
   has_client_secret: true,
+  google_project: { project_id: "demo-seo-studio", client_id: "123456…wxyz" },
   state_dir: "C:\\Users\\demo\\AppData\\Roaming\\SEO Studio",
   secret_store: "FileSecretStore",
   hf_hub_offline: null,

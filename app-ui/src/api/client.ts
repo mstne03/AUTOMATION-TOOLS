@@ -13,8 +13,10 @@ import type {
   JobKind,
   Settings,
   SettingsPatch,
+  SettingsTrasProyecto,
   Texto,
   ToolInfo,
+  YouTubeAuthOut,
   YouTubeStatus,
 } from "./types";
 
@@ -46,7 +48,7 @@ export interface Client {
   kbFuentes(plataforma?: string): Promise<Texto>;
   kbBuscar(q: string, plataforma?: string, k?: number): Promise<Texto>;
   youtubeStatus(): Promise<YouTubeStatus>;
-  youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<unknown>;
+  youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<YouTubeAuthOut>;
   /** Corta la autorización en curso: la youtubeAuth pendiente falla con "Autorización cancelada". */
   youtubeAuthCancel(): Promise<{ cancelada: boolean }>;
   youtubeTools(): Promise<ToolInfo[]>;
@@ -54,7 +56,9 @@ export interface Client {
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
-  importClientSecret(body: { path?: string; json_text?: string }): Promise<Settings>;
+  /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
+  importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
+  removeClientSecret(): Promise<SettingsTrasProyecto>;
 }
 
 export function createClient(port: number, token: string, fetchFn: typeof fetch = fetch): Client {
@@ -117,6 +121,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
+    removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
   };
 }
 
