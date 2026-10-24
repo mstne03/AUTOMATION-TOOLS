@@ -12,6 +12,7 @@ injected ``SecretStore`` (file store by default: ``token.json``,
 ``YOUTUBE_MCP_PROFILE`` and switch at runtime with ``youtube_auth(profile=...)``.
 """
 
+import functools
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -44,6 +46,8 @@ _PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 # Espera máxima a que Google redirija al servidor local. Si el usuario cierra la pestaña, sin
 # límite el hilo (y la petición que lo lanzó) esperaría para siempre.
 OAUTH_TIMEOUT_S = 300
+# Renovar el token desde status() no debe colgar la pantalla si Google tarda (sin red, proxy...).
+STATUS_REFRESH_TIMEOUT_S = 10
 
 
 class AuthError(Exception):
@@ -296,12 +300,31 @@ class YouTubeAuth:
                 "scopes": creds.scopes or [],
                 "expired": False,
             }
+        if creds and creds.expired and creds.refresh_token:
+            # El token de acceso caduca a la hora, pero con el de refresco el canal sigue autorizado:
+            # se renueva aquí (sin navegador) para que el estado no dé una falsa alarma.
+            try:
+                creds.refresh(functools.partial(Request(), timeout=STATUS_REFRESH_TIMEOUT_S))
+            except RefreshError:
+                return {
+                    **base,
+                    "authenticated": False,
+                    "expired": True,
+                    "has_refresh_token": True,
+                    "reason": "Google ha rechazado la autorización guardada (revocada o caducada; con la "
+                    "app en «Prueba» dura 7 días): vuelve a autorizar el canal.",
+                }
+            except Exception:  # noqa: BLE001 - sin red: no se puede comprobar, pero no se da por perdida
+                return {**base, "authenticated": True, "expired": True, "unverified": True}
+            self._save_token(creds)
+            self._credentials = creds
+            return {**base, "authenticated": True, "scopes": creds.scopes or [], "expired": False}
         if creds and creds.expired:
             return {
                 **base,
                 "authenticated": False,
                 "expired": True,
-                "has_refresh_token": bool(creds.refresh_token),
+                "has_refresh_token": False,
             }
         return {
             **base,

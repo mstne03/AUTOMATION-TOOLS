@@ -66,6 +66,52 @@ def test_status_no_token(tmp_path):
     assert status["profiles"] == []
 
 
+class TestStatusConTokenCaducado:
+    """El token de acceso caduca a la hora; con token de refresco el canal sigue autorizado."""
+
+    @staticmethod
+    def _caducado(tmp_path, refresh_side_effect=None):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        creds = MagicMock(valid=False, expired=True, refresh_token="r", scopes=["s"])
+        creds.to_json.return_value = '{"renovado": true}'
+        creds.refresh.side_effect = refresh_side_effect
+        return yt_auth, creds
+
+    def test_se_renueva_y_cuenta_como_autorizado(self, tmp_path):
+        yt_auth, creds = self._caducado(tmp_path)
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is True
+        creds.refresh.assert_called_once()
+        assert yt_auth.store.get("token:default") == '{"renovado": true}'  # el token nuevo se guarda
+
+    def test_si_google_rechaza_el_refresco_no_esta_autorizado_y_dice_por_que(self, tmp_path):
+        from google.auth.exceptions import RefreshError
+
+        yt_auth, creds = self._caducado(tmp_path, RefreshError("invalid_grant: Token has been expired or revoked."))
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is False
+        assert "vuelve a autorizar" in status["reason"]
+
+    def test_sin_red_no_se_da_por_perdida_la_autorizacion(self, tmp_path):
+        from google.auth.exceptions import TransportError
+
+        yt_auth, creds = self._caducado(tmp_path, TransportError("sin conexión"))
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is True
+        assert status["unverified"] is True
+
+    def test_sin_token_de_refresco_no_esta_autorizado(self, tmp_path):
+        yt_auth, creds = self._caducado(tmp_path)
+        creds.refresh_token = None
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is False
+        creds.refresh.assert_not_called()
+
+
 def test_authenticate_missing_client_secret(tmp_path):
     yt_auth = YouTubeAuth(
         config_dir=tmp_path,

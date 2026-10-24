@@ -368,12 +368,13 @@ def create_app(
 
     @app.get("/youtube/status", dependencies=protegido)
     async def youtube_status():
-        return {"auth": yt_auth.status(), "quota": yt_quota.status()}
+        # status() puede renovar el token con Google (red): fuera del bucle de eventos.
+        return {"auth": await asyncio.to_thread(yt_auth.status), "quota": yt_quota.status()}
 
     @app.get("/youtube/channel", dependencies=protegido)
     async def youtube_channel(refresh: bool = False):
         """Canal, métricas de 28 días y últimos vídeos para el Panel de canal (caché de 10 min)."""
-        estado = yt_auth.status()
+        estado = await asyncio.to_thread(yt_auth.status)
         if not estado.get("authenticated"):
             raise HTTPException(status_code=409, detail="El canal no está autorizado: autorízalo en Ajustes.")
         try:
