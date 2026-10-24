@@ -191,3 +191,64 @@ test.describe("Ajustes: perfiles de YouTube (sidecar simulado)", () => {
     expect(peticiones.at(-1)).toEqual({ ruta: "PUT /settings", cuerpo: { profile: "viejo" } });
   });
 });
+
+test.describe("Ajustes: autorización interrumpida (sidecar simulado)", () => {
+  /** El navegador nunca vuelve de Google: POST /youtube/auth queda pendiente hasta que se cancela. */
+  async function sinRespuestaDeGoogle(page: import("@playwright/test").Page) {
+    const base = await settings();
+    const estado = { ...base, profile: "default" };
+    let responder: (r: [number, unknown]) => void = () => undefined;
+    const llamadas = await simularRutas(page, {
+      "/settings": estado,
+      "/youtube/status": { auth: { profile: "default", profiles: ["default"], authenticated: true, store: "x" }, quota: { buckets: { general: { used: 1, limit: 10000 }, search: { used: 0, limit: 100 }, video_insert: { used: 0, limit: 100 } } } },
+      "/youtube/auth": () => new Promise<[number, unknown]>((r) => (responder = r)),
+      "/youtube/auth/cancel": () => {
+        responder([400, { detail: "Autorización cancelada." }]);
+        return [200, { cancelada: true }];
+      },
+    });
+    await page.goto("/#/ajustes");
+    return llamadas;
+  }
+
+  test("'Añadir canal': Cancelar corta la autorización pendiente y la app sigue navegable", async ({ page }) => {
+    const llamadas = await sinRespuestaDeGoogle(page);
+    await page.getByTestId("ajustes-yt-anadir").click();
+    const dialogo = page.getByRole("dialog", { name: "Añadir un canal de YouTube" });
+    await dialogo.getByTestId("ajustes-yt-nombre").fill("smooth");
+    await dialogo.getByTestId("ajustes-yt-anadir-ok").click();
+    await expect(dialogo.getByTestId("ajustes-yt-anadir-ok")).toHaveText("Se ha abierto el navegador…");
+    await dialogo.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialogo).toHaveCount(0);
+    await expect.poll(() => llamadas["/youtube/auth/cancel"]).toBe(1);
+    await expect(page.getByTestId("ajustes-profile-default")).toHaveAttribute("aria-current", "true");
+    // al volver a abrirlo no arrastra el intento anterior
+    await page.getByTestId("ajustes-yt-anadir").click();
+    await expect(dialogo.getByTestId("ajustes-yt-anadir-ok")).toHaveText("Autorizar canal");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("nav-chat").click();
+    await expect(page).toHaveURL(/#\/chat$/);
+  });
+
+  test("'Añadir canal': Escape durante la espera también cancela", async ({ page }) => {
+    const llamadas = await sinRespuestaDeGoogle(page);
+    await page.getByTestId("ajustes-yt-anadir").click();
+    const dialogo = page.getByRole("dialog", { name: "Añadir un canal de YouTube" });
+    await dialogo.getByTestId("ajustes-yt-nombre").fill("smooth");
+    await dialogo.getByTestId("ajustes-yt-anadir-ok").click();
+    await expect(dialogo.getByTestId("ajustes-yt-anadir-ok")).toHaveText("Se ha abierto el navegador…");
+    await page.keyboard.press("Escape");
+    await expect(dialogo).toHaveCount(0);
+    await expect.poll(() => llamadas["/youtube/auth/cancel"]).toBe(1);
+  });
+
+  test("'Volver a autorizar' ofrece Cancelar mientras espera al navegador", async ({ page }) => {
+    const llamadas = await sinRespuestaDeGoogle(page);
+    await page.getByTestId("ajustes-yt-reauth").click();
+    await expect(page.getByTestId("ajustes-yt-reauth")).toHaveText("Se ha abierto el navegador…");
+    await page.getByTestId("ajustes-yt-reauth-cancelar").click();
+    await expect(page.getByTestId("ajustes-yt-reauth")).toHaveText("Volver a autorizar");
+    await expect(page.getByTestId("ajustes-yt-reauth-cancelar")).toHaveCount(0);
+    expect(llamadas["/youtube/auth/cancel"]).toBe(1);
+  });
+});

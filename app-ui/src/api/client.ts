@@ -47,6 +47,8 @@ export interface Client {
   kbBuscar(q: string, plataforma?: string, k?: number): Promise<Texto>;
   youtubeStatus(): Promise<YouTubeStatus>;
   youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<unknown>;
+  /** Corta la autorización en curso: la youtubeAuth pendiente falla con "Autorización cancelada". */
+  youtubeAuthCancel(): Promise<{ cancelada: boolean }>;
   youtubeTools(): Promise<ToolInfo[]>;
   youtubeChannel(refresh?: boolean): Promise<CanalPanel>;
   getSettings(): Promise<Settings>;
@@ -107,6 +109,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     kbBuscar: (qq, plataforma, k) => req(`/kb/buscar${q({ q: qq, plataforma, k })}`),
     youtubeStatus: () => req("/youtube/status"),
     youtubeAuth: (body) => req("/youtube/auth", { method: "POST", body: JSON.stringify(body) }),
+    youtubeAuthCancel: () => req("/youtube/auth/cancel", { method: "POST" }),
     youtubeTools: () => req("/youtube/tools"),
     youtubeChannel: (refresh) => req(`/youtube/channel${refresh ? "?refresh=true" : ""}`),
     getSettings: () => req("/settings"),

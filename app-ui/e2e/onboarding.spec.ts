@@ -146,3 +146,29 @@ test.describe("Onboarding", () => {
     await expect(page.getByTestId("paso-kb").locator("pre, [role=alert], .error").first()).toBeVisible({ timeout: 30_000 });
   });
 });
+
+test.describe("Onboarding: autorización interrumpida (sidecar simulado)", () => {
+  test("si el navegador no vuelve de Google, Cancelar devuelve el control y se puede reintentar", async ({ page }) => {
+    const s = await settings();
+    let responder: (r: [number, unknown]) => void = () => undefined;
+    const llamadas = await simularRutas(page, {
+      "/settings": { ...s, has_anthropic_key: true, has_client_secret: true },
+      "/youtube/status": { ...ESTADO_AUTORIZADO, auth: { ...ESTADO_AUTORIZADO.auth, authenticated: false } },
+      "/youtube/auth": () => new Promise<[number, unknown]>((r) => (responder = r)),
+      "/youtube/auth/cancel": () => {
+        responder([400, { detail: "Autorización cancelada." }]);
+        return [200, { cancelada: true }];
+      },
+    });
+    await page.goto("/#/onboarding");
+    const autorizar = page.getByTestId("oauth-autorizar");
+    await autorizar.click();
+    await expect(autorizar).toHaveText("Se ha abierto el navegador…");
+    await page.getByTestId("oauth-cancelar").click();
+    await expect(page.getByTestId("oauth-error")).toHaveText("Autorización cancelada.");
+    await expect(autorizar).toHaveText("Autorizar canal de YouTube");
+    await expect(autorizar).toBeEnabled();
+    await expect(page.getByTestId("oauth-cancelar")).toHaveCount(0);
+    expect(llamadas["/youtube/auth/cancel"]).toBe(1);
+  });
+});

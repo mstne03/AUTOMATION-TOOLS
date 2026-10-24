@@ -132,7 +132,10 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
   (`PUT /settings`). Lista `ajustes-profile` con una tarjeta `ajustes-profile-<nombre>` por perfil
   (`auth.profiles` más el actual; el actual con `aria-current="true"`): el actual muestra
   `ajustes-yt-estado` (chip "Autorizado" / "Sin autorizar") y `ajustes-yt-reauth` ("Volver a
-  autorizar"); los demás, `ajustes-yt-usar-<nombre>` ("Usar este").
+  autorizar"; mientras espera al navegador, "Se ha abierto el navegador…" y al lado
+  `ajustes-yt-reauth-cancelar`); los demás, `ajustes-yt-usar-<nombre>` ("Usar este").
+  Mientras el OAuth espera al navegador, "Cancelar" o Escape cierran el diálogo de alta y cortan
+  la autorización (`POST /youtube/auth/cancel`); un alta cancelada deja el perfil anterior en uso.
 - **Carpetas permitidas**: `ajustes-dir-elegir` ("Elegir carpeta…", explorador nativo con el
   comando Rust `elegir_carpeta`; fuera de Tauri no hace nada), lista `ajustes-dirs` con una fila
   `ajustes-dir` por carpeta (ruta monoespaciada, selector de idioma Español / Inglés / Detectar,
@@ -177,7 +180,9 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
    enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`.
 3. `paso-oauth`: `oauth-autorizar` ("Autorizar canal de YouTube", deshabilitado hasta tener las
    credenciales), que llama a `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras
-   espera. Nota `oauth-no-verificada`: explica el aviso de Google "app no verificada". Hecho si
+   espera, con `oauth-cancelar` ("Cancelar", `POST /youtube/auth/cancel`) al lado; el fallo o la
+   cancelación se muestran en `oauth-error`. Nota `oauth-no-verificada`: explica el aviso de
+   Google "app no verificada". Hecho si
    `auth.authenticated`.
 4. `paso-kb`: muestra `GET /kb/estado` (`kb-estado-texto`). Hecho si la llamada responde.
 

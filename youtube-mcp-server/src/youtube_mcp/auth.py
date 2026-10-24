@@ -15,6 +15,9 @@ injected ``SecretStore`` (file store by default: ``token.json``,
 import json
 import os
 import re
+import threading
+import time
+import urllib.request
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -38,6 +41,9 @@ SCOPES = [
 DEFAULT_CONFIG_DIR = Path.home() / ".youtube-mcp"
 DEFAULT_PROFILE = "default"
 _PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# Espera máxima a que Google redirija al servidor local. Si el usuario cierra la pestaña, sin
+# límite el hilo (y la petición que lo lanzó) esperaría para siempre.
+OAUTH_TIMEOUT_S = 300
 
 
 class AuthError(Exception):
@@ -77,6 +83,8 @@ class YouTubeAuth:
         self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
         self.store: SecretStore = store or FileSecretStore(self.config_dir)
         self._credentials: Credentials | None = None
+        # Flujo de consentimiento en curso y su marca de cancelación (ver cancel_interactive).
+        self._en_curso: tuple[InstalledAppFlow, threading.Event] | None = None
         self.use_profile(profile or os.environ.get("YOUTUBE_MCP_PROFILE") or DEFAULT_PROFILE)
 
         # Resolve client_secret.json path
@@ -194,14 +202,59 @@ class YouTubeAuth:
             )
 
         config = self._client_config()
+        self.cancel_interactive()  # un intento nuevo sustituye al que se quedó esperando
+        cancelado = threading.Event()
         try:
             flow = InstalledAppFlow.from_client_config(config, SCOPES)
-            creds = flow.run_local_server(port=0)
+            self._en_curso = (flow, cancelado)
+            creds = flow.run_local_server(port=0, timeout_seconds=OAUTH_TIMEOUT_S)
+            if cancelado.is_set():  # Google respondió justo mientras se cancelaba: no se guarda
+                raise AuthError("Autorización cancelada.")
             self._save_token(creds)
             self._credentials = creds
             return creds
+        except AuthError:
+            raise
         except Exception as e:
+            if cancelado.is_set():
+                raise AuthError("Autorización cancelada.") from e
+            # Al agotar timeout_seconds, run_local_server lanza AttributeError (1.2) o su
+            # subclase WSGITimeoutError (≥ 1.3): el sidecar y este paquete fijan versiones distintas.
+            if isinstance(e, AttributeError):
+                raise AuthError(
+                    f"Google no respondió en {OAUTH_TIMEOUT_S // 60} minutos: ¿se cerró la pestaña "
+                    "del navegador? Vuelve a intentarlo."
+                ) from e
             raise AuthError(f"OAuth flow failed: {e}") from e
+        finally:
+            if self._en_curso is not None and self._en_curso[1] is cancelado:
+                self._en_curso = None
+
+    def cancel_interactive(self) -> bool:
+        """Corta el flujo de consentimiento en curso (el usuario pulsó Cancelar o cerró la pestaña).
+
+        `run_local_server` no expone su servidor, pero sí la `redirect_uri` en la que escucha: se
+        le envía la redirección con `error=access_denied`, `handle_request()` vuelve y el flujo
+        falla con "Autorización cancelada". Devuelve False si no había ninguno en curso.
+        """
+        en_curso = self._en_curso
+        if en_curso is None:
+            return False
+        flow, cancelado = en_curso
+        cancelado.set()
+        # Si se cancela mientras el servidor local aún arranca, todavía no hay redirect_uri:
+        # se espera un poco a que escuche (si no, ese intento acabaría por OAUTH_TIMEOUT_S).
+        limite = time.monotonic() + 5
+        while not (flow.redirect_uri or "").startswith("http://localhost:") and time.monotonic() < limite:
+            if self._en_curso is not en_curso:
+                return True  # el flujo ya terminó por su cuenta
+            time.sleep(0.05)
+        if (flow.redirect_uri or "").startswith("http://localhost:"):
+            try:
+                urllib.request.urlopen(flow.redirect_uri + "?error=access_denied", timeout=5).close()
+            except OSError:
+                pass  # el servidor ya se había cerrado (respuesta de Google o límite de tiempo)
+        return True
 
     @property
     def credentials(self) -> Credentials:

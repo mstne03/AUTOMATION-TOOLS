@@ -41,12 +41,16 @@ def youtube_auth(profile: str | None = None, reauthorize: bool = False) -> dict:
         reauthorize: Ignore the saved token and run the consent flow again
             (needed after a scope change or if Google revoked the token).
     """
+    previo = auth.profile
     try:
         if profile:
             auth.use_profile(profile)
         auth.authenticate(interactive=True, force_consent=reauthorize)
         return {"status": "authenticated", "detail": auth.status()}
     except AuthError as e:
+        # Un alta cancelada o fallida no deja en uso un perfil sin token.
+        if auth.profile != previo:
+            auth.use_profile(previo)
         return {"status": "error", "detail": str(e)}
 
 

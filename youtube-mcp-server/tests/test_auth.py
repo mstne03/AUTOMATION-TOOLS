@@ -205,3 +205,57 @@ class TestInjectedStore:
             yt_auth.import_client_secret("{}")
         with pytest.raises(AuthError, match="not valid JSON"):
             yt_auth.import_client_secret("{nope")
+
+
+class TestFlujoInterrumpido:
+    """El usuario cierra la pestaña de Google: run_local_server no debe esperar para siempre."""
+
+    @staticmethod
+    def _autorizar_en_hilo(tmp_path):
+        import threading
+        import time
+
+        secret = tmp_path / "client_secret.json"
+        secret.write_text(CLIENT_SECRET)
+        yt_auth = YouTubeAuth(config_dir=tmp_path, client_secret_path=secret, store=DictStore())
+        resultado: dict = {}
+
+        def autorizar():
+            try:
+                yt_auth.authenticate(interactive=True, force_consent=True)
+            except AuthError as e:
+                resultado["error"] = str(e)
+
+        hilo = threading.Thread(target=autorizar, daemon=True)
+        hilo.start()
+        limite = time.monotonic() + 5  # hasta que el servidor local escucha y el "navegador" se abre
+        while getattr(yt_auth, "_en_curso", None) is None and time.monotonic() < limite:
+            time.sleep(0.05)
+        return yt_auth, hilo, resultado
+
+    def test_cancelar_corta_el_flujo_en_curso(self, tmp_path):
+        with patch("google_auth_oauthlib.flow.webbrowser"):  # nadie visita la URL de Google
+            yt_auth, hilo, resultado = self._autorizar_en_hilo(tmp_path)
+            assert yt_auth.cancel_interactive() is True
+            hilo.join(5)
+        assert not hilo.is_alive()
+        assert "cancelada" in resultado["error"]
+        assert yt_auth.cancel_interactive() is False  # ya no queda ninguno en curso
+
+    def test_sin_respuesta_de_google_se_rinde_al_cabo_del_limite(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("youtube_mcp.auth.OAUTH_TIMEOUT_S", 1)
+        with patch("google_auth_oauthlib.flow.webbrowser"):
+            _, hilo, resultado = self._autorizar_en_hilo(tmp_path)
+            hilo.join(5)
+        assert not hilo.is_alive()
+        assert "no respondió" in resultado["error"]
+
+
+def test_alta_de_canal_fallida_no_deja_en_uso_el_perfil_nuevo():
+    from youtube_mcp import server
+
+    server.auth.use_profile("default")
+    with patch.object(server.auth, "authenticate", side_effect=AuthError("Autorización cancelada.")):
+        r = server.youtube_auth(profile="smooth", reauthorize=True)
+    assert r == {"status": "error", "detail": "Autorización cancelada."}
+    assert server.auth.profile == "default"

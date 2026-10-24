@@ -260,13 +260,23 @@ export function OnboardingScreen() {
             <p className={s.aviso} data-testid="oauth-no-verificada">
               Google avisará de que «no ha verificado esta app»: es tu propio proyecto y es normal. Pulsa «Configuración avanzada» y luego «Ir a …» para continuar.
             </p>
-            <div>
+            <div className={s.fila}>
               <Button variant="primary" data-testid="oauth-autorizar" disabled={!hechos[1]} loading={oauth.isPending} onClick={() => oauth.mutate()}>
                 {oauth.isPending ? "Se ha abierto el navegador…" : "Autorizar canal de YouTube"}
               </Button>
+              {/* Si se cierra la pestaña de Google, el sidecar esperaría hasta su límite: esto lo corta. */}
+              {oauth.isPending && (
+                <Button data-testid="oauth-cancelar" onClick={() => void client.youtubeAuthCancel().catch(() => undefined)}>
+                  Cancelar
+                </Button>
+              )}
             </div>
             {!hechos[1] && <p className={s.ayuda}>Primero importa las credenciales de Google.</p>}
-            {oauth.error && <p className={s.error}>{oauth.error.message}</p>}
+            {oauth.error && (
+              <p className={s.error} data-testid="oauth-error">
+                {oauth.error.message}
+              </p>
+            )}
           </Paso>
 
           <Paso id="paso-kb" titulo="Base de conocimiento" hecho={hechos[3]} visible={actual === 3}>

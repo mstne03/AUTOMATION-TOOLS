@@ -37,6 +37,7 @@ export function nombreAlmacen(almacen: string): string {
 }
 
 const PERFIL_VALIDO = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const CANCELADA = "Autorización cancelada."; // detalle del sidecar al cortar el flujo OAuth
 
 export function SettingsScreen() {
   const settings = useSettings();
@@ -87,8 +88,11 @@ function Ajustes() {
       void qc.invalidateQueries({ queryKey: ["youtube"] });
       toast({ title: "Canal autorizado" });
     },
-    onError: (e) => toast({ title: "No se pudo autorizar", description: e.message, tone: "error" }),
+    onError: (e) => toast(e.message === CANCELADA ? { title: CANCELADA } : { title: "No se pudo autorizar", description: e.message, tone: "error" }),
   });
+  /** Si se cierra la pestaña de Google, el sidecar esperaría hasta su límite: esto lo corta y la
+   *  petición pendiente falla con "Autorización cancelada.". */
+  const cancelarAutorizacion = () => void client.youtubeAuthCancel().catch(() => undefined);
 
   const anadirCanal = useMutation({
     mutationFn: async (perfil: string) => {
@@ -103,6 +107,12 @@ function Ajustes() {
       toast({ title: "Canal añadido y en uso" });
     },
   });
+
+  /** Cerrar el diálogo (Cancelar o Escape) también corta la autorización si está esperando al navegador. */
+  const cerrarAlta = () => {
+    if (anadirCanal.isPending) cancelarAutorizacion();
+    setAnadiendo(false);
+  };
 
   const perfiles = [...new Set([...(yt.data?.auth.profiles ?? []), s0.profile])];
   const nombreValido = PERFIL_VALIDO.test(nombreCanal.trim().toLowerCase());
@@ -205,7 +215,14 @@ function Ajustes() {
                 </h2>
                 <p className={s.ayuda}>Cada canal es un perfil con su propia autorización.</p>
               </div>
-              <Button icon={Plus} data-testid="ajustes-yt-anadir" onClick={() => setAnadiendo(true)}>
+              <Button
+                icon={Plus}
+                data-testid="ajustes-yt-anadir"
+                onClick={() => {
+                  anadirCanal.reset(); // sin el error ni el estado de un intento anterior
+                  setAnadiendo(true);
+                }}
+              >
                 Añadir canal
               </Button>
             </div>
@@ -231,9 +248,16 @@ function Ajustes() {
                       </span>
                     )}
                     {enUso ? (
-                      <Button size="sm" data-testid="ajustes-yt-reauth" loading={reautorizar.isPending && reautorizar.variables === p} onClick={() => reautorizar.mutate(p)}>
-                        {reautorizar.isPending ? "Se ha abierto el navegador…" : "Volver a autorizar"}
-                      </Button>
+                      <>
+                        <Button size="sm" data-testid="ajustes-yt-reauth" loading={reautorizar.isPending && reautorizar.variables === p} onClick={() => reautorizar.mutate(p)}>
+                          {reautorizar.isPending ? "Se ha abierto el navegador…" : "Volver a autorizar"}
+                        </Button>
+                        {reautorizar.isPending && (
+                          <Button size="sm" variant="ghost" data-testid="ajustes-yt-reauth-cancelar" onClick={cancelarAutorizacion}>
+                            Cancelar
+                          </Button>
+                        )}
+                      </>
                     ) : (
                       <Button size="sm" data-testid={`ajustes-yt-usar-${p}`} disabled={put.isPending} onClick={() => guardar({ profile: p }, `Perfil «${p}» en uso`)}>
                         Usar este
@@ -392,13 +416,12 @@ function Ajustes() {
 
       <Dialog
         open={anadiendo}
-        onOpenChange={(a) => !anadirCanal.isPending && setAnadiendo(a)}
-        dismissible={!anadirCanal.isPending}
+        onOpenChange={(a) => (a ? setAnadiendo(true) : cerrarAlta())}
         title="Añadir un canal de YouTube"
         description="Elige un nombre para el perfil. Se abrirá el navegador para que autorices ese canal y quedará en uso."
         footer={
           <>
-            <Button variant="ghost" disabled={anadirCanal.isPending} onClick={() => setAnadiendo(false)}>
+            <Button variant="ghost" onClick={cerrarAlta}>
               Cancelar
             </Button>
             <Button variant="primary" data-testid="ajustes-yt-anadir-ok" disabled={!nombreValido} loading={anadirCanal.isPending} onClick={() => anadirCanal.mutate(nombreCanal.trim().toLowerCase())}>

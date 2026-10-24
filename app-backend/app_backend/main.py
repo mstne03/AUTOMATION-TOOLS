@@ -391,6 +391,12 @@ def create_app(
             raise HTTPException(status_code=400, detail=r.get("detail", "Fallo al autorizar."))
         return r
 
+    @app.post("/youtube/auth/cancel", dependencies=protegido)
+    async def youtube_authorize_cancel():
+        """Corta la autorización en curso (el usuario cerró la pestaña de Google o pulsó Cancelar):
+        la petición POST /youtube/auth pendiente responde entonces con "Autorización cancelada"."""
+        return {"cancelada": await asyncio.to_thread(yt_auth.cancel_interactive)}
+
     @app.get("/youtube/tools", dependencies=protegido)
     async def youtube_tools():
         return [

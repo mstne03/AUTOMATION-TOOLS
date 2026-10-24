@@ -169,3 +169,31 @@ async def test_validate_key_con_clave_buena_mala_y_sin_clave(client):
     assert (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"] == antes  # validar no guarda nada
 
     assert (await client.post("/settings/validate-key", json={"api_key": "x"})).status_code == 401
+
+
+async def test_cancelar_autorizacion_sin_flujo_en_curso(client):
+    assert (await client.post("/youtube/auth/cancel")).status_code == 401
+    r = await client.post("/youtube/auth/cancel", headers=AUTH)
+    assert r.status_code == 200 and r.json() == {"cancelada": False}
+
+
+async def test_alta_de_canal_interrumpida_se_cancela_y_deja_el_perfil_anterior(client):
+    """El usuario cierra la pestaña de Google: sin cancelar, POST /youtube/auth no respondería nunca."""
+    from unittest.mock import patch
+
+    from app_backend.main import yt_auth
+
+    bueno = '{"installed": {"client_id": "id", "client_secret": "s", "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}'
+    assert (await client.post("/settings/client-secret", headers=AUTH, json={"json_text": bueno})).status_code == 200
+    previo = yt_auth.profile
+    with patch("google_auth_oauthlib.flow.webbrowser"):  # nadie visita la URL de consentimiento
+        alta = asyncio.create_task(client.post("/youtube/auth", headers=AUTH, json={"profile": "nuevo", "reauthorize": True}))
+        for _ in range(100):  # hasta que el flujo está esperando a Google
+            await asyncio.sleep(0.05)
+            if yt_auth._en_curso is not None:
+                break
+        r = await client.post("/youtube/auth/cancel", headers=AUTH)
+        assert r.json() == {"cancelada": True}
+        r = await asyncio.wait_for(alta, timeout=10)
+    assert r.status_code == 400 and r.json()["detail"] == "Autorización cancelada."
+    assert yt_auth.profile == previo

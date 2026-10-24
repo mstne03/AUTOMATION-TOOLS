@@ -13,8 +13,11 @@ export interface Peticion {
   cuerpo: unknown;
 }
 
-/** `rutas`: ruta (sin query) -> cuerpo JSON, o función (url, petición) => [status, cuerpo]. */
-export async function simularRutas(page: Page, rutas: Record<string, unknown | ((url: URL, p: Peticion) => [number, unknown])>) {
+type Respuesta = [number, unknown];
+
+/** `rutas`: ruta (sin query) -> cuerpo JSON, o función (url, petición) => [status, cuerpo] (o una
+ *  promesa: la respuesta queda pendiente hasta que se resuelva). */
+export async function simularRutas(page: Page, rutas: Record<string, unknown | ((url: URL, p: Peticion) => Respuesta | Promise<Respuesta>)>) {
   const llamadas: Record<string, number> = {};
   await page.route(/127\.0\.0\.1:\d+\//, async (route) => {
     const url = new URL(route.request().url());
@@ -23,7 +26,7 @@ export async function simularRutas(page: Page, rutas: Record<string, unknown | (
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: CORS });
     llamadas[url.pathname] = (llamadas[url.pathname] ?? 0) + 1;
     const peticion: Peticion = { metodo: route.request().method(), cuerpo: route.request().postDataJSON?.() ?? null };
-    const [status, cuerpo] = typeof r === "function" ? (r as (u: URL, p: Peticion) => [number, unknown])(url, peticion) : [200, r];
+    const [status, cuerpo] = typeof r === "function" ? await (r as (u: URL, p: Peticion) => Respuesta | Promise<Respuesta>)(url, peticion) : [200, r];
     return route.fulfill({ status, headers: CORS, contentType: "application/json", body: JSON.stringify(cuerpo) });
   });
   return llamadas;
