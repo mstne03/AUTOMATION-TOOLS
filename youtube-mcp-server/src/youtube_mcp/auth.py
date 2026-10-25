@@ -171,6 +171,19 @@ class YouTubeAuth:
         except Exception:
             return None
 
+    def _de_otro_proyecto(self, creds: Credentials | None) -> bool:
+        """Token emitido para otro cliente OAuth (el client_secret se sustituyó después de autorizar).
+
+        El token guarda dentro el client_id y el secret con los que se pidió, así que se renovaría
+        contra el proyecto viejo: usarlo mezclaría proyectos (cuota, permisos) sin que nadie lo vea.
+        """
+        if not creds or not creds.client_id:
+            return False
+        try:
+            return creds.client_id != _client_id(self._client_config())
+        except AuthError:
+            return False
+
     def _save_token(self, creds: Credentials):
         """Save credentials for the active profile."""
         self.store.set(self._token_key, creds.to_json())
@@ -288,6 +301,9 @@ class YouTubeAuth:
         Raises AuthError when not interactive and no valid token is available.
         """
         creds = None if force_consent else self._load_token()
+        de_otro_proyecto = self._de_otro_proyecto(creds)
+        if de_otro_proyecto:
+            creds = None  # hay que pasar por Google con el proyecto actual
 
         if creds and creds.valid:
             self._credentials = creds
@@ -307,6 +323,8 @@ class YouTubeAuth:
                     ) from e
 
         if not interactive:
+            if de_otro_proyecto:
+                raise AuthError(f"El canal del perfil '{self.profile}' se autorizó con otro proyecto de Google: vuelve a autorizarlo.")
             raise AuthError(
                 f"Not authenticated for profile '{self.profile}'. Run youtube_auth first."
             )
@@ -403,11 +421,7 @@ class YouTubeAuth:
             "channels": canales,
         }
         creds = self._load_token()
-        try:
-            cliente = _client_id(self._client_config())
-        except AuthError:
-            cliente = None
-        if creds and cliente and creds.client_id and creds.client_id != cliente:
+        if self._de_otro_proyecto(creds):
             # Token emitido para otro cliente OAuth (el client_secret se sustituyó por fuera de la
             # app): Google lo rechazaría, y contarlo como autorizado mezclaría proyectos.
             return {

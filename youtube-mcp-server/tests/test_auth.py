@@ -318,6 +318,22 @@ class TestProyectoUnico:
         assert status["authenticated"] is False
         assert "otro proyecto" in status["reason"]
 
+    def test_autorizar_con_un_token_de_otro_proyecto_abre_el_consentimiento(self, tmp_path):
+        """El token guardado lleva dentro el cliente del proyecto viejo y se renovaría contra él: ni las
+        tools deben usarlo ni "Autorizar" puede darlo por bueno sin pasar por Google con el actual."""
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.store.set("client_secret", CLIENTE_B)
+        yt_auth.store.set("token:default", _token("id"))  # válido, pero emitido para el cliente "id"
+        with pytest.raises(AuthError, match="otro proyecto"):
+            yt_auth.authenticate()
+        nuevo = MagicMock()
+        nuevo.to_json.return_value = _token("123456789012-abcdefghwxyz.apps.googleusercontent.com")
+        with patch("youtube_mcp.auth.InstalledAppFlow") as flujo:
+            flujo.from_client_config.return_value.run_local_server.return_value = nuevo
+            assert yt_auth.authenticate(interactive=True) is nuevo
+        flujo.from_client_config.assert_called_once()
+        assert yt_auth.status()["authenticated"] is True
+
     def test_recuerda_el_canal_autorizado_de_cada_perfil(self, tmp_path):
         yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
         yt_auth.store.set("token:default", _token("id"))  # solo se muestran canales con token
