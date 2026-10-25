@@ -46,9 +46,9 @@ test.describe("Onboarding", () => {
     await expect(page.getByTestId("paso-oauth")).toHaveAttribute("data-estado", yt.auth.authenticated ? "hecho" : "pendiente");
     await expect(page.getByTestId("paso-kb")).toHaveAttribute("data-estado", /hecho|pendiente/);
     const listo = s.has_anthropic_key && s.has_client_secret && yt.auth.authenticated;
-    await expect(page.getByTestId("onboarding-terminar")).toHaveText("Ir al chat");
-    if (listo) await expect(page.getByTestId("onboarding-terminar")).toBeEnabled();
-    else await expect(page.getByTestId("onboarding-terminar")).toBeDisabled();
+    // Siempre hay salida: con todo hecho, "Ir al chat"; si falta algo, "Terminar más tarde".
+    await expect(page.getByTestId("onboarding-terminar")).toHaveText(listo ? "Ir al chat" : "Terminar más tarde");
+    await expect(page.getByTestId("onboarding-terminar")).toBeEnabled();
   });
 
   test("clave: se valida con Anthropic antes de guardarla; una mala no se guarda", async ({ page }) => {
@@ -285,6 +285,19 @@ test.describe("Onboarding: recorrido desde el aviso de configuración (sidecar s
     await expect(page.getByTestId("oauth-estado")).toHaveText("Canal autorizado · Canal A (@a)");
     await page.getByTestId("onboarding-ir-paso-google").click();
     await expect(page.getByTestId("google-proyecto")).toHaveText("Proyecto mi-proyecto · cliente 123456…wxyz");
+  });
+
+  test("si el canal no se puede autorizar, se puede salir del asistente y terminar más tarde", async ({ page }) => {
+    await conCanalPendiente(page, { reason: "Este canal se autorizó con otro proyecto de Google: vuelve a autorizarlo." });
+    await page.goto("/#/onboarding");
+    await expect(page.getByTestId("oauth-motivo")).toContainText("otro proyecto de Google");
+    await expect(page.getByTestId("onboarding-continuar")).toBeDisabled();
+    const salir = page.getByTestId("onboarding-terminar");
+    await expect(salir).toHaveText("Terminar más tarde");
+    await salir.click();
+    await expect(page).toHaveURL(/#\/chat$/);
+    await expect(page.getByTestId("chat-bienvenida")).toHaveCount(0); // el "¡Todo listo!" es solo con todo hecho
+    await expect(page.getByTestId("nav-onboarding")).toBeVisible(); // el aviso recuerda lo que falta
   });
 
   test("si Google rechazó la autorización guardada, el paso explica el motivo", async ({ page }) => {

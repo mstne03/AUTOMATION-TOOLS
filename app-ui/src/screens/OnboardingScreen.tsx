@@ -227,8 +227,10 @@ export function OnboardingScreen() {
               Continuar
             </Button>
           )}
-          <Button variant={actual === PASOS.length - 1 ? "primary" : "secondary"} data-testid="onboarding-terminar" disabled={!listo} onClick={() => navigate("/chat", { state: { bienvenida: true } })}>
-            Ir al chat
+          {/* Siempre hay salida: un paso que no se puede completar ahora (p. ej. Google rechaza la
+              autorización) no puede dejar al usuario encerrado; el aviso de la barra recuerda lo que falta. */}
+          <Button variant={listo && actual === PASOS.length - 1 ? "primary" : "secondary"} data-testid="onboarding-terminar" onClick={() => navigate("/chat", listo ? { state: { bienvenida: true } } : undefined)}>
+            {listo ? "Ir al chat" : "Terminar más tarde"}
           </Button>
         </div>
       </main>

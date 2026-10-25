@@ -201,8 +201,10 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
   (`paso-kb`, con `onboarding-listo` "Todo listo…"), nunca en un paso ya hecho. Completar un paso
   (clave, credenciales o autorización) devuelve el asistente a esa regla aunque el usuario hubiera
   navegado a mano. Debajo: `onboarding-atras`, `onboarding-continuar` (habilitado si el paso actual está
-  hecho; no existe en el último) y `onboarding-terminar` ("Ir al chat", habilitado cuando 1–3 están
-  hechos; va al chat con `state.bienvenida`).
+  hecho; no existe en el último) y `onboarding-terminar`, siempre habilitado para que un paso que no
+  se puede completar no deje al usuario encerrado: "Ir al chat" con 1–3 hechos (va al chat con
+  `state.bienvenida`) y "Terminar más tarde" si falta alguno (va al chat sin bienvenida; el aviso
+  `nav-onboarding` recuerda lo que falta).
 1. `paso-clave`: `clave-input` (password) y `clave-guardar` ("Validar y guardar"). Antes de guardar
    se valida con Anthropic (`POST /settings/validate-key`, que hace un `GET /v1/models` sin coste):
    una clave que Anthropic no reconoce muestra `clave-error` y no se guarda. Hecho si
