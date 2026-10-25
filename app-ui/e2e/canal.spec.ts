@@ -2,6 +2,7 @@
  *  OAuth real, así que /youtube/status y /youtube/channel se simulan; el contrato de GET
  *  /youtube/channel lo prueba app-backend/tests/test_canal.py. */
 import { expect, test } from "@playwright/test";
+import { settings } from "./api";
 import { simularRutas } from "./sidecar-falso";
 
 const STATUS = {
@@ -114,5 +115,32 @@ test.describe("Panel de canal rediseñado", () => {
     await simularRutas(page, { "/youtube/status": STATUS, "/youtube/channel": () => [502, { detail: "No se pudo leer el canal: Channel not found" }] });
     await page.goto("/#/canal");
     await expect(page.getByTestId("canal-error")).toContainText("Channel not found");
+  });
+
+  test("al usar otro canal, el panel muestra los datos de ese canal y no los del anterior (SEO-93)", async ({ page }) => {
+    const base = await settings();
+    const estado = { ...base, profile: "default", has_client_secret: true };
+    const PANEL_B = { ...PANEL, canal: { ...PANEL.canal, id: "UC2", titulo: "Canal B", handle: "@canalb" }, videos: [{ ...PANEL.videos[0], id: "vidcanalb1", titulo: "Vídeo del canal B" }] };
+    await simularRutas(page, {
+      "/settings": (_u, p) => {
+        if (p.metodo === "PUT") Object.assign(estado, p.cuerpo as object);
+        return [200, estado];
+      },
+      "/youtube/status": () => [200, { ...STATUS, auth: { ...STATUS.auth, profile: estado.profile, profiles: ["default", "smooth"] } }],
+      // El sidecar responde con el canal del perfil activo (su caché ya es por perfil).
+      "/youtube/channel": () => [200, estado.profile === "smooth" ? PANEL_B : PANEL],
+    });
+    await page.goto("/#/canal");
+    await expect(page.getByTestId("canal-estado").getByRole("heading", { level: 1 })).toHaveText("@mserra03");
+
+    await page.getByTestId("nav-ajustes").click();
+    await page.getByTestId("ajustes-yt-usar-smooth").click();
+    await expect(page.getByTestId("ajustes-profile-smooth")).toHaveAttribute("aria-current", "true");
+    await page.getByTestId("nav-canal").click();
+    const cab = page.getByTestId("canal-estado");
+    await expect(cab).toContainText("Perfil smooth");
+    await expect(cab.getByRole("heading", { level: 1 })).toHaveText("@canalb");
+    await expect(page.getByTestId("canal-videos")).toContainText("Vídeo del canal B");
+    await expect(page.getByTestId("canal-videos")).not.toContainText("Vídeo público");
   });
 });

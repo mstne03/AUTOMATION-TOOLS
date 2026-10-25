@@ -59,9 +59,9 @@ export function CanalScreen() {
   const yt = useYoutubeStatus();
   const navegar = useNavigate();
   const autorizado = yt.data?.auth.authenticated ?? false;
-  const canal = useCanal(autorizado);
-  const preguntar = (mensaje: string) => navegar("/chat", { state: { mensaje } });
   const perfil = yt.data?.auth.profile ?? "";
+  const canal = useCanal(autorizado ? perfil : undefined);
+  const preguntar = (mensaje: string) => navegar("/chat", { state: { mensaje } });
   const panel = canal.data;
   const nombre = panel ? panel.canal.handle ?? panel.canal.titulo : perfil;
   const reinicio = horaLocal(reinicioCuota());
