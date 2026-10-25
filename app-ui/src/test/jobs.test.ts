@@ -44,4 +44,35 @@ describe("store de jobs", () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(listJobs).not.toHaveBeenCalled();
   });
+
+  it("un fallo puntual de GET /jobs no corta el sondeo: reintenta y el job termina (SEO-91)", async () => {
+    const listJobs = vi.fn().mockRejectedValueOnce(new Error("Failed to fetch")).mockResolvedValueOnce([job("done", 1)]);
+    seguirJob({ listJobs } as unknown as Client, job("running", 0.1));
+    const fin = esperarJob("j1");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await fin).status).toBe("done");
+    expect(listJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it("con el sidecar caído reintenta cada vez más espaciado, sin dejar de sondear", async () => {
+    const listJobs = vi.fn().mockRejectedValue(new Error("Failed to fetch"));
+    seguirJob({ listJobs } as unknown as Client, job("running", 0.1));
+    await vi.advanceTimersByTimeAsync(60_000);
+    // 1 s, 2 s, 4 s, 8 s y luego cada 10 s: ni se rinde ni martillea al sidecar cada segundo.
+    expect(listJobs.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(listJobs.mock.calls.length).toBeLessThanOrEqual(9);
+  });
+
+  it("si un job activo ya no está en la lista (sidecar reiniciado), se da por fallido y se deja de sondear", async () => {
+    const listJobs = vi.fn().mockResolvedValue([]);
+    seguirJob({ listJobs } as unknown as Client, job("running", 0.3));
+    const fin = esperarJob("j1");
+    await vi.advanceTimersByTimeAsync(10_000);
+    const j = await fin;
+    expect(j.status).toBe("failed");
+    expect(j.error).toContain("ya no conoce");
+    const llamadas = listJobs.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(listJobs).toHaveBeenCalledTimes(llamadas);
+  });
 });

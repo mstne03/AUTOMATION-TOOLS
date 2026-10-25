@@ -19,26 +19,50 @@ function avisarFin(antes: Job | undefined, ahora: Job) {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null;
+const INTERVALO_MS = 1000;
+const ESPERA_MAXIMA_MS = 10_000;
+/** Sondeos seguidos en los que un job activo no aparece en GET /jobs antes de darlo por perdido. */
+const AUSENCIAS_MAXIMAS = 3;
+const PERDIDO = "El sidecar ya no conoce este trabajo (se reinició o se cerró la app). Vuelve a lanzarlo.";
+let fallosSeguidos = 0;
+const ausencias = new Map<string, number>();
 
+/** Sondea mientras haya jobs activos. Un fallo de red no lo corta (SEO-91): reintenta con espera
+ *  creciente (1, 2, 4, 8 y 10 s); un job activo que desaparece de la lista se da por fallido. */
 function programar(client: Client) {
   if (timer) return;
+  const espera = Math.min(INTERVALO_MS * 2 ** fallosSeguidos, ESPERA_MAXIMA_MS);
   timer = setTimeout(async () => {
     timer = null;
     try {
       const lista = await client.listJobs();
+      fallosSeguidos = 0;
       const actuales = useJobs.getState().jobs;
+      const enLista = new Set(lista.map((j) => j.id));
       const cambios: Record<string, Job> = {};
       for (const j of lista) {
         if (!(j.id in actuales)) continue;
+        ausencias.delete(j.id);
         avisarFin(actuales[j.id], j); // fuera del updater de setState: este puede ejecutarse dos veces en StrictMode
         cambios[j.id] = j;
       }
+      for (const j of Object.values(actuales)) {
+        if (!jobActivo(j) || enLista.has(j.id)) continue;
+        const veces = (ausencias.get(j.id) ?? 0) + 1;
+        ausencias.set(j.id, veces);
+        if (veces < AUSENCIAS_MAXIMAS) continue;
+        ausencias.delete(j.id);
+        const perdido: Job = { ...j, status: "failed", error: PERDIDO };
+        avisarFin(j, perdido);
+        cambios[j.id] = perdido;
+      }
       useJobs.setState((st) => ({ jobs: { ...st.jobs, ...cambios } }));
     } catch {
-      return; // sin sidecar no hay nada que sondear; el job_finished del stream cierra el bloque
+      fallosSeguidos += 1; // sidecar caído o reiniciándose: se reintenta más tarde
     }
     if (Object.values(useJobs.getState().jobs).some(jobActivo)) programar(client);
-  }, 1000);
+    else fallosSeguidos = 0;
+  }, espera);
 }
 
 /** Registra (o actualiza) un job y arranca el sondeo si sigue activo. */
@@ -68,5 +92,7 @@ export function esperarJob(id: string): Promise<Job> {
 export function reiniciarJobs() {
   if (timer) clearTimeout(timer);
   timer = null;
+  fallosSeguidos = 0;
+  ausencias.clear();
   useJobs.setState({ jobs: {} });
 }
