@@ -128,3 +128,27 @@ class TestFormatVideoSummary:
         assert result["views"] == 0
         assert result["likes"] == 0
         assert result["title"] is None
+
+
+class TestIsoDurationSeconds:
+    def test_casos(self):
+        from youtube_mcp.utils.formatting import iso_duration_seconds
+
+        assert iso_duration_seconds("PT45S") == 45
+        assert iso_duration_seconds("PT5M30S") == 330
+        assert iso_duration_seconds("PT1H") == 3600
+        assert iso_duration_seconds("PT1H2M3S") == 3723
+        assert iso_duration_seconds("P1DT1S") == 86401
+        assert iso_duration_seconds("P0D") == 0
+
+    def test_vacia_o_invalida(self):
+        from youtube_mcp.utils.formatting import iso_duration_seconds
+
+        assert iso_duration_seconds("") is None
+        assert iso_duration_seconds("5 minutos") is None
+
+    def test_resumen_incluye_segundos(self):
+        from youtube_mcp.utils.formatting import format_video_summary
+
+        video = {"id": "x", "snippet": {}, "statistics": {}, "contentDetails": {"duration": "PT2M"}}
+        assert format_video_summary(video)["duration_seconds"] == 120
