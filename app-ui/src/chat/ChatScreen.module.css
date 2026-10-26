@@ -50,11 +50,26 @@
   font-family: var(--font-mono);
 }
 
+/* Contenedor de la lista: sitúa «Ir al final» sobre el borde inferior sin moverla. */
+.zonaMensajes {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
 .mensajes {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-24);
+}
+.irAlFinal {
+  position: absolute;
+  bottom: var(--space-12);
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: var(--elevation-e2);
 }
 .hilo {
   display: flex;

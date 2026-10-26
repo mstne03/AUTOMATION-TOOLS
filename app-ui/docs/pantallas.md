@@ -51,8 +51,11 @@ Referencia: artboard "Chat (oscuro)". La pantalla ocupa todo `main` (sin padding
    indicador de coste `chat-coste` con el texto "≈ $X.XXXX · N tokens en caché" acumulado de
    todos los turnos de la conversación (no existe hasta el primer `done`; precios de
    `PRECIOS_MODELO`) y botón `chat-nueva` ("Nueva").
-2. Lista de mensajes (`chat-mensajes`), con scroll, hilo centrado de máx. 760 px, pegada al
-   final mientras llega el stream.
+2. Lista de mensajes (`chat-mensajes`), con scroll, hilo centrado de máx. 760 px. Mientras llega
+   el stream sigue el final solo si el usuario ya estaba abajo (margen de 32 px): si sube, la
+   posición no se mueve y aparece `chat-ir-al-final` («Ir al final», flotante sobre el borde
+   inferior de la lista), que baja y reanuda el seguimiento; volver abajo con la rueda también lo
+   reanuda. Enviar un mensaje o abrir otra conversación lleva al final.
 3. Compositor (`chat-form`): `textarea[data-testid=chat-input]` que crece con el texto hasta
    168 px (luego scroll), botón `chat-adjuntar` (abre el explorador nativo de vídeo e inserta
    la ruta; fuera de Tauri avisa con un toast), interruptor `chat-usar-kb` ("Usar KB · sí/no",

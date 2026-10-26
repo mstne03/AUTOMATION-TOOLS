@@ -136,6 +136,32 @@ function elegir(body: { messages: { role: string; content: unknown }[] }): [Bloc
   return [[{ type: "text", text: "No entiendo la petición." }], "end_turn"];
 }
 
+/** Respuesta larga que llega en trozos espaciados, como un streaming real (SEO-105): 50 párrafos,
+ *  uno cada 120 ms (~6 s), para probar el scroll mientras se genera. */
+export const LENTO = { parrafos: 50, intervaloMs: 120 };
+function lento(res: import("node:http").ServerResponse) {
+  const evento = (e: { type: string }) => `event: ${e.type}
+data: ${JSON.stringify(e)}
+
+`;
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+  res.write(evento({ type: "message_start", message: { id: "msg_lento", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } } as { type: string }));
+  res.write(evento({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } as { type: string }));
+  let n = 0;
+  const timer = setInterval(() => {
+    n += 1;
+    res.write(evento({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `Párrafo ${n} de la respuesta larga: texto de relleno para que el hilo crezca mientras se genera.
+
+` } } as { type: string }));
+    if (n < LENTO.parrafos) return;
+    clearInterval(timer);
+    res.write(evento({ type: "content_block_stop", index: 0 } as { type: string }));
+    res.write(evento({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 5 } } as { type: string }));
+    res.end(evento({ type: "message_stop" }));
+  }, LENTO.intervaloMs);
+  res.on("close", () => clearInterval(timer));
+}
+
 export function startAnthropicMock(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url?.startsWith("/v1/models")) {
@@ -156,6 +182,7 @@ export function startAnthropicMock(): Promise<{ server: Server; url: string }> {
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
       const body = JSON.parse(raw);
+      if (JSON.stringify(body.messages.at(-1)?.content ?? "").includes("E2E-LENTO")) return lento(res);
       const [blocks, stop] = elegir(body);
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
       res.end(sse(blocks, stop));

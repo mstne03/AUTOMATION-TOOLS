@@ -1,5 +1,5 @@
 /** Pantalla de chat (docs/pantallas.md → Chat). */
-import { ArrowUp, ChevronDown, Paperclip, Plus, Sparkles, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, Paperclip, Plus, Sparkles, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useLocation } from "react-router";
 import { useClient } from "../api/context";
@@ -17,6 +17,8 @@ import { costeUsd, type BloqueTool, type Turno } from "./turno";
 import { useChat, type Mensaje } from "./useChat";
 
 const ALTO_MAXIMO_COMPOSITOR = 168;
+/** Margen (px) para considerar que el usuario está abajo del todo y la vista debe seguir al texto. */
+const UMBRAL_FINAL = 32;
 const SUGERENCIAS_BIENVENIDA = ["Analiza mi canal y dime qué mejorar", "¿Cuál es la mejor hora para publicar Shorts?", "Prepárame un borrador para un vídeo nuevo"];
 
 export function ChatScreen() {
@@ -29,6 +31,19 @@ export function ChatScreen() {
   const [texto, setTexto] = useState("");
   const [usarKb, setUsarKb] = useState(true);
   const lista = useRef<HTMLDivElement>(null);
+  // Seguimiento del final (SEO-105): la vista baja con el texto que llega solo si el usuario ya estaba
+  // abajo; si sube, se queda donde está y aparece «Ir al final». La ref evita esperar a un render.
+  const siguiendo = useRef(true);
+  const [enFinal, setEnFinal] = useState(true);
+  const seguir = (v: boolean) => {
+    siguiendo.current = v;
+    setEnFinal(v);
+  };
+  const alFinal = () => {
+    const el = lista.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    seguir(true);
+  };
   const campo = useRef<HTMLTextAreaElement>(null);
   const location = useLocation();
 
@@ -53,9 +68,19 @@ export function ChatScreen() {
     abrir(client, activa).catch((e: Error) => toast({ title: "No se pudo abrir la conversación", description: e.message, tone: "error" }));
   }, [client, activa]);
 
-  useEffect(() => {
-    lista.current?.scrollTo({ top: lista.current.scrollHeight });
+  // Otra conversación: se abre por el final.
+  useLayoutEffect(alFinal, [activa]);
+  // Antes de pintar, para que el texto nuevo no se vea un instante fuera de sitio.
+  useLayoutEffect(() => {
+    const el = lista.current;
+    if (el && siguiendo.current) el.scrollTop = el.scrollHeight;
   }, [chat.mensajes]);
+  const alDesplazar = () => {
+    const el = lista.current;
+    if (!el) return;
+    const abajo = el.scrollHeight - el.scrollTop - el.clientHeight < UMBRAL_FINAL;
+    if (abajo !== siguiendo.current) seguir(abajo);
+  };
 
   // El campo crece con el texto hasta un máximo y entonces hace scroll.
   useLayoutEffect(() => {
@@ -83,6 +108,7 @@ export function ChatScreen() {
     const t = texto.trim();
     if (!t) return;
     setTexto("");
+    alFinal(); // quien envía quiere ver la respuesta
     void chat.enviar(t, { sinKb: !usarKb, perfil });
   };
   const teclas = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -133,7 +159,8 @@ export function ChatScreen() {
         </Button>
       </header>
 
-      <div className={s.mensajes} data-testid="chat-mensajes" ref={lista}>
+      <div className={s.zonaMensajes}>
+      <div className={s.mensajes} data-testid="chat-mensajes" ref={lista} onScroll={alDesplazar}>
         <div className={s.hilo}>
           {chat.mensajes.length === 0 && bienvenida && (
             <section className={s.bienvenida} data-testid="chat-bienvenida" aria-label="Bienvenida">
@@ -167,6 +194,12 @@ export function ChatScreen() {
             <MensajeView key={i} m={m} onResolver={chat.resolver} />
           ))}
         </div>
+      </div>
+      {!enFinal && (
+        <Button size="sm" icon={ArrowDown} className={s.irAlFinal} data-testid="chat-ir-al-final" onClick={alFinal}>
+          Ir al final
+        </Button>
+      )}
       </div>
 
       <form className={s.formulario} data-testid="chat-form" onSubmit={enviar}>
