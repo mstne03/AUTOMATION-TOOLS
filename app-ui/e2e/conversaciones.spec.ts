@@ -102,4 +102,36 @@ test.describe("chats por canal (sidecar simulado)", () => {
     await expect(page.getByTestId("conv-chat:1")).toHaveAttribute("aria-current", "true");
     await expect(page.getByTestId("chat-vacio")).toBeVisible();
   });
+
+  test("borrar el chat nuevo nunca abre un chat de otro canal", async ({ page }) => {
+    const estado = { ...(await settings()), profile: "default", has_client_secret: true };
+    const borrados: string[] = [];
+    await simularRutas(page, {
+      "/settings": estado,
+      "/youtube/status": { auth: { profile: "default", profiles: ["default", "smooth"], authenticated: true, store: "x" }, quota: { buckets: { general: { used: 1, limit: 10000 }, search: { used: 0, limit: 100 }, video_insert: { used: 0, limit: 100 } } } },
+      "/conversations": CHATS,
+      "/conversations/delcanala": (_u, p) => {
+        if (p.metodo === "DELETE") borrados.push("delcanala");
+        return [200, p.metodo === "DELETE" ? { borrada: "delcanala" } : { ...CHATS[0], turnos: [{ texto: "hola A", eventos: [{ type: "done", conversation_id: "delcanala", stop_reason: "end_turn", usage: null }] }] }];
+      },
+      "/conversations/delcanalb": { ...CHATS[1], turnos: [{ texto: "hola B", eventos: [{ type: "done", conversation_id: "delcanalb", stop_reason: "end_turn", usage: null }] }] },
+    });
+    const borrar = async (nombre: string) => {
+      await page.getByTestId("nav-conversaciones").getByRole("button", { name: `Borrar la conversación «${nombre}»` }).click();
+      await page.getByRole("dialog", { name: "¿Borrar la conversación?" }).getByRole("button", { name: "Borrar" }).click();
+    };
+    await page.goto("/#/chat");
+    await enLista(page, "Chat del canal A").click();
+    await expect(page.getByTestId("msg-user")).toHaveText("hola A");
+    await borrar("Chat del canal A");
+    await expect(enLista(page, "Chat del canal A")).toHaveCount(0);
+    await borrar("Nueva conversación");
+    await page.getByTestId("nav-ajustes").click();
+    await page.getByTestId("nav-chat").click();
+    // Queda un chat vacío del canal en uso, no el del canal B (que ni siquiera está en la lista).
+    await expect(page.getByTestId("chat-vacio")).toBeVisible();
+    await expect(page.getByTestId("msg-user")).toHaveCount(0);
+    await expect(enLista(page, "Chat del canal B")).toHaveCount(0);
+    expect(borrados).toEqual(["delcanala"]);
+  });
 });

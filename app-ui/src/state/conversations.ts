@@ -140,11 +140,12 @@ function quitar(id: string) {
   });
 }
 
-/** Conversaciones visibles con el perfil activo: las suyas y las que aún no tienen perfil. */
+/** Conversaciones visibles con el perfil activo: las suyas y las que aún no tienen perfil. Sin perfil
+ *  (ajustes aún cargando) solo las que no tienen: nunca se muestran ni se abren chats de otro canal. */
 export function delPerfil(s: Pick<Estado, "orden" | "conversaciones">, perfil: string | undefined): string[] {
   return s.orden.filter((id) => {
     const p = s.conversaciones[id]?.perfil;
-    return !p || !perfil || p === perfil;
+    return !p || p === perfil;
   });
 }
 
@@ -158,8 +159,9 @@ export function alCambiarDePerfil(perfil: string) {
   else nueva(perfil);
 }
 
-/** Borra una conversación (en el sidecar, si ya estaba guardada) y, si era la activa, pasa a otra. */
-export async function borrar(client: Client, id: string) {
+/** Borra una conversación (en el sidecar, si ya estaba guardada) y, si era la activa, pasa a otra del
+ *  perfil en uso (no del de la borrada: un chat aún sin perfil no puede abrir uno de otro canal). */
+export async function borrar(client: Client, id: string, perfil: string | undefined) {
   const c = useConversaciones.getState().conversaciones[id];
   if (!c || c.enStream) return;
   if (c.conversationId) {
@@ -172,9 +174,9 @@ export async function borrar(client: Client, id: string) {
   quitar(id);
   const s = useConversaciones.getState();
   if (s.activa !== id) return;
-  const siguiente = delPerfil(s, c.perfil ?? undefined).at(-1);
+  const siguiente = delPerfil(s, perfil).at(-1);
   if (siguiente) useConversaciones.setState({ activa: siguiente });
-  else nueva(c.perfil ?? undefined);
+  else nueva(perfil);
 }
 
 export async function enviar(client: Client, id: string, texto: string, opciones: OpcionesEnvio = {}) {

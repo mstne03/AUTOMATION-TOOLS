@@ -76,28 +76,33 @@ describe("conversaciones guardadas", () => {
     expect(estado().activa).toBe("chat:bbbbbb");
   });
 
-  it("borrar quita el chat del sidecar y de la lista; si era el abierto, abre otro del mismo perfil", async () => {
+  it("borrar quita el chat del sidecar y de la lista; si era el abierto, abre otro del perfil en uso", async () => {
     const client = cliente();
     await cargarLista(client);
     useConversaciones.setState({ activa: "chat:aaaaaa" });
-    await borrar(client, "chat:aaaaaa");
+    await borrar(client, "chat:aaaaaa", "default");
     expect(client.deleteConversation).toHaveBeenCalledWith("aaaaaa");
     expect(estado().orden).toEqual(["chat:bbbbbb", "chat:1"]);
     expect(estado().activa).toBe("chat:1");
 
-    // Un chat que nunca se envió solo existe aquí; si era el último del perfil, queda uno vacío.
-    await borrar(client, "chat:1");
+    // Un chat que nunca se envió solo existe aquí. Al borrarlo no se abre el de otro canal
+    // (chat:bbbbbb es de "otro"): queda uno vacío del canal en uso.
+    await borrar(client, "chat:1", "default");
     expect(client.deleteConversation).toHaveBeenCalledTimes(1);
-    expect(estado().activa).toBe("chat:bbbbbb");
-    await borrar(client, "chat:bbbbbb");
-    expect(estado().orden).toEqual(["chat:2"]);
-    expect(estado().conversaciones["chat:2"]).toMatchObject({ perfil: "otro", mensajes: [] });
+    expect(estado().activa).toBe("chat:2");
+    expect(estado().conversaciones["chat:2"]).toMatchObject({ perfil: "default", mensajes: [] });
+    expect(estado().orden).toEqual(["chat:bbbbbb", "chat:2"]);
+  });
+
+  it("sin perfil (ajustes aún cargando) solo se ven los chats sin canal", async () => {
+    await cargarLista(cliente());
+    expect(delPerfil(estado(), undefined)).toEqual(["chat:1"]);
   });
 
   it("si el sidecar no puede borrarlo, el chat se queda", async () => {
     const client = cliente({ deleteConversation: vi.fn(async () => Promise.reject(new ApiError(409, "La conversación tiene una respuesta en curso."))) });
     await cargarLista(client);
-    await expect(borrar(client, "chat:aaaaaa")).rejects.toThrow("en curso");
+    await expect(borrar(client, "chat:aaaaaa", "default")).rejects.toThrow("en curso");
     expect(estado().orden).toContain("chat:aaaaaa");
   });
 

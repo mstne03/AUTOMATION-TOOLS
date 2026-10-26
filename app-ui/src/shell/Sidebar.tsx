@@ -106,7 +106,7 @@ function Conversaciones({ perfil }: { perfil?: string }) {
         onConfirm={async () => {
           if (!borrando) return;
           try {
-            await borrar(client, borrando);
+            await borrar(client, borrando, perfil);
             toast({ title: "Conversación borrada" });
           } catch (e) {
             toast({ title: "No se pudo borrar la conversación", description: (e as Error).message, tone: "error" });
