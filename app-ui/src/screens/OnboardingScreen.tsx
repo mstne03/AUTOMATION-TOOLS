@@ -34,6 +34,8 @@ export function OnboardingScreen() {
   const [paso2b, setPaso2b] = useState(false);
   const [paso2c, setPaso2c] = useState(false);
   const [elegido, setElegido] = useState<number | null>(null);
+  /** Hay un JSON pegado o una ruta escrita sin importar: el asistente no avanza con el proyecto viejo. */
+  const [googlePendiente, setGooglePendiente] = useState(false);
 
   const guardarClave = useMutation({
     mutationFn: async (clave: string) => {
@@ -147,13 +149,8 @@ export function OnboardingScreen() {
               </li>
             </ul>
 
-            {st.google_project && (
-              <p className={s.ok} data-testid="google-proyecto">
-                <Check aria-hidden size="1em" /> Proyecto <Mono>{st.google_project.project_id ?? "sin nombre"}</Mono> · cliente <Mono>{st.google_project.client_id}</Mono>
-              </p>
-            )}
             <p className={s.ayuda}>Es un solo proyecto para toda la app: todos tus canales lo usan y comparten su cuota diaria.</p>
-            <ImportarClientSecret onImportado={() => setElegido(null)} />
+            <ImportarClientSecret onImportado={() => setElegido(null)} onPendiente={setGooglePendiente} />
           </Paso>
 
           <Paso id="paso-oauth" titulo="Autorizar tu canal de YouTube" hecho={hechos[2]} visible={actual === 2}>
@@ -223,7 +220,7 @@ export function OnboardingScreen() {
             Atrás
           </Button>
           {actual < PASOS.length - 1 && (
-            <Button variant="primary" data-testid="onboarding-continuar" disabled={!hechos[actual]} onClick={() => setElegido(actual + 1)}>
+            <Button variant="primary" data-testid="onboarding-continuar" disabled={!hechos[actual] || (actual === 1 && googlePendiente)} onClick={() => setElegido(actual + 1)}>
               Continuar
             </Button>
           )}

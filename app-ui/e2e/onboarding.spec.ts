@@ -97,13 +97,10 @@ test.describe("Onboarding", () => {
     expect(llamadas).toEqual([]);
   });
 
-  test("Google Cloud: un JSON soltado en la zona se importa y el paso queda hecho", async ({ page }) => {
+  test("Google Cloud: un JSON soltado en la zona se importa solo y el paso queda hecho", async ({ page }) => {
     test.skip((await settings()).has_client_secret, "las credenciales ya están importadas en este sidecar");
     const json = JSON.stringify({ installed: { client_id: "id-e2e.apps.googleusercontent.com", client_secret: "secreto-e2e", auth_uri: "https://accounts.google.com/o/oauth2/auth", token_uri: "https://oauth2.googleapis.com/token", redirect_uris: ["http://localhost"] } });
     await page.getByTestId("google-fichero").setInputFiles({ name: "client_secret.json", mimeType: "application/json", buffer: Buffer.from(json) });
-    await expect(page.getByTestId("google-json")).toHaveValue(json);
-    await expect(page.getByTestId("google-error")).toHaveCount(0);
-    await page.getByTestId("google-importar").click();
     await expect(page.getByTestId("paso-google")).toHaveAttribute("data-estado", "hecho");
     expect((await settings()).has_client_secret).toBe(true);
     await expect(page.getByTestId("onboarding-progreso")).toHaveText("Paso 3 de 4"); // avanza solo al siguiente pendiente
@@ -183,41 +180,88 @@ test.describe("Onboarding: autorización interrumpida (sidecar simulado)", () =>
   });
 });
 
-test.describe("Onboarding: elegir el client_secret.json", () => {
+test.describe("Onboarding: importar el client_secret.json (SEO-106, SEO-97)", () => {
   const RUTA = String.raw`C:\Users\Marc\.secrets\client_secret.json`;
+  const PROYECTO_A = { project_id: "proyecto-a", client_id: "111111…aaaa" };
+  const PROYECTO_B = { project_id: "proyecto-b", client_id: "222222…bbbb" };
+  const JSON_B = JSON.stringify({ installed: { client_id: "222222222222-bbbb.apps.googleusercontent.com", client_secret: "s", project_id: "proyecto-b" } });
 
-  test("en la app de escritorio, 'Elegir fichero…' muestra el fichero elegido y no hay un segundo selector", async ({ page }) => {
+  /** Sidecar con clave y, opcionalmente, un proyecto ya activo; POST /settings/client-secret lo sustituye por B. */
+  async function conImportador(page: import("@playwright/test").Page, activo: typeof PROYECTO_A | null, tauri = false) {
     const s = await settings();
-    const sidecar = new URL(process.env.E2E_SIDECAR!);
-    // Tauri simulado: el sidecar sale de sidecar_info y el explorador nativo devuelve RUTA.
-    await page.addInitScript(
-      ({ port, token, ruta }) => {
-        (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-          invoke: async (cmd: string) => (cmd === "sidecar_info" ? { port, token } : cmd === "elegir_client_secret" ? ruta : null),
-          transformCallback: () => 0,
-        };
+    const estado = { ...s, has_anthropic_key: true, has_client_secret: activo !== null, google_project: activo };
+    const cuerpos: unknown[] = [];
+    if (tauri) {
+      const sidecar = new URL(process.env.E2E_SIDECAR!);
+      // Tauri simulado: el sidecar sale de sidecar_info y el explorador nativo devuelve RUTA.
+      await page.addInitScript(
+        ({ port, token, ruta }) => {
+          (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+            invoke: async (cmd: string) => (cmd === "sidecar_info" ? { port, token } : cmd === "elegir_client_secret" ? ruta : null),
+            transformCallback: () => 0,
+          };
+        },
+        { port: Number(sidecar.port), token: process.env.E2E_TOKEN!, ruta: RUTA },
+      );
+    }
+    await simularRutas(page, {
+      "/settings": () => [200, estado],
+      "/youtube/status": { ...ESTADO_AUTORIZADO, auth: { ...ESTADO_AUTORIZADO.auth, authenticated: false } },
+      "/settings/client-secret": (_u, p) => {
+        cuerpos.push(p.cuerpo);
+        Object.assign(estado, { has_client_secret: true, google_project: PROYECTO_B });
+        return [200, { ...estado, desautorizados: [] }];
       },
-      { port: Number(sidecar.port), token: process.env.E2E_TOKEN!, ruta: RUTA },
-    );
-    await simularRutas(page, { "/settings": { ...s, has_anthropic_key: true, has_client_secret: false } });
+    });
     await page.goto("/#/onboarding");
-    await expect(page.getByTestId("paso-google")).toBeVisible();
+    await page.getByTestId("onboarding-ir-paso-google").click();
+    return cuerpos;
+  }
+
+  test("en la app, elegir el fichero lo importa en el acto y dice qué proyecto queda activo", async ({ page }) => {
+    const cuerpos = await conImportador(page, null, true);
     await expect(page.getByTestId("google-fichero")).toHaveCount(0); // un solo selector
     await page.getByTestId("google-elegir").click();
-    await expect(page.getByTestId("google-elegido")).toHaveText("client_secret.json listo para importar");
-    await expect(page.getByTestId("google-elegir")).toHaveText("Elegir otro…");
-    await expect(page.getByTestId("google-path")).toHaveValue(RUTA);
-    await page.getByTestId("google-path").fill(""); // si se edita a mano, deja de ser "el fichero elegido"
-    await expect(page.getByTestId("google-elegido")).toHaveCount(0);
+    await expect.poll(() => cuerpos).toEqual([{ path: RUTA }]);
+    await expect(page.getByTestId("google-importado")).toHaveText("client_secret.json importado · proyecto proyecto-b · cliente 222222…bbbb");
+    await expect(page.getByTestId("paso-google")).toHaveAttribute("data-estado", "hecho");
   });
 
-  test("en el navegador, el selector de ficheros también muestra el fichero elegido", async ({ page }) => {
-    const s = await settings();
-    await simularRutas(page, { "/settings": { ...s, has_anthropic_key: true, has_client_secret: false } });
-    await page.goto("/#/onboarding");
+  test("en el navegador, elegir o soltar un JSON válido también lo importa sin más pasos", async ({ page }) => {
+    const cuerpos = await conImportador(page, null);
     await expect(page.getByTestId("google-elegir")).toHaveCount(0); // sin Tauri no hay explorador nativo
-    await page.getByTestId("google-fichero").setInputFiles({ name: "mi_secreto.json", mimeType: "application/json", buffer: Buffer.from('{"installed":{}}') });
-    await expect(page.getByTestId("google-elegido")).toHaveText("mi_secreto.json listo para importar");
+    await page.getByTestId("google-fichero").setInputFiles({ name: "mi_secreto.json", mimeType: "application/json", buffer: Buffer.from(JSON_B) });
+    await expect.poll(() => cuerpos).toEqual([{ json_text: JSON_B }]);
+    await expect(page.getByTestId("google-importado")).toContainText("mi_secreto.json importado · proyecto proyecto-b");
+  });
+
+  test("un fichero no válido no se importa y lo explica", async ({ page }) => {
+    const cuerpos = await conImportador(page, null);
+    await page.getByTestId("google-fichero").setInputFiles({ name: "malo.json", mimeType: "application/json", buffer: Buffer.from('{"web":{}}') });
+    await expect(page.getByTestId("google-error")).toContainText("Aplicación de escritorio");
+    expect(cuerpos).toEqual([]);
+    await expect(page.getByTestId("google-importado")).toHaveCount(0);
+  });
+
+  test("con un proyecto activo, dice cuál es y que se sustituirá; un JSON pegado sin importar no deja continuar", async ({ page }) => {
+    const cuerpos = await conImportador(page, PROYECTO_A);
+    await expect(page.getByTestId("google-activo")).toHaveText("Proyecto activo: proyecto-a · cliente 111111…aaaa. Importar otro lo sustituye.");
+    await expect(page.getByTestId("onboarding-continuar")).toBeEnabled();
+
+    await page.getByTestId("google-json").fill(JSON_B);
+    await expect(page.getByTestId("google-pendiente")).toHaveText("Este JSON aún no se ha importado: sigue activo el proyecto proyecto-a. Pulsa «Importar».");
+    await expect(page.getByTestId("onboarding-continuar")).toBeDisabled();
+    await page.getByTestId("google-importar").click();
+    await expect.poll(() => cuerpos).toEqual([{ json_text: JSON_B }]);
+    await expect(page.getByTestId("google-pendiente")).toHaveCount(0);
+    await expect(page.getByTestId("google-activo")).toContainText("proyecto-b");
+  });
+
+  test("una ruta escrita a mano también avisa hasta que se importa", async ({ page }) => {
+    await conImportador(page, PROYECTO_A);
+    await page.getByTestId("google-path").fill(RUTA);
+    await expect(page.getByTestId("google-pendiente")).toContainText("Esta ruta aún no se ha importado");
+    await expect(page.getByTestId("onboarding-continuar")).toBeDisabled();
   });
 });
 
@@ -284,7 +328,7 @@ test.describe("Onboarding: recorrido desde el aviso de configuración (sidecar s
     await page.getByTestId("onboarding-ir-paso-oauth").click();
     await expect(page.getByTestId("oauth-estado")).toHaveText("Canal autorizado · Canal A (@a)");
     await page.getByTestId("onboarding-ir-paso-google").click();
-    await expect(page.getByTestId("google-proyecto")).toHaveText("Proyecto mi-proyecto · cliente 123456…wxyz");
+    await expect(page.getByTestId("google-activo")).toHaveText("Proyecto activo: mi-proyecto · cliente 123456…wxyz. Importar otro lo sustituye.");
   });
 
   test("si el canal no se puede autorizar, se puede salir del asistente y terminar más tarde", async ({ page }) => {

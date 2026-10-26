@@ -45,3 +45,12 @@
   gap: var(--space-8);
   color: var(--color-success-fg);
 }
+.aviso {
+  margin: 0;
+  padding: var(--space-6) var(--space-10);
+  border: 1px solid var(--color-risk-write-border);
+  border-radius: var(--radius-md);
+  background: var(--color-risk-write-bg);
+  color: var(--color-risk-write-fg);
+  font-size: var(--text-13);
+}

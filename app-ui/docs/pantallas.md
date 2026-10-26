@@ -215,16 +215,20 @@ al abrir la app sin configurar o desde Ajustes › Avanzado › "Asistente de co
 2. `paso-google`: checklist informativa (`google-paso-a|b|c`: crear proyecto y activar YouTube Data
    API v3, crear credenciales de "Aplicación de escritorio", publicar la app OAuth; en "Prueba" los
    refresh tokens caducan a los 7 días) que **no bloquea** "Importar". Zona `google-soltar` para
-   soltar el `client_secret.json` con **un solo selector**: en la app, `google-elegir` ("Elegir
-   fichero…", diálogo nativo con el comando Rust `elegir_client_secret`, que rellena
-   `google-path`); fuera de Tauri, `google-fichero` (selector del navegador). Con un fichero
-   elegido o soltado, la zona muestra `google-elegido` ("<nombre> listo para importar") y el botón
-   pasa a "Elegir otro…"; editar el JSON o la ruta a mano lo quita. También
-   `textarea[data-testid=google-json]` y la ruta `google-path`, y `google-importar`. Validador: el
-   JSON debe tener `installed.client_id` y `installed.client_secret`; si no, `google-error` sin
-   enviar nada. Los enlaces abren con `abrir_url`. Hecho si `has_client_secret`; con proyecto,
-   `google-proyecto` ("Proyecto <project_id> · cliente <client_id enmascarado>"). El importador es
-   el mismo de Ajustes (con su confirmación al sustituir un proyecto con canales autorizados).
+   soltar el `client_secret.json`. **Elegir o soltar el fichero lo importa en el acto**: no existe
+   un estado "elegido pero sin importar" (SEO-106). Un solo selector: en la app, `google-elegir`
+   ("Elegir fichero…", diálogo nativo con el comando Rust `elegir_client_secret`, que manda la ruta
+   al sidecar); fuera de Tauri, `google-fichero` (selector del navegador, que manda el JSON). Tras
+   importar, `google-importado` ("<fichero> importado · proyecto <project_id> · cliente <client_id
+   enmascarado>"). Con un proyecto activo, `google-activo` ("Proyecto activo: <project_id> ·
+   cliente <…>. Importar otro lo sustituye."). Debajo, para pegar el JSON
+   (`textarea[data-testid=google-json]`) o escribir la ruta (`google-path`), un único
+   `google-importar` común a los dos; mientras haya texto sin importar, `google-pendiente` avisa de
+   que sigue activo el proyecto anterior (o de que no hay ninguno) y `onboarding-continuar` queda
+   deshabilitado. Validador: el JSON debe tener `installed.client_id` y `installed.client_secret`;
+   si no, `google-error` sin enviar nada (también al elegir o soltar un fichero no válido). Los
+   enlaces abren con `abrir_url`. Hecho si `has_client_secret`. El importador es el mismo de
+   Ajustes (con su confirmación al sustituir un proyecto con canales autorizados).
 3. `paso-oauth`: `oauth-autorizar` ("Autorizar canal de YouTube", deshabilitado hasta tener las
    credenciales), que llama a `POST /youtube/auth` y muestra "Se ha abierto el navegador…" mientras
    espera, con `oauth-cancelar` ("Cancelar", `POST /youtube/auth/cancel`) al lado y
