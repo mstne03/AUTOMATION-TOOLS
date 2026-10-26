@@ -50,6 +50,10 @@
 .primary:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
+/* Deshabilitado conserva el icono en on-accent, como el logo: gris sobre acento parecía roto. */
+.primary:disabled {
+  color: var(--color-on-accent);
+}
 .danger {
   background: var(--color-risk-destructive);
   color: var(--color-on-accent);
