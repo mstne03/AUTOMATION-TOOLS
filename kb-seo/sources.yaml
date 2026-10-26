@@ -168,3 +168,36 @@
   published_at: 2026-06-29
   author: Meta (Centro de Transparencia)
   topics: [algoritmo, feed, senales, prediccion, oficial]
+
+# ---------------------------------------------------------------- Guion y ganchos
+#
+# Base de la pantalla Guiones (SPEC-guiones.md). Las tres de terceros son blogs de
+# empresas que venden herramientas: sus cifras son recomendaciones, no datos de YouTube.
+
+- url: https://support.google.com/youtube/answer/9314415?hl=es
+  type: web
+  platforms: [youtube]
+  published_at: 2026-10-26
+  author: YouTube
+  topics: [retencion, introduccion, momentos-clave, oficial, doc-oficial-viva]
+
+- url: https://vidiq.com/blog/post/write-youtube-video-script/
+  type: web
+  platforms: [youtube]
+  published_at: 2026-07-21
+  author: vidIQ
+  topics: [guion, ganchos, estructura, cta]
+
+- url: https://www.synthesia.io/post/how-to-write-a-youtube-script
+  type: web
+  platforms: [youtube]
+  published_at: 2026-05-22
+  author: Synthesia
+  topics: [guion, ganchos, estructura, ritmo]
+
+- url: https://contentstudio.io/blog/youtube-shorts-analytics-guide
+  type: web
+  platforms: [youtube]
+  published_at: 2026-10-14
+  author: ContentStudio
+  topics: [shorts, retencion, ganchos]
