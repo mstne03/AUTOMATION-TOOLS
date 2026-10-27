@@ -11,7 +11,8 @@ estados posibles. Lo que no está aquí no se exige.
 - Barra lateral, de arriba abajo: logo y título "SEO Studio" (`h2`); botón `nav-paleta`
   "Buscar o ejecutar… Ctrl K" (abre la paleta de comandos, también con Ctrl K); enlaces con
   icono, en este orden y con estos `data-testid`: `nav-chat` ("Chat"), `nav-publicar`
-  ("Publicar"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento"); el activo lleva
+  ("Publicar"), `nav-guiones` ("Guiones"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento");
+  el activo lleva
   `aria-current="page"`; lista de conversaciones (`nav-conversaciones`) con el botón
   `conv-nueva` ("Nueva conversación") y un botón `conv-<id>` por conversación (título = primeras
   palabras del primer mensaje; la activa lleva `aria-current="true"`). Los chats se guardan en el
@@ -30,7 +31,8 @@ estados posibles. Lo que no está aquí no se exige.
 - Onboarding ya no es un enlace fijo del menú: se llega con el aviso, desde Ajustes o al abrir
   la app sin configurar.
 - Paleta de comandos (Ctrl K): `paleta` (diálogo) con `paleta-input`; navega a cada pantalla y
-  ofrece "Nueva conversación", "Publicar un vídeo" y "Preguntar a la KB…".
+  ofrece "Nueva conversación", "Publicar un vídeo", "Escribir un guion" (Guiones en el modo
+  Escribir) y "Preguntar a la KB…".
 - Tema: `data-theme` en `<html>` (`dark` | `light`; sin atributo sigue al sistema), guardado en
   localStorage (`seo-studio.tema`) hasta que el sidecar lo persista.
 - Aviso de actualización (`update-banner`) encima del contenido; instalar pide confirmación en un
@@ -291,6 +293,85 @@ a cambiar de pantalla.
   queda bloqueado hasta marcar `publicar-acepto`. La respuesta del agente (estado de la tool,
   progreso de la subida, errores) se ve en `publicar-turnos`, sin tarjetas de aprobación.
 
+## Guiones (`/guiones`)
+
+Sin artboard propio: mismo esqueleto que Publicar (cabecera, cuerpo en dos columnas con paneles a la
+derecha) y componentes del catálogo. Pantalla a sangre. Diseño y porqués en `SPEC-guiones.md` (raíz
+del repo). Todo el estado de cada modo vive en un store (`state/guiones.ts`) y sobrevive a cambiar
+de modo o de pantalla; cada modo tiene su propia conversación con el agente (`guiones:<modo>`, no se
+guarda en el sidecar).
+
+- Cabecera: h1 "Guiones" y `guiones-modos` (SegmentedControl, `role=radiogroup` "Modo") con las
+  opciones Escribir / Revisar / Diagnosticar (`role=radio`, la activa con `aria-checked="true"`).
+  Al entrar, Escribir. Solo se pinta el modo activo.
+- En Escribir y Revisar el formato es un SegmentedControl "Formato" (Vídeo largo / Short;
+  `escribir-formato`, `revisar-formato`). El JSON del agente se valida al terminar el turno; si no
+  se puede leer, `guion-json-error` ("No se pudo leer la respuesta del agente como guion. Abajo
+  tienes su texto completo.") y el resultado anterior no cambia. Las respuestas del agente se ven
+  debajo (`escribir-turnos`, `revisar-turnos`, `diag-turnos`) con la misma vista que el chat,
+  aprobaciones incluidas. Cada resultado tiene "Empezar de nuevo" (vacía el modo y su conversación).
+- `guion-fuentes` (panel derecho): enlaces de `fuentes` del JSON con `EnlaceExterno`; solo se
+  conservan las URLs https. Oculto si no hay ninguna.
+
+### Escribir
+
+- `escribir-form`: `escribir-tema` (obligatorio, "¿De qué va el vídeo?"), `escribir-formato`,
+  `escribir-duracion` (minutos, mínimo 0,25, paso 0,25; 8 en vídeo largo y 0,5 en Short al cambiar
+  de formato mientras el usuario no la haya tocado) y `escribir-publico` (opcional). Botón
+  `escribir-generar` ("Generar guion"; "Generar otro" con resultado; "Generando…" durante el
+  turno), deshabilitado con `escribir-motivo` ("Falta el tema.", "La duración debe ser mayor que
+  cero." o "Espera a que el agente termine.").
+- `escribir-resultado`: `escribir-ganchos` (radiogroup "Gancho") con un `gancho-opcion` por gancho:
+  radio, chip `gancho-tipo` y el texto editable; el primero elegido al llegar el guion.
+  `escribir-bloques` (`ol`) con un `bloque-guion` por bloque: `bloque-titulo` ("Título"),
+  `bloque-segundos`, `bloque-contenido` ("Qué se dice") y `bloque-visual` ("Nota visual"); y
+  `escribir-cta` ("Llamada a la acción").
+- Panel derecho sin resultado: "Cómo funciona". Con resultado: "Duración" con
+  `escribir-duracion-total` ("M:SS de M:SS objetivo", suma de `segundos` frente a la duración;
+  `data-nivel` = `aviso` y chip "Te pasas" si supera el objetivo en más de un 10 %, si no `ok`) y
+  `escribir-copiar` ("Copiar guion"): Markdown con el gancho elegido, los bloques
+  (`## <título> (Ns)`, contenido y `> Visual: …` si hay nota) y el CTA; confirma con el toast
+  "Guion copiado".
+
+### Revisar
+
+- `revisar-guion` (Field "Tu guion" con contador `n / 20000`; por encima, `aria-invalid`),
+  `revisar-formato` y `revisar-enviar` ("Revisar guion" / "Revisando…"), deshabilitado con
+  `revisar-motivo` ("Pega el guion que quieres revisar.", "El guion pasa de 20.000 caracteres…" o
+  "Espera a que el agente termine.").
+- `revisar-resultado`: `revisar-veredicto`, `revisar-gancho` (editable, "Gancho reescrito") y
+  `revisar-problemas`: tabla Fragmento / Problema / Propuesta con una fila `problema` por elemento
+  (sin problemas, una fila "No se han encontrado problemas.").
+- Panel derecho: "Qué se revisa" y las fuentes.
+
+### Diagnosticar
+
+- Sin canal autorizado: estado vacío "El canal no está autorizado" con "Autorizar el canal" (va a
+  Onboarding) y `diag-motivo` ("Autoriza tu canal en Ajustes u Onboarding."); no se pinta el
+  formulario.
+- Formulario: `diag-video` (monoespaciado, "ID o URL del vídeo"; admite un ID de 11 caracteres
+  `[A-Za-z0-9_-]` o una URL `watch?v=`, `youtu.be/` o `/shorts/`; con otra cosa, `diag-video-error`
+  "No es un ID ni una URL de vídeo de YouTube."), `diag-formato` y `diag-analizar` ("Analizar
+  retención" / "Analizando…"), con `diag-nota` ("Cuesta unas 100 unidades de cuota (transcripción
+  oficial). Los datos de retención tardan 1–2 días en aparecer tras publicar."). Llama a
+  `GET /guiones/retencion` directamente, sin el agente.
+- `diag-videos` (panel derecho, si `GET /youtube/channel` trae vídeos): "Tus últimos vídeos", un
+  botón `diag-video-<id>` por vídeo que rellena el ID y el formato (Short si `es_short`); el elegido
+  lleva `aria-pressed="true"`. Debajo, "Cómo se lee".
+- Si la respuesta trae `error`: `diag-error` (`role=alert`) con el texto y nada más.
+- `diag-resultado`: `diag-titulo` ("<título> · M:SS"); `diag-intro` ("N % sigue viendo a los 30 s",
+  o "a los 3 s" en Short; por debajo del 50 %, `data-nivel="aviso"` y chip "Gancho débil");
+  leyenda y `diag-curva` (`svg` de 100 % de ancho y 200 px de alto: curva de `watch`, línea
+  discontinua al final de la ventana del gancho, una banda `curva-caida` por caída y `curva-pico`
+  por pico); `diag-caidas` (Momento `M:SS–M:SS` / Pérdida `−N pp` / Qué se decía, `quote` o "—";
+  filas `caida`; sin caídas, "No hay caídas destacables.") y `diag-picos` (igual con "Ganancia"
+  `+N pp`, filas `pico`; oculta sin picos); `diag-sin-transcripcion` si `transcript_error` ("Sin
+  transcripción: <motivo>. Los momentos se muestran sin texto.").
+- Acciones: `diag-proponer` ("Proponer mejoras": envía al agente los momentos ya calculados, no la
+  curva) y `diag-guardar` ("Guardar aprendizaje": el agente resume y propone
+  `guardar_en_kb_privada`, con la tarjeta de aprobación en `diag-turnos`), deshabilitado hasta que
+  termine un turno de "Proponer mejoras".
+
 ## Panel de canal (`/canal`)
 
 Referencia: artboard "Panel de canal (oscuro)". Pantalla a sangre con padding propio. Datos de
@@ -346,7 +427,7 @@ el texto que lee el agente). Cada elemento lleva `origen` ("publica" | "privada"
 
 ## Regresión visual
 
-`e2e/visual.spec.ts` captura `chat`, `publicar`, `canal`, `kb`, `ajustes`, `onboarding` y el catálogo
+`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `onboarding` y el catálogo
 (`/#/catalogo`) en claro y oscuro, a 1200×800 y 900×600 (el catálogo muestra los dos temas, así que
 solo se captura una vez por tamaño). Los datos que varían (ajustes, canal, estado de la KB) se
 simulan y el reloj se fija; las referencias están en `e2e/__capturas__/`.

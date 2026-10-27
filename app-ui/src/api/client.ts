@@ -1,5 +1,6 @@
 /** Cliente HTTP tipado del sidecar. Solo habla con 127.0.0.1:<port> y manda el token en
  *  cada petición; el token vive en memoria y no se registra en ningún sitio. */
+import type { Formato, RespuestaRetencion } from "../guiones/modelo";
 import { parseSse } from "./sse";
 import type {
   KbEstado,
@@ -58,6 +59,7 @@ export interface Client {
   /** Corta la autorización en curso: la youtubeAuth pendiente falla con "Autorización cancelada". */
   youtubeAuthCancel(): Promise<{ cancelada: boolean }>;
   youtubeTools(): Promise<ToolInfo[]>;
+  guionesRetencion(videoId: string, format: Formato, language?: string): Promise<RespuestaRetencion>;
   youtubeChannel(refresh?: boolean): Promise<CanalPanel>;
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
@@ -124,6 +126,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     youtubeAuth: (body) => req("/youtube/auth", { method: "POST", body: JSON.stringify(body) }),
     youtubeAuthCancel: () => req("/youtube/auth/cancel", { method: "POST" }),
     youtubeTools: () => req("/youtube/tools"),
+    guionesRetencion: (videoId, format, language) => req(`/guiones/retencion${q({ video_id: videoId, format, language })}`),
     youtubeChannel: (refresh) => req(`/youtube/channel${refresh ? "?refresh=true" : ""}`),
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),

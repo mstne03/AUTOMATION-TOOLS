@@ -1,11 +1,12 @@
 /** Paleta Ctrl K (cmdk): navegar a cada pantalla y acciones rápidas. El atajo se registra en un
  *  único sitio (useAtajoPaleta), sin listeners globales sueltos por las pantallas. */
 import { Command } from "cmdk";
-import { BookOpen, ChartLine, MessageSquare, MessageSquarePlus, Search, Settings, Upload } from "lucide-react";
+import { BookOpen, ChartLine, MessageSquare, MessageSquarePlus, ScrollText, Search, Settings, Upload } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useNavigate } from "react-router";
 import { nueva } from "./state/conversations";
+import { setModo } from "./state/guiones";
 import s from "./CommandPalette.module.css";
 import { Kbd } from "./ui";
 
@@ -59,6 +60,10 @@ export function CommandPalette() {
             <Upload aria-hidden size="1.15em" />
             Publicar vídeo
           </Command.Item>
+          <Command.Item className={s.item} onSelect={ir("/guiones")} value="Guiones">
+            <ScrollText aria-hidden size="1.15em" />
+            Guiones
+          </Command.Item>
           <Command.Item className={s.item} onSelect={ir("/canal")} value="Panel de canal">
             <ChartLine aria-hidden size="1.15em" />
             Panel de canal
@@ -80,6 +85,10 @@ export function CommandPalette() {
           <Command.Item className={s.item} onSelect={ir("/publicar")} value="Publicar un vídeo">
             <Upload aria-hidden size="1.15em" />
             Publicar un vídeo
+          </Command.Item>
+          <Command.Item className={s.item} onSelect={ir("/guiones", () => setModo("escribir"))} value="Escribir un guion">
+            <ScrollText aria-hidden size="1.15em" />
+            Escribir un guion
           </Command.Item>
           <Command.Item className={s.item} onSelect={ir("/kb")} value="Preguntar a la KB…">
             <BookOpen aria-hidden size="1.15em" />

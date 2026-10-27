@@ -7,6 +7,7 @@ import { useSettings } from "./api/queries";
 import { ChatScreen } from "./chat/ChatScreen";
 
 import { CanalScreen } from "./screens/CanalScreen";
+import { GuionesScreen } from "./screens/GuionesScreen";
 import { KbScreen } from "./screens/KbScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
@@ -30,6 +31,7 @@ const router = createHashRouter([
       { index: true, element: <Inicio /> },
       { path: "chat", element: <ChatScreen /> },
       { path: "publicar", element: <PublicarScreen /> },
+      { path: "guiones", element: <GuionesScreen /> },
       { path: "canal", element: <CanalScreen /> },
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },

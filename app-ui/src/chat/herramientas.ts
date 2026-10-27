@@ -2,6 +2,7 @@
  *  aquí: sale de GET /youtube/tools (la fuente de verdad es el registro del sidecar). El nombre
  *  técnico solo se enseña en los detalles. */
 import {
+  Activity,
   AudioLines,
   BookOpen,
   BookmarkPlus,
@@ -56,6 +57,7 @@ const TOOLS: Record<string, InfoTool> = {
   youtube_set_thumbnail: { etiqueta: "Cambiar la miniatura", icono: Image },
   youtube_list_captions: { etiqueta: "Leer los subtítulos", icono: Captions },
   youtube_get_transcript: { etiqueta: "Leer la transcripción", icono: FileText },
+  youtube_retention_moments: { etiqueta: "Ver dónde se va la audiencia", icono: Activity },
   youtube_auth: { etiqueta: "Autorizar YouTube", icono: ShieldCheck },
   youtube_auth_status: { etiqueta: "Comprobar la autorización de YouTube", icono: ShieldCheck },
   transcribe_local: { etiqueta: "Transcribir el vídeo en local", icono: AudioLines },
