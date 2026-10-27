@@ -63,11 +63,13 @@ def test_construir_canal_metricas_y_videos():
     assert datos["canal"] == {"id": "UC1", "titulo": "Marc", "handle": "@mserra03", "avatar": "https://x/a.jpg",
                               "suscriptores": 120, "visualizaciones_totales": 5000, "videos": 12}
     m = datos["metricas"]
-    assert (m["inicio"], m["fin"]) == ("2026-09-25", "2026-10-23")
+    # Analytics llega con 48-72 h de retraso: el periodo acaba en hoy − 3 (20 oct), no en hoy (23 oct),
+    # para no comparar un periodo al que le faltan días con uno completo.
+    assert (m["inicio"], m["fin"]) == ("2026-09-23", "2026-10-20")
     assert m["visualizaciones"] == 300 and m["visualizaciones_delta_pct"] == 50.0  # 300 frente a 200
     assert m["horas_vistas"] == 10.0 and m["suscriptores_netos"] == 15 and m["retencion_media"] == 41.2
-    # el periodo previo son los 28 días anteriores, contiguos
-    assert f.rangos == [("2026-09-25", "2026-10-23"), ("2026-08-28", "2026-09-25")]
+    # dos ventanas de 28 días (los rangos de Analytics son inclusivos), contiguas y sin solaparse
+    assert f.rangos == [("2026-09-23", "2026-10-20"), ("2026-08-26", "2026-09-22")]
     assert [(v["id"], v["estado"], v["es_short"]) for v in datos["videos"]] == [("v1", "private", False), ("v2", "public", True)]
     assert datos["metricas_error"] is None
 
