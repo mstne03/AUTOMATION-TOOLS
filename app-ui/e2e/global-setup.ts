@@ -1,7 +1,7 @@
 /** Arranca el sidecar REAL (APP_BACKEND_SECRETS=file, directorio temporal, token fijo) apuntando
  *  a un Anthropic falso, y Vite en el puerto 1420 (el único origen de desarrollo admitido por el CORS del sidecar) con las variables VITE_SIDECAR_*. */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,24 @@ import { startAnthropicMock } from "./anthropic-mock";
 export const TOKEN = "e2e-token-playwright";
 export const VITE_PORT = 1420;
 const ESTADO = join(tmpdir(), "seo-studio-e2e-pids.json");
+const PREFIJO = "seo-studio-e2e-";
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+/** Borra los directorios de estado de más de 24 h que dejaron ejecuciones interrumpidas (cada uno
+ *  pesa ~470 MB: snapshot de la KB + modelo de embeddings). Los recientes se respetan por si hay
+ *  otra ejecución en curso. */
+function limpiarEstadosHuerfanos() {
+  for (const nombre of readdirSync(tmpdir())) {
+    if (!nombre.startsWith(PREFIJO)) continue;
+    const ruta = join(tmpdir(), nombre);
+    try {
+      const st = statSync(ruta);
+      if (st.isDirectory() && Date.now() - st.mtimeMs > DIA_MS) rmSync(ruta, { recursive: true, force: true });
+    } catch (e) {
+      console.warn(`[e2e] No se pudo borrar ${ruta}: ${(e as Error).message}`);
+    }
+  }
+}
 
 function esperarPuerto(url: string, ms: number, init?: RequestInit): Promise<void> {
   const fin = Date.now() + ms;
@@ -25,7 +43,10 @@ function esperarPuerto(url: string, ms: number, init?: RequestInit): Promise<voi
 
 export default async function globalSetup() {
   const raiz = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const stateDir = mkdtempSync(join(tmpdir(), "seo-studio-e2e-"));
+  limpiarEstadosHuerfanos();
+  const stateDir = mkdtempSync(join(tmpdir(), PREFIJO));
+  // Se anota ya, antes de arrancar nada, para que el teardown lo borre aunque el setup falle después.
+  writeFileSync(ESTADO, JSON.stringify({ stateDir }));
   const mock = await startAnthropicMock();
 
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
@@ -75,7 +96,7 @@ export default async function globalSetup() {
   process.env.E2E_SIDECAR = base;
   process.env.E2E_TOKEN = TOKEN;
   process.env.E2E_STATE_DIR = stateDir;
-  writeFileSync(ESTADO, JSON.stringify({ sidecar: sidecar.pid, vite: vite.pid }));
+  writeFileSync(ESTADO, JSON.stringify({ stateDir, sidecar: sidecar.pid, vite: vite.pid }));
   (globalThis as { __e2e?: unknown }).__e2e = { mock: mock.server, sidecar, vite };
 }
 
