@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from youtube_mcp.tools.analytics import DATA_LAG_DAYS
+
 TTL_SEGUNDOS = 600
 DIAS = 28
 ULTIMOS = 10
@@ -38,11 +40,15 @@ def _delta_pct(actual: float, previo: float) -> float | None:
 
 
 def _metricas(fuentes: Fuentes, hoy: date) -> dict:
-    fin = hoy
-    inicio = fin - timedelta(days=DIAS)
-    ini_prev = inicio - timedelta(days=DIAS)
+    # Analytics llega con 48-72 h de retraso: si el periodo acabara hoy le faltarían días frente al
+    # previo y la variación marcaría una caída que no existe. Los rangos son inclusivos: dos
+    # ventanas de DIAS días, contiguas y sin compartir ningún día.
+    fin = hoy - timedelta(days=DATA_LAG_DAYS)
+    inicio = fin - timedelta(days=DIAS - 1)
+    fin_prev = inicio - timedelta(days=1)
+    ini_prev = fin_prev - timedelta(days=DIAS - 1)
     ahora = fuentes.analytics(inicio.isoformat(), fin.isoformat())
-    previo = fuentes.analytics(ini_prev.isoformat(), inicio.isoformat())
+    previo = fuentes.analytics(ini_prev.isoformat(), fin_prev.isoformat())
     vistas = int(ahora.get("views", 0))
     return {
         "inicio": inicio.isoformat(),

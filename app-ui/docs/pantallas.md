@@ -386,7 +386,8 @@ Referencia: artboard "Panel de canal (oscuro)". Pantalla a sangre con padding pr
 - Cuatro tarjetas de métricas (`canal-metrica-suscriptores`, `-visualizaciones`, `-horas`,
   `-retencion`): suscriptores con la variación neta de 28 días, visualizaciones de 28 días
   con el % frente a los 28 días previos, horas vistas y retención media (Analytics API: sin
-  cuota de la Data API). Si Analytics no está disponible, el resto del panel se pinta y las
+  cuota de la Data API). Los dos periodos de 28 días terminan 3 días antes de hoy, porque
+  Analytics llega con 48-72 h de retraso, y no se solapan. Si Analytics no está disponible, el resto del panel se pinta y las
   tarjetas dicen "Analytics no disponible".
 - `canal-videos`: tabla de los últimos 10 vídeos (`canal-video-<id>`): título, fecha, "Short",
   ID en monoespaciada, chip de estado (Privado / Público / Oculto / Programado) y vistas;
