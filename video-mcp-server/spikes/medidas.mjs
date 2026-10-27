@@ -17,8 +17,10 @@ const S = (n) => path.join(SAL, n);
 const out = { referencia: REF, variantes: {}, calidad: {} };
 
 // 1) ficha y PNG de control.mp4 (modo Rápido, sin --gpu)
-out.control = JSON.parse(run(FP, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", S("control.mp4")]).stdout);
-for (const s of [1, 10, 25, 45]) run(FF, ["-y", "-v", "error", "-ss", String(s), "-i", S("control.mp4"), "-frames:v", "1", S(`rapido_gpu_${s}s.png`)]);
+const fc = run(FP, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", S("control.mp4")]);
+if (fc.status !== 0) throw new Error(`ffprobe falló sobre control.mp4: ${fc.stderr}`);
+out.control = JSON.parse(fc.stdout);
+for (const s of [1, 10, 25, 45]) run(FF, ["-y", "-v", "error", "-ss", String(s), "-i", S("control.mp4"), "-frames:v", "1", S(`control_${s}s.png`)]);
 
 // 2) pruebas de control de tasa sobre la referencia
 const audio = ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"];

@@ -8,8 +8,9 @@ Scripts: `spikes/codificacion.mjs` (renders) y `spikes/medidas.mjs` (SSIM/PSNR, 
 **El criterio de salida se cumple.** El modo Compatible (HyperFrames → intermedio sin `libx264` →
 ffmpeg LGPL → H.264) produce MP4 que pasan ffprobe: 1080×1920, 30 fps, H.264 + AAC estéreo,
 duración 50,41 s (esperada 50,40; tolerancia ±0,1 s). HyperFrames **no** pide `libx264` para
-`--format mov` ni `--format webm`. Con las dos salidas y los dos codificadores de la segunda
-pasada.
+`--format mov` ni `--format webm`. Se ejecutó con los dos intermedios y los dos codificadores de la segunda
+pasada (mf y NVENC), y las cuatro combinaciones pasan ffprobe. **Matiz:** que el paso mov usara el ffmpeg LGPL es una
+**inferencia**: no quedan etiquetas porque borré `inter.mov`; para webm y para el mp4 directo sí hay etiquetas que lo prueban.
 
 ## ffmpeg LGPL usado
 
@@ -29,10 +30,19 @@ pasada.
     El log del render fallido con `--gpu` también imprimía `libavformat 61.7.103`.
   - **`inter.mov`: no queda prueba por etiquetas.** Lo borré tras el spike (785 MB) sin guardar sus etiquetas; los MP4 derivados
     no prueban nada sobre el primer paso. Se ejecutó con el mismo script y el mismo PATH que el webm, pero es una inferencia.
-  - PATH usado por los procesos de HyperFrames: `<carpeta bin del LGPL>;` + el PATH original **sin** las carpetas que contenían
-    `ffmpeg.exe`. En esta máquina la única retirada fue
-    `C:UsersMarcAppDataLocalMicrosoftWinGetPackagesGyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwefmpeg-8.1-full_buildin`;
-    además `FFMPEG_DIR` apuntaba al LGPL (`spikes/codificacion.mjs`, líneas 13–18).
+  - PATH usado por los procesos de HyperFrames: la carpeta bin del LGPL al principio y el PATH original **sin** las carpetas que
+    contenían `ffmpeg.exe` (`spikes/codificacion.mjs`, líneas 13–18; además `FFMPEG_DIR` apuntaba al LGPL). En esta máquina la
+    única carpeta retirada fue:
+
+    ```
+    C:\Users\Marc\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin
+    ```
+
+    y la carpeta puesta delante fue:
+
+    ```
+    C:\Users\Marc\AppData\Local\seo-studio-dev\descargas\ffmpeg-lgpl-7.1.5-12\x\ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1\bin
+    ```
 
 ## Composición de prueba
 
@@ -60,7 +70,7 @@ codificación.
 
 | Salida | Vídeo | Audio | Duración |
 |---|---|---|---|
-| Rápido | h264 Main 1080×1920 yuv420p 30/1, 3 182 kb/s | aac LC 2 can., 191 kb/s | 50,400 |
+| Rápido (`control.mp4`) | h264 Main 1080×1920 yuv420p 30/1, 3 182 kb/s | aac LC 2 can., 191 kb/s | 50,400 |
 | mov → mf | h264 **Constrained Baseline** 1080×1920 yuv420p 30/1, 3 236 kb/s | aac LC 2 can. | 50,410 |
 | mov → nvenc | h264 Main 1080×1920 yuv420p 30/1, 3 987 kb/s | aac LC 2 can. | 50,410 |
 | webm → mf | h264 Constrained Baseline 1080×1920 30/1, 2 237 kb/s | aac LC 2 can. | 50,417 |
@@ -74,21 +84,24 @@ para MOV, no se puede cambiar: «MOV always uses the fixed alpha-preserving ProR
 
 Comparación objetiva contra el intermedio ProRes (referencia casi sin pérdida) y visual de PNG en
 los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`;
-`comparativa_25s.png` pone Rápido · mov-mf · webm-mf · mov-nvenc en fila).
+`comparativa_25s.png` pone Rápido (control) · mov-mf · webm-mf · mov-nvenc en fila).
 
 | Salida | SSIM | PSNR (dB) |
 |---|---|---|
 | Rápido (`control.mp4`, sin `--gpu`) | 0,9958 | 52,1 |
 | mov → mf | 0,9961 | 52,6 |
 | mov → nvenc | 0,9979 | 56,5 |
-| webm → mf | 0,9944 | 38,5 |
-| webm → nvenc | 0,9946 | 38,6 |
-| (el propio intermedio webm) | 0,9948 | — |
+| webm → mf | *retirado* | *retirado* |
+| webm → nvenc | *retirado* | *retirado* |
 
 - Visualmente las cinco salidas son indistinguibles a tamaño real en la composición de prueba:
   mismo layout, mismo texto, mismos degradados.
-- Los `webm` pierden ~14 dB de PSNR porque VP9 ya es con pérdida; los `mov` solo pierden lo de
-  H.264. `h264_mf` y NVENC quedan a la par con el mismo origen.
+- **Cifras retiradas para webm:** las comparaciones objetivas que involucran webm (SSIM 0,994–0,995, PSNR ~38,5 dB frente a mov) no son fiables.
+  Al repetir la medición con `medidas.mjs` frente a `inter.webm` salió ~33 dB, y una comprobación corta de `webm_mf.mp4` contra su propio
+  `inter.webm` (10 s) dio ~19,6 dB tanto con el decodificador nativo como con libvpx, con `setpts` o con `fps=30`: no es
+  alineación ni decodificador, y no se ha encontrado la causa (sospecha sin verificar: el intermedio VP9 lleva `ALPHA_MODE=1`).
+  **No se puede afirmar nada sobre la calidad relativa de webm.** Las cifras de la tabla para Rápido, mov→mf y mov→nvenc salen solo de la
+  ejecución manual contra `inter.mov` (borrado: no reproducible sin regenerarlo). Solo la comparación visual (PNG) es válida para webm.
 - **Límite de esta medición:** la composición de prueba son fondos lisos y degradados, el peor caso
   para detectar diferencias de codificador. Falta repetirla con fotos reales (grano, texturas).
 
@@ -125,8 +138,7 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 de la segunda pasada, y es el que menos sorpresas da con fotos. Cuesta 785 MB de disco temporal
 por 50 s (≈ 16 MB/s; un vídeo de 60 s ≈ 0,95 GB) que se borran al terminar, y 1 minuto más de
 codificación que webm. **Alternativa documentada: `webm` (VP9) si el disco temporal libre es
-< 3 GB**: 6 MB, mismo tiempo total, ~0,2 % de SSIM menos en este contenido; no se ha probado
-con `--crf` bajo para acercarlo. El motor comprueba el espacio libre antes de elegir.
+< 3 GB**: 6 MB y mismo tiempo total; su calidad frente a mov **no está medida de forma fiable** (VP9 es con pérdida, y no se probó `--crf` bajo). El motor comprueba el espacio libre antes de elegir.
 
 **Argumentos de la segunda pasada** (ffmpeg LGPL del bundle; entrada `inter.mov`):
 
@@ -186,5 +198,5 @@ nvenc -preset p5 -rc vbr -cq 19 -b:v 0 -profile:v high        →  8,9
 ```
 
 SSIM (`-lavfi "[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]ssim"`, `All:`): control 0.995828, mov_mf 0.996079,
-mov_nvenc 0.997854, webm_mf 0.994447, webm_nvenc 0.994645, inter.webm 0.994750 (todos frente a `inter.mov`).
-PSNR medio (mismo grafo con `psnr`): control 52.08, mov_mf 52.62, mov_nvenc 56.53, webm_mf 38.53, webm_nvenc 38.56.
+mov_nvenc 0.997854 (frente a `inter.mov`; las cifras de webm quedan retiradas, ver «Calidad»).
+PSNR medio (mismo grafo con `psnr`): control 52.08, mov_mf 52.62, mov_nvenc 56.53.
