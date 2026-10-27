@@ -9,6 +9,7 @@ import { ApprovalCard } from "../chat/ApprovalCard";
 import { TurnoView } from "../chat/ChatScreen";
 import { useChat } from "../chat/useChat";
 import { elegirVideo } from "../dialogo";
+import { esObjeto, extraerJson } from "../json";
 import { comprobar, compararConBorrador, motivoBloqueo, normRuta, zonaHoraria, MAX_DESCRIPCION_BYTES, MAX_ETIQUETAS, MAX_TITULO, bytesUtf8, longitudEtiquetas, type Nivel } from "../publicar/limites";
 import { jobActivo, useJobs } from "../state/jobs";
 import { descartar, parcharBorrador, setEsperandoBorrador, setPath, setTranscripcion, transcribir, usePublicar, type Borrador } from "../state/publicar";
@@ -16,20 +17,15 @@ import { Button, ConfirmDialog, Dialog, Field, Input, Mono, Progress, SegmentedC
 import { cx } from "../ui/cx";
 import s from "./PublicarScreen.module.css";
 
-/** Extrae el primer objeto JSON de un texto del modelo. */
-export function extraerJson(texto: string): Partial<Borrador> | null {
-  const m = texto.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    const j = JSON.parse(m[0]) as Record<string, unknown>;
-    return {
-      title: typeof j.title === "string" ? j.title : undefined,
-      description: typeof j.description === "string" ? j.description : undefined,
-      tags: Array.isArray(j.tags) ? j.tags.join(", ") : typeof j.tags === "string" ? j.tags : undefined,
-    };
-  } catch {
-    return null;
-  }
+/** Campos del borrador que el agente devuelve en su JSON (el resto se ignora). */
+export function camposBorrador(texto: string): Partial<Borrador> | null {
+  const j = extraerJson(texto, esObjeto);
+  if (!j) return null;
+  return {
+    title: typeof j.title === "string" ? j.title : undefined,
+    description: typeof j.description === "string" ? j.description : undefined,
+    tags: Array.isArray(j.tags) ? j.tags.join(", ") : typeof j.tags === "string" ? j.tags : undefined,
+  };
 }
 
 const SIMBOLO: Record<Nivel, string> = { ok: "✓", aviso: "!", error: "✕", info: "·" };
@@ -96,7 +92,7 @@ export function PublicarScreen() {
     const ultimo = chat.mensajes[chat.mensajes.length - 1];
     if (ultimo?.role !== "assistant" || ultimo.turno.estado === "streaming") return;
     const texto = ultimo.turno.bloques.filter((b) => b.kind === "text").map((b) => b.text).join("\n");
-    const j = extraerJson(texto);
+    const j = camposBorrador(texto);
     if (j) parcharBorrador(Object.fromEntries(Object.entries(j).filter(([, v]) => v !== undefined)));
     setEsperandoBorrador(false);
   }, [chat.mensajes, chat.enStream, esperandoBorrador]);
