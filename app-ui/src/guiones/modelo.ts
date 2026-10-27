@@ -46,6 +46,16 @@ const txt = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 const objetos = (v: unknown) => (Array.isArray(v) ? v.filter(esObjeto) : []);
 
+/** Host de una URL para mostrarla; si no se puede analizar (el modelo puede escribir cualquier cosa
+ *  que empiece por https://), la URL tal cual. Nunca lanza: un error aquí tumbaría el render. */
+export function dominio(url: string): string {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
 /** Solo https: lo demás no se podría abrir con abrir_url y no sirve como fuente. */
 function fuentes(v: unknown): Fuente[] {
   return objetos(v)

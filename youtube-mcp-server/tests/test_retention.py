@@ -273,3 +273,66 @@ class TestTool:
         assert "error" not in r
         assert r["transcript_error"] == "The video has no caption tracks yet."
         assert r["drops"][0]["quote"] is None
+
+
+class TestErroresDeYouTube:
+    """Cuota agotada, token revocado o HttpError: siempre {"error"} legible, nunca excepción."""
+
+    def test_cuota_agotada_al_leer_el_video(self, dobles):
+        from youtube_mcp.tools.retention import youtube_retention_moments
+        from youtube_mcp.utils.quota import QuotaExhaustedError
+
+        get_video, retention, _ = dobles
+        get_video.side_effect = QuotaExhaustedError(10000, 10000)
+        r = youtube_retention_moments("abcdefghijk")
+        assert "quota exhausted" in r["error"]
+        retention.assert_not_called()
+
+    def test_token_revocado_al_leer_el_video(self, dobles):
+        from youtube_mcp.auth import AuthError
+        from youtube_mcp.tools.retention import youtube_retention_moments
+
+        get_video, _, _ = dobles
+        get_video.side_effect = AuthError("Vuelve a autorizar el canal.")
+        assert youtube_retention_moments("abcdefghijk") == {"error": "Vuelve a autorizar el canal."}
+
+    def test_sin_cuota_para_la_transcripcion_se_conserva_la_curva(self, dobles):
+        from youtube_mcp.tools.retention import youtube_retention_moments
+        from youtube_mcp.utils.quota import QuotaExhaustedError
+
+        _, _, transcript = dobles
+        transcript.side_effect = QuotaExhaustedError(9990, 10000)
+        r = youtube_retention_moments("abcdefghijk")
+        assert "error" not in r
+        assert len(r["curve"]) == 100
+        assert "quota exhausted" in r["transcript_error"]
+        assert r["drops"][0]["quote"] is None
+
+
+class TestFechasYVentana:
+    def test_las_fechas_por_defecto_van_en_utc(self, dobles):
+        from youtube_mcp.tools import retention
+
+        _, analytics, _ = dobles
+        with patch.object(retention, "_hoy_utc", return_value=retention.date(2026, 9, 1)):
+            retention.youtube_retention_moments("abcdefghijk")
+        kwargs = analytics.call_args.kwargs
+        assert kwargs["start_date"] <= kwargs["end_date"]
+
+    def test_publicado_despues_de_hoy_utc_no_invierte_el_rango(self, dobles):
+        from youtube_mcp.tools import retention
+
+        get_video, analytics, _ = dobles
+        get_video.return_value = {**VIDEO, "published_at": "2026-09-02T01:00:00Z"}
+        with patch.object(retention, "_hoy_utc", return_value=retention.date(2026, 9, 1)):
+            retention.youtube_retention_moments("abcdefghijk")
+        kwargs = analytics.call_args.kwargs
+        assert kwargs["start_date"] == kwargs["end_date"] == "2026-09-01"
+
+    def test_video_mas_corto_que_la_ventana(self, dobles):
+        from youtube_mcp.tools.retention import youtube_retention_moments
+
+        get_video, _, _ = dobles
+        get_video.return_value = {**VIDEO, "duration_seconds": 20}
+        r = youtube_retention_moments("abcdefghijk")
+        assert r["intro_window_s"] == 20

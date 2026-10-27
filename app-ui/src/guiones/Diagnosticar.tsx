@@ -61,7 +61,7 @@ export function Diagnosticar() {
           aria-label="Vídeo a diagnosticar"
           onSubmit={(ev) => {
             ev.preventDefault();
-            if (videoId && autorizado && !d.cargando) void analizarRetencion(client, videoId);
+            if (videoId && autorizado && !d.cargando && !chat.enStream) void analizarRetencion(client, videoId);
           }}
         >
           <div className={s.fila}>
@@ -71,7 +71,7 @@ export function Diagnosticar() {
             <SelectorFormato testid="diag-formato" valor={d.formato} onChange={(formato) => parcharDiagnosticar({ formato })} />
           </div>
           <div className={s.acciones}>
-            <Button type="submit" variant="primary" icon={Activity} data-testid="diag-analizar" disabled={!autorizado || !videoId || d.cargando} loading={d.cargando}>
+            <Button type="submit" variant="primary" icon={Activity} data-testid="diag-analizar" disabled={!autorizado || !videoId || d.cargando || chat.enStream} loading={d.cargando}>
               {d.cargando ? "Analizando…" : "Analizar retención"}
             </Button>
             <p className={s.nota} data-testid="diag-nota">

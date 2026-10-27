@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aGuion,
   aRevision,
+  dominio,
   duracionTotal,
   extraerVideoId,
   guionMarkdown,
@@ -122,5 +123,18 @@ describe("guionMarkdown y duracionTotal", () => {
 
   it("suma los segundos de los bloques", () => {
     expect(duracionTotal(g)).toBe(45);
+  });
+});
+
+describe("dominio", () => {
+  it("devuelve el host de una URL válida", () => {
+    expect(dominio("https://www.vidiq.com/blog/x")).toBe("www.vidiq.com");
+  });
+
+  it("no lanza con URLs que pasan el filtro https pero no se pueden analizar", () => {
+    for (const url of ["https://[", "https://<x>", "https://a:99999"]) {
+      expect(() => dominio(url)).not.toThrow();
+      expect(dominio(url)).toBe(url);
+    }
   });
 });

@@ -161,7 +161,13 @@ Errores (siempre `{"error": "…"}` con texto accionable, nunca excepción al mo
 - Analytics sin filas → «YouTube aún no tiene datos de retención de este vídeo (tarda 1–2 días
   y necesita un mínimo de visualizaciones) o el vídeo no es de tu canal».
 - Sin transcripción → **no** es error: se devuelven curva y momentos con `quote: null` y
-  `transcript_error` relleno. La curva sola ya es útil.
+  `transcript_error` relleno. La curva sola ya es útil. Lo mismo si la transcripción falla por
+  cuota agotada o por la autorización.
+- Ninguna llamada a YouTube se escapa como excepción (cuota agotada, token revocado, HttpError):
+  el endpoint respondería 500 y la pantalla perdería el mensaje.
+- Fechas por defecto en UTC (la de publicación lo está) y el inicio nunca posterior al fin.
+- Vídeo más corto que la ventana del gancho: la intro se mide al final del vídeo y
+  `intro_window_s` lo refleja.
 
 Cuota: `videos.list` 1 + transcripción oficial de vídeo propio ~100 (`caption_list` 50 +
 `caption_download` 50). Añadir la entrada en `QUOTA_OP` del registro para que el coste

@@ -352,7 +352,8 @@ guarda en el sidecar).
 - Formulario: `diag-video` (monoespaciado, "ID o URL del vídeo"; admite un ID de 11 caracteres
   `[A-Za-z0-9_-]` o una URL `watch?v=`, `youtu.be/` o `/shorts/`; con otra cosa, `diag-video-error`
   "No es un ID ni una URL de vídeo de YouTube."), `diag-formato` y `diag-analizar` ("Analizar
-  retención" / "Analizando…"), con `diag-nota` ("Cuesta unas 100 unidades de cuota (transcripción
+  retención" / "Analizando…"; deshabilitado mientras el agente responde, porque analizar otro vídeo
+  vacía la conversación del modo), con `diag-nota` ("Cuesta unas 100 unidades de cuota (transcripción
   oficial). Los datos de retención tardan 1–2 días en aparecer tras publicar."). Llama a
   `GET /guiones/retencion` directamente, sin el agente.
 - `diag-videos` (panel derecho, si `GET /youtube/channel` trae vídeos): "Tus últimos vídeos", un

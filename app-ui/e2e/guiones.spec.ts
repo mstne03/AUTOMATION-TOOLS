@@ -102,10 +102,12 @@ test.describe("Guiones", () => {
     await expect(total).toHaveText("7:30 de 8:00 objetivo");
     await expect(total).toHaveAttribute("data-nivel", "ok");
 
-    // Solo se pintan las fuentes https: la http y la javascript: del modelo se descartan.
+    // Solo se pintan las fuentes https: la http y la javascript: del modelo se descartan. Una https
+    // mal formada y sin título se muestra tal cual, sin tumbar la pantalla.
     const enlaces = page.getByTestId("guion-fuentes").getByRole("link");
-    await expect(enlaces).toHaveCount(1);
-    await expect(enlaces).toHaveAttribute("href", GUION.fuentes[0].url);
+    await expect(enlaces).toHaveCount(2);
+    await expect(enlaces.first()).toHaveAttribute("href", GUION.fuentes[0].url);
+    await expect(enlaces.nth(1)).toHaveText("https://<x> ↗");
 
     await opciones.nth(1).getByRole("radio").check();
     await page.getByTestId("escribir-copiar").click();

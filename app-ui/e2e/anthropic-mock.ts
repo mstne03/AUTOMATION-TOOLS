@@ -26,6 +26,8 @@ export const GUION = {
     { titulo: "Guía de guiones", url: "https://vidiq.com/blog/post/write-youtube-video-script/" },
     { titulo: "Sin cifrar", url: "http://example.com/" },
     { titulo: "Malicioso", url: "javascript:alert(1)" },
+    // Pasa el filtro https pero `new URL` no la entiende: no debe tumbar la pantalla.
+    { titulo: "", url: "https://<x>" },
   ],
 };
 

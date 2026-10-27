@@ -5,12 +5,14 @@ de caídas es aritmética: se hace aquí, de forma determinista y testeable, y a
 le llega una lista corta de momentos con su frase (SPEC-guiones.md, D1).
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 
+from youtube_mcp.auth import AuthError
 from youtube_mcp.server import mcp
 from youtube_mcp.tools.analytics import youtube_analytics_retention
 from youtube_mcp.tools.channel import youtube_get_video
 from youtube_mcp.tools.transcripts import youtube_get_transcript
+from youtube_mcp.utils.quota import QuotaExhaustedError
 
 # Ventana del gancho por formato: YouTube mide la "Introducción" a los 30 s; en Shorts
 # se decide en el primer deslizamiento (SPEC-guiones.md, D5).
@@ -27,6 +29,16 @@ NO_DATA = (
     "tras publicar y hace falta un mínimo de visualizaciones. Tampoco hay datos si el "
     "vídeo no es de tu canal."
 )
+
+
+def _hoy_utc() -> date:
+    """Hoy en UTC, la misma zona que la fecha de publicación del vídeo (publishedAt)."""
+    return datetime.now(UTC).date()
+
+
+def _legible(e: Exception) -> str:
+    """Cuota agotada y autorización ya traen un mensaje para el usuario; el resto, con su tipo."""
+    return str(e) if isinstance(e, (QuotaExhaustedError, AuthError)) else f"{type(e).__name__}: {e}"
 
 
 def _curva(filas: list[dict], duracion_s: float) -> list[dict]:
@@ -123,33 +135,43 @@ def youtube_retention_moments(
     if format not in INTRO_WINDOW_S:
         return {"error": f"format must be 'long' or 'short', not {format!r}"}
 
-    video = youtube_get_video(video_id)
+    # Ninguna llamada a YouTube puede escaparse como excepción: el sidecar respondería 500 y la
+    # pantalla perdería el mensaje (cuota agotada, token revocado...).
+    try:
+        video = youtube_get_video(video_id)
+    except Exception as e:  # noqa: BLE001
+        return {"error": _legible(e)}
     if "error" in video:
         return video
     duracion = video.get("duration_seconds")
     if not duracion:
         return {"error": f"Could not read the duration of video {video_id}."}
 
+    # Por defecto, toda la vida del vídeo. Ambas fechas en UTC: con la fecha local, un vídeo recién
+    # publicado podía dar un inicio posterior al fin y Analytics rechazaba la consulta.
+    fin = end_date or _hoy_utc().isoformat()
+    inicio = start_date or min((video.get("published_at") or "")[:10] or fin, fin)
     try:
-        retencion = youtube_analytics_retention(
-            video_id,
-            start_date=start_date or (video.get("published_at") or "")[:10] or None,
-            end_date=end_date or date.today().isoformat(),
-        )
+        retencion = youtube_analytics_retention(video_id, start_date=inicio, end_date=fin)
     except Exception as e:  # noqa: BLE001 - al modelo le llega un error legible, no un traceback
-        return {"error": f"YouTube Analytics: {type(e).__name__}: {e}"}
+        return {"error": f"YouTube Analytics: {_legible(e)}"}
     filas = retencion.get("results") or []
     if not filas:
         return {"error": NO_DATA}
 
     curva = _curva(filas, duracion)
-    transcripcion = youtube_get_transcript(video_id, language)
+    # Sin transcripción (o sin cuota para pedirla) la curva sigue valiendo: no es un error.
+    try:
+        transcripcion = youtube_get_transcript(video_id, language)
+    except Exception as e:  # noqa: BLE001
+        transcripcion = {"error": _legible(e)}
     segmentos = transcripcion.get("segments") or []
 
     def con_cita(tramos: list[dict]) -> list[dict]:
         return [{**t, "quote": _cita(segmentos, t["t_start"], t["t_end"])} for t in tramos]
 
-    ventana = INTRO_WINDOW_S[format]
+    # En un vídeo más corto que la ventana, la intro se mide al final del vídeo y se dice así.
+    ventana = min(INTRO_WINDOW_S[format], duracion)
     return {
         "video_id": video_id,
         "title": video.get("title"),

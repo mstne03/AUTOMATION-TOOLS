@@ -5,7 +5,7 @@ import type { useChat } from "../chat/useChat";
 import { EnlaceExterno } from "../enlaces";
 import { SegmentedControl } from "../ui";
 import s from "./Guiones.module.css";
-import type { Formato, Fuente } from "./modelo";
+import { dominio, type Formato, type Fuente } from "./modelo";
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -57,7 +57,7 @@ export function Fuentes({ fuentes }: { fuentes: Fuente[] }) {
       <ul className={s.fuentes}>
         {fuentes.map((f) => (
           <li key={f.url}>
-            <EnlaceExterno href={f.url}>{f.titulo || new URL(f.url).hostname} ↗</EnlaceExterno>
+            <EnlaceExterno href={f.url}>{f.titulo || dominio(f.url)} ↗</EnlaceExterno>
           </li>
         ))}
       </ul>
