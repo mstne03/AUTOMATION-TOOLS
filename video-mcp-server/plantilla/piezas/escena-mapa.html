@@ -1,0 +1,68 @@
+<!doctype html>
+<!--
+  Escena `mapa`: adaptación vertical de spain-map / world-map (catálogo).
+  Los trazados vienen ya proyectados del servidor (mapas.ts, con es-atlas y world-atlas de npm): aquí no
+  hay fetch, ni d3, ni topojson. Las zonas destacadas se encienden en el color de acento una a una,
+  separadas 0,25 s, y luego entra la etiqueta. Mapa entre 300 y 1010 px, encima de los subtítulos.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+        #{{ID}} .capa { position: absolute; inset: 0; }
+        #{{ID}}-velo { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.3); }
+        #{{ID}}-titulo { position: absolute; left: 90px; top: 196px; width: 900px; text-align: center; font-family: var(--fuente-titulos); font-weight: var(--peso-titulos);
+          font-size: 72px; line-height: 1.02; color: var(--texto); text-transform: uppercase; -webkit-text-stroke: 4px var(--contorno); paint-order: stroke fill; }
+        #{{ID}}-svg { position: absolute; left: 40px; top: 300px; width: 1000px; height: 620px; overflow: visible; }
+        /* Europa es un recorte del atlas: los países cortados por el borde (Rusia) se funden en vez de acabar en recto. */
+        #{{ID}}-svg.recorte { -webkit-mask-image: radial-gradient(ellipse 62% 62% at 50% 50%, #000 72%, transparent 100%); mask-image: radial-gradient(ellipse 62% 62% at 50% 50%, #000 72%, transparent 100%); }
+        #{{ID}} .base { fill: rgba(244, 241, 232, 0.16); stroke: rgba(11, 15, 12, 0.85); stroke-width: 1.2; }
+        #{{ID}} .dest { fill: rgba(244, 241, 232, 0.16); stroke: rgba(11, 15, 12, 0.85); stroke-width: 1.2; }
+        #{{ID}} .esfera { fill: rgba(30, 60, 90, 0.35); stroke: rgba(244, 241, 232, 0.35); stroke-width: 2; }
+        #{{ID}} .reticula { fill: none; stroke: rgba(244, 241, 232, 0.08); stroke-width: 1; }
+        #{{ID}} .marco { fill: none; stroke: rgba(244, 241, 232, 0.35); stroke-width: 2; stroke-dasharray: 8 6; }
+        #{{ID}}-etq-caja { position: absolute; left: 90px; top: 930px; width: 900px; display: flex; justify-content: center; }
+        #{{ID}}-etq { font-family: var(--fuente-titulos); font-size: 56px; line-height: 1.1; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fondo);
+          background: var(--acento); padding: 8px 28px 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); white-space: nowrap; }
+      </style>
+      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0">
+        <div id="{{ID}}-fundido" class="capa">
+          <div id="{{ID}}-golpe" class="capa">
+            <div id="{{ID}}-punch" class="capa">
+              <div id="{{ID}}-velo"></div>
+              <div id="{{ID}}-titulo" data-layout-allow-occlusion>{{TITULO}}</div>
+              <svg id="{{ID}}-svg" class="{{CLASE_SVG}}" viewBox="0 0 {{ANCHO}} {{ALTO}}" xmlns="http://www.w3.org/2000/svg" data-layout-allow-overflow>
+{{TRAZADOS}}
+              </svg>
+              <div id="{{ID}}-etq-caja" style="{{ETQ_VISIBLE}}"><div id="{{ID}}-etq" data-layout-allow-occlusion>{{ETIQUETA}}</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script id="{{ID}}-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var id = "{{ID}}";
+          var d = JSON.parse(document.getElementById(id + "-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          {{ENVOLTURA}}
+          tl.fromTo("#" + id + "-svg", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power2.out" }, d.empieza);
+          tl.fromTo("#" + id + "-titulo", { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, d.empieza);
+          d.destacadas.forEach(function (z, i) {
+            var t = d.enciende + i * 0.25;
+            tl.fromTo("#" + z, { fill: "rgba(244, 241, 232, 0.16)", stroke: "rgba(11, 15, 12, 0.85)" },
+              { fill: d.colores.acento, stroke: d.colores.texto, duration: 0.3, ease: "power2.out", immediateRender: false }, t);
+          });
+          tl.fromTo("#" + id + "-etq", { opacity: 0, yPercent: 120 }, { opacity: 1, yPercent: 0, duration: 0.3, ease: "back.out(2)" }, d.etiqueta);
+          window.__timelines = window.__timelines || {};
+          window.__timelines[id] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>
