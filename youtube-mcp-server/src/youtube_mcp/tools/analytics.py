@@ -4,12 +4,12 @@ Provides access to channel and video performance metrics, audience data,
 traffic sources, and more via the YouTube Analytics API.
 
 Notas verificadas contra la API real (2026-10-27):
-- `creatorContentType` se FILTRA en minusculas (`shorts`, `video_on_demand`,
-  `live_stream`); las mayusculas de la documentacion devuelven 400.
+- `creatorContentType` se FILTRA en minúsculas (`shorts`, `video_on_demand`,
+  `live_stream`); las mayúsculas de la documentación devuelven 400.
 - Los datos llegan con 48-72 h de retraso: pedir hasta hoy no da error, pero los
-  ultimos dias faltan y el resultado parece una caida.
-- `views` cuenta cada inicio de reproduccion (cambio de 2025/2026); `engagedViews`
-  es la vista "que cuenta" (la que usa la monetizacion).
+  últimos días faltan y el resultado parece una caída.
+- `views` cuenta cada inicio de reproducción (cambio de 2025/2026); `engagedViews`
+  es la vista "que cuenta" (la que usa la monetización).
 """
 
 from datetime import date, timedelta
@@ -24,8 +24,8 @@ DATA_LAG_DAYS = 3
 def _date_range(
     start_date: str | None, end_date: str | None, default_days: int = 28
 ) -> tuple[str, str, str | None]:
-    """(start, end, aviso). Por defecto, los `default_days` dias que terminan donde
-    acaban los datos procesados; el aviso aparece si el rango pide dias sin procesar."""
+    """(start, end, aviso). Por defecto, los `default_days` días que terminan donde
+    acaban los datos procesados; el aviso aparece si el rango pide días sin procesar."""
     ultimo = date.today() - timedelta(days=DATA_LAG_DAYS)
     end = date.fromisoformat(end_date) if end_date else ultimo
     start = date.fromisoformat(start_date) if start_date else end - timedelta(days=default_days)
@@ -423,8 +423,8 @@ def youtube_analytics_content_type_breakdown(
 
 
 def _revenue_query(**kwargs) -> dict:
-    """Un canal sin monetizar no da 403: devuelve filas vacias (comprobado en vivo).
-    Se explican ambos casos para que el modelo no lea el vacio como "0 de ingresos"."""
+    """Un canal sin monetizar no da 403: devuelve filas vacías (comprobado en vivo).
+    Se explican ambos casos para que el modelo no lea el vacío como "0 de ingresos"."""
     data = _run_analytics_query(**kwargs)
     if data.get("status") == 403:
         data["error"] = (

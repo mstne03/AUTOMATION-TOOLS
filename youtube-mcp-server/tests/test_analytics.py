@@ -1,4 +1,4 @@
-"""Analytics: rango con latencia, engagedViews, filtros en minusculas y errores visibles."""
+"""Analytics: rango con latencia, engagedViews, filtros en minúsculas y errores visibles."""
 
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
@@ -74,7 +74,7 @@ class TestMetricasYFiltros:
         analytics.youtube_analytics_video_detail("abc")
         assert "engagedViews" in _params(api)["metrics"].split(",")
 
-    # La API real rechaza con 400 las mayusculas de la documentacion (2026-10-27).
+    # La API real rechaza con 400 las mayúsculas de la documentación (2026-10-27).
     @pytest.mark.parametrize("tool, valor", [
         ("youtube_analytics_top_videos", "video_on_demand"),
         ("youtube_analytics_top_shorts", "shorts"),
