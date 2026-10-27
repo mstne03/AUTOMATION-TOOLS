@@ -102,7 +102,9 @@ Node, y HyperFrames es Node + Chrome + ffmpeg en cualquier caso. Alternativas de
 Decisión: el código de footy entra en el repo como paquete propio (`video-mcp-server/`,
 TypeScript) y el backend lo lanza como **proceso hijo** con el cliente MCP de Python por
 **stdio** (mensajes JSON por la entrada/salida estándar; no abre puertos, así que nada fuera
-del backend puede hablarle). Un adaptador en `registry.py` convierte sus tools al mismo
+del backend puede hablarle). El backend lo usa a través de una clase cliente (`MotorVideo`,
+`app_backend/video.py`) desde sus rutas REST. Como el modelo no llama a estas tools (D2), no
+entran en `registry.build()`; si alguna se expone al chat más adelante, se adapta al mismo
 `ToolSpec` (riesgo, `job_kind`, `strict`) que las Python.
 
 Requisitos del adaptador:
