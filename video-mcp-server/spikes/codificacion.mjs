@@ -140,7 +140,7 @@ console.error(`Composición lista: ${montaje.duracion} s, webgpu=${montaje.usaWe
 // 0) mp4 directo SIN --gpu (control.mp4): con un ffmpeg sin libx264 HyperFrames cae solo al codificador de GPU, así que es el modo Rápido.
 await hf("0_rapido_mp4_sin_gpu_control", S("control.mp4"), ["--format", "mp4", ...gpuArgs]);
 // 1) mp4 directo con --gpu explícito (en la ejecución del spike falló; ver INFORME).
-await hf("1_mp4_con_gpu_explicito", S("rapido_gpu.mp4"), ["--format", "mp4", "--gpu", ...gpuArgs]);
+await hf("1_mp4_con_gpu_explicito", S("mp4_gpu_explicito.mp4"), ["--format", "mp4", "--gpu", ...gpuArgs]);
 // 2) Intermedios.
 await hf("2_intermedio_mov", S("inter.mov"), ["--format", "mov", ...gpuArgs]);
 await hf("3_intermedio_webm", S("inter.webm"), ["--format", "webm", ...gpuArgs]);
@@ -154,7 +154,7 @@ for (const [fmt, inter] of [["mov", "inter.mov"], ["webm", "inter.webm"]]) {
   await fase(`5_${fmt}_h264_nvenc`, FF, paso2("h264_nvenc", S(inter), S(`${fmt}_nvenc.mp4`)), { timeoutMs: 600000 });
 }
 
-for (const [nombre, archivo] of [["rapido_gpu", "rapido_gpu.mp4"], ["inter_mov", "inter.mov"], ["inter_webm", "inter.webm"], ["mov_mf", "mov_mf.mp4"], ["mov_nvenc", "mov_nvenc.mp4"], ["webm_mf", "webm_mf.mp4"], ["webm_nvenc", "webm_nvenc.mp4"]]) {
+for (const [nombre, archivo] of [["mp4_gpu_explicito", "mp4_gpu_explicito.mp4"], ["inter_mov", "inter.mov"], ["inter_webm", "inter.webm"], ["mov_mf", "mov_mf.mp4"], ["mov_nvenc", "mov_nvenc.mp4"], ["webm_mf", "webm_mf.mp4"], ["webm_nvenc", "webm_nvenc.mp4"]]) {
   await ficha(nombre, S(archivo));
   await pngs(nombre, S(archivo));
 }

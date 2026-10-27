@@ -5,12 +5,15 @@ Scripts: `spikes/codificacion.mjs` (renders) y `spikes/medidas.mjs` (SSIM/PSNR, 
 
 ## Veredicto
 
-**El criterio de salida se cumple.** El modo Compatible (HyperFrames → intermedio sin `libx264` →
-ffmpeg LGPL → H.264) produce MP4 que pasan ffprobe: 1080×1920, 30 fps, H.264 + AAC estéreo,
-duración 50,41 s (esperada 50,40; tolerancia ±0,1 s). HyperFrames **no** pide `libx264` para
-`--format mov` ni `--format webm`. Se ejecutó con los dos intermedios y los dos codificadores de la segunda
-pasada (mf y NVENC), y las cuatro combinaciones pasan ffprobe. **Matiz:** que el paso mov usara el ffmpeg LGPL es una
-**inferencia**: no quedan etiquetas porque borré `inter.mov`; para webm y para el mp4 directo sí hay etiquetas que lo prueban.
+**El criterio de salida se cumple, probado en la ruta webm e inferido en la ruta mov.**
+- **Ruta webm (probada):** `inter.webm` lleva etiquetas `Lavc61.19.101 libvpx-vp9` / `Lavf61.7.103` (las del ffmpeg LGPL 7.1) y sus
+  MP4 con `h264_mf` y `h264_nvenc` pasan ffprobe: 1080×1920, 30 fps, H.264 + AAC estéreo, duración 50,417 s (esperada 50,40;
+  tolerancia ±0,1 s). Es la ruta sin `libx264` demostrada.
+- **Ruta mov (inferida):** sus MP4 también pasan ffprobe (50,410 s) y el render terminó con código 0, pero no quedan etiquetas de
+  `inter.mov` (lo borré), así que que usara el ffmpeg LGPL y no otro se **infiere** de que se ejecutó con el mismo script y PATH.
+  Por la misma razón, «HyperFrames no pide `libx264` para `--format mov`» está **probado para webm e inferido para mov**
+  (el render mov acabó sin error con un PATH que solo contenía el LGPL, donde `libx264` no existe).
+- Se ejecutaron los dos intermedios y los dos codificadores de la segunda pasada (las cuatro combinaciones pasan ffprobe).
 
 ## ffmpeg LGPL usado
 
@@ -96,6 +99,8 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 
 - Visualmente las cinco salidas son indistinguibles a tamaño real en la composición de prueba:
   mismo layout, mismo texto, mismos degradados.
+- **Las cifras SSIM/PSNR de mov que se mantienen no están validadas:** la misma cadena de medición (`format=yuv420p` en ambos lados +
+  `ssim`/`psnr`) da un ~19,6 dB inexplicado al comparar webm con su propio origen. Léanse como indicativas, no como prueba.
 - **Cifras retiradas para webm:** las comparaciones objetivas que involucran webm (SSIM 0,994–0,995, PSNR ~38,5 dB frente a mov) no son fiables.
   Al repetir la medición con `medidas.mjs` frente a `inter.webm` salió ~33 dB, y una comprobación corta de `webm_mf.mp4` contra su propio
   `inter.webm` (10 s) dio ~19,6 dB tanto con el decodificador nativo como con libvpx, con `setpts` o con `fps=30`: no es
@@ -134,11 +139,15 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 
 ## Decisión
 
-**Formato intermedio: `mov` (ProRes 4444).** Es el único visualmente sin pérdida (ProRes 4444, no matemáticamente lossless): la calidad final depende solo
-de la segunda pasada, y es el que menos sorpresas da con fotos. Cuesta 785 MB de disco temporal
-por 50 s (≈ 16 MB/s; un vídeo de 60 s ≈ 0,95 GB) que se borran al terminar, y 1 minuto más de
-codificación que webm. **Alternativa documentada: `webm` (VP9) si el disco temporal libre es
-< 3 GB**: 6 MB y mismo tiempo total; su calidad frente a mov **no está medida de forma fiable** (VP9 es con pérdida, y no se probó `--crf` bajo). El motor comprueba el espacio libre antes de elegir.
+**Formato intermedio: `mov` (ProRes 4444).** Es el visualmente sin pérdida (no matemáticamente lossless): la calidad final
+depende de la segunda pasada, y es el que menos sorpresas debería dar con fotos (no medido con fotos). Coste: **785 MB de disco
+temporal por 50,4 s** (≈ 15,6 MB/s; 60 s ≈ 0,94 GB), que se borran al terminar. Tiempos (tabla): el render mov fue 57 s más rápido
+(772 s frente a 830 s; en la codificación interna de HyperFrames 52,8 s frente a 61 s) pero su segunda pasada tarda más con mf
+(13,3 s frente a 6,1 s) y con NVENC (9,4 s frente a 4,1 s); total mov+mf 785 s frente a webm+mf 836 s, mov+nvenc 782 s frente
+a webm+nvenc 834 s. Es decir, **webm no es más rápido: ~50 s más lento en total**, pero ocupa 6,3 MB en vez de 785 MB.
+**Alternativa documentada: `webm` (VP9) si el disco temporal libre es escaso** (el umbral exacto se fija en la fase 1; este
+spike no lo mide): su calidad frente a mov **no está medida de forma fiable** (VP9 es con pérdida y no se probó `--crf` bajo).
+El motor comprueba el espacio libre antes de elegir.
 
 **Argumentos de la segunda pasada** (ffmpeg LGPL del bundle; entrada `inter.mov`):
 
