@@ -13,7 +13,7 @@ import secrets
 import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from anthropic import (
     APIConnectionError,
@@ -22,7 +22,7 @@ from anthropic import (
     AuthenticationError,
     PermissionDeniedError,
 )
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -71,6 +71,9 @@ def _fuentes_reales(tools: dict) -> Fuentes:
 
     def analytics(inicio: str, fin: str) -> dict:
         r = _run_analytics_query(metrics=METRICAS, start_date=inicio, end_date=fin)
+        # Un error de la API puede llegar como dato: que construir() lo muestre en metricas_error.
+        if "error" in r:
+            raise RuntimeError(r["error"])
         return r["results"][0] if r["results"] else {}
 
     return Fuentes(
@@ -392,6 +395,19 @@ def create_app(
         except Exception as e:
             log.warning("KB: %s: %s", type(e).__name__, e)
             raise HTTPException(status_code=503, detail=f"La base de conocimiento no está disponible: {type(e).__name__}.") from e
+
+    # ---------------------------------------------------------------- guiones
+
+    @app.get("/guiones/retencion", dependencies=protegido)
+    async def guiones_retencion(
+        video_id: str = Query(pattern=r"^[A-Za-z0-9_-]{11}$"),
+        format: Literal["long", "short"] = "long",
+        language: str = Query("es", pattern=r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$"),
+    ):
+        # Sin el modelo: la pantalla pinta la curva al momento y la cuota se gasta una vez.
+        # El patrón del ID evita meter texto arbitrario en el filtro de Analytics (video==...).
+        fn = tools["youtube_retention_moments"].fn
+        return await asyncio.to_thread(fn, video_id, format, language)
 
     # ---------------------------------------------------------------- youtube
 

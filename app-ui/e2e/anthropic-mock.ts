@@ -11,6 +11,36 @@ type Block =
 /** Marcador: se sustituye por la ruta de "Sube el vídeo <ruta> a YouTube" del último mensaje. */
 const RUTA_PEDIDA = "<ruta pedida>";
 
+/** Respuestas de la pantalla Guiones (e2e/guiones.spec.ts). */
+export const GUION = {
+  ganchos: [
+    { tipo: "promesa", texto: "En 5 minutos vas a montar tu primer servidor." },
+    { tipo: "curiosidad", texto: "El 90 % de los tutoriales se saltan este paso." },
+  ],
+  bloques: [
+    { titulo: "Qué vamos a hacer", segundos: 300, contenido: "Contexto y objetivo.", nota_visual: "plano medio" },
+    { titulo: "Paso a paso", segundos: 250, contenido: "Los comandos.", nota_visual: "" },
+  ],
+  cta: "Suscríbete para la parte 2.",
+  fuentes: [
+    { titulo: "Guía de guiones", url: "https://vidiq.com/blog/post/write-youtube-video-script/" },
+    { titulo: "Sin cifrar", url: "http://example.com/" },
+    { titulo: "Malicioso", url: "javascript:alert(1)" },
+    // Pasa el filtro https pero `new URL` no la entiende: no debe tumbar la pantalla.
+    { titulo: "", url: "https://<x>" },
+  ],
+};
+
+export const REVISION = {
+  veredicto_gancho: "El gancho tarda 20 segundos en llegar a la promesa.",
+  problemas: [
+    { fragmento: "Hola a todos, bienvenidos", problema: "Saludo sin valor", propuesta: "Empieza por el resultado." },
+    { fragmento: "como os decía", problema: "Relleno", propuesta: "Quitarlo." },
+  ],
+  gancho_reescrito: "Este comando te ahorra dos horas a la semana.",
+  fuentes: [],
+};
+
 export const GUIONES: Record<string, Block[]> = {
   "E2E-TEXTO": [{ type: "text", text: "Hola **Marc**, esto es un texto de prueba.\n\n- uno\n- dos" }],
   "E2E-RECHAZO": [
@@ -78,6 +108,20 @@ export const GUIONES: Record<string, Block[]> = {
   "E2E-BORRAR": [
     { type: "tool_use", id: "tu_e2e_2", name: "youtube_delete_video", input: { video_id: "vid9" } },
   ],
+  // Guiones. Gana la PRIMERA marca que aparezca en el mensaje: el prompt de «Guardar aprendizaje»
+  // también lleva el título del vídeo (E2E-DIAG), así que guardar_en_kb_privada va antes.
+  "E2E-GUION": [{ type: "text", text: "Aquí tienes el guion:\n```json\n" + JSON.stringify(GUION) + "\n```" }],
+  "E2E-REVISION": [{ type: "text", text: JSON.stringify(REVISION) }],
+  "E2E-ROTO": [{ type: "text", text: "Lo siento, hoy no me sale el JSON." }],
+  guardar_en_kb_privada: [
+    {
+      type: "tool_use",
+      id: "tu_e2e_guardar",
+      name: "guardar_en_kb_privada",
+      input: { titulo: "Aprendizajes E2E", texto: "- gancho corto", identificador: "retencion-e2eDiag001", plataformas: ["youtube"], fecha: "" },
+    },
+  ],
+  "E2E-DIAG": [{ type: "text", text: "En 0:10 se va la gente porque el saludo es largo. Prueba: «Esto te ahorra 2 horas»." }],
 };
 
 function sse(blocks: Block[], stopReason: string): string {

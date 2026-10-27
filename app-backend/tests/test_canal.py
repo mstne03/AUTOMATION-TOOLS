@@ -139,3 +139,20 @@ async def test_endpoint_error_del_canal_es_502_legible(api):
     api.monkeypatch.setattr(api.yt_auth, "status", lambda: {"authenticated": True, "profile": "default"})
     r = await api.get("/youtube/channel", headers=AUTH)
     assert r.status_code == 502 and "Channel not found" in r.json()["detail"]
+
+
+def test_fuentes_reales_un_error_de_analytics_como_dato_es_legible():
+    """Si Analytics devuelve el error como dato (sin `results`), el panel debe ver ese mensaje y no un
+    KeyError('results'): construir() lo pone tal cual en metricas_error."""
+    from unittest.mock import patch
+
+    import pytest
+
+    from app_backend.main import _fuentes_reales
+
+    error = {"error": "YouTube Analytics API 403: Forbidden", "status": 403}
+    with (
+        patch("youtube_mcp.tools.analytics._run_analytics_query", return_value=error),
+        pytest.raises(Exception, match="YouTube Analytics API 403: Forbidden"),
+    ):
+        _fuentes_reales({}).analytics("2026-09-01", "2026-09-28")

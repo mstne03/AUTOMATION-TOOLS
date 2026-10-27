@@ -1,6 +1,6 @@
 /** Barra lateral: logo, paleta, navegación, conversaciones, job activo, aviso de configuración y
  *  pie con el canal activo. Los testids nav / nav-* se conservan (docs/pantallas.md). */
-import { BookOpen, ChartLine, MessageSquare, Play, Plus, Search, Trash2, TriangleAlert, Upload, type LucideIcon } from "lucide-react";
+import { BookOpen, ChartLine, MessageSquare, Play, Plus, ScrollText, Search, Trash2, TriangleAlert, Upload, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { useClient } from "../api/context";
@@ -15,6 +15,7 @@ import s from "./Sidebar.module.css";
 const enlaces: Array<[string, string, LucideIcon]> = [
   ["chat", "Chat", MessageSquare],
   ["publicar", "Publicar", Upload],
+  ["guiones", "Guiones", ScrollText],
   ["canal", "Canal", ChartLine],
   ["kb", "Conocimiento", BookOpen],
 ];

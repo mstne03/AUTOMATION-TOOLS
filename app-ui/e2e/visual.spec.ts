@@ -47,6 +47,7 @@ const KB_ESTADO = {
 const PANTALLAS: Array<{ nombre: string; ruta: string; listo: (p: Page) => Promise<void> }> = [
   { nombre: "chat", ruta: "/#/chat", listo: async (p) => void (await p.getByTestId("chat-input").waitFor()) },
   { nombre: "publicar", ruta: "/#/publicar", listo: async (p) => void (await p.getByTestId("publicar-pasos").waitFor()) },
+  { nombre: "guiones", ruta: "/#/guiones", listo: async (p) => void (await p.getByTestId("escribir-form").waitFor()) },
   { nombre: "canal", ruta: "/#/canal", listo: async (p) => void (await p.getByTestId("canal-videos").waitFor()) },
   { nombre: "kb", ruta: "/#/kb", listo: async (p) => void (await p.getByTestId("kb-snapshot").getByText("Versión").waitFor()) },
   { nombre: "ajustes", ruta: "/#/ajustes", listo: async (p) => void (await p.getByTestId("ajustes-nav-general").waitFor()) },

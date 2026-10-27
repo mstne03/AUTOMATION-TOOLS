@@ -1,21 +1,26 @@
 """Response formatting utilities for LLM consumption."""
 
+import re
+
+_ISO_DURATION = re.compile(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?")
+
+
+def iso_duration_seconds(iso_duration: str) -> int | None:
+    """ISO 8601 duration (P1DT1H2M3S) -> total seconds. None if empty or unparseable."""
+    m = _ISO_DURATION.fullmatch(iso_duration or "")
+    if not iso_duration or not m:
+        return None
+    d, h, mi, s = (int(g) if g else 0 for g in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + s
 
 
 def format_duration(iso_duration: str) -> str:
     """Convert ISO 8601 duration (PT1H2M3S) to human-readable format."""
-    if not iso_duration:
+    total = iso_duration_seconds(iso_duration)
+    if total is None:
         return "unknown"
-    s = iso_duration.replace("PT", "")
-    hours = minutes = seconds = 0
-    if "H" in s:
-        hours, s = s.split("H")
-        hours = int(hours)
-    if "M" in s:
-        minutes, s = s.split("M")
-        minutes = int(minutes)
-    if "S" in s:
-        seconds = int(s.replace("S", ""))
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
     parts = []
     if hours:
         parts.append(f"{hours}h")
@@ -50,6 +55,7 @@ def format_video_summary(video: dict) -> dict:
         "channel": snippet.get("channelTitle"),
         "published_at": snippet.get("publishedAt"),
         "duration": format_duration(content.get("duration", "")),
+        "duration_seconds": iso_duration_seconds(content.get("duration", "")),
         "views": int(stats.get("viewCount", 0)),
         "likes": int(stats.get("likeCount", 0)),
         "comments": int(stats.get("commentCount", 0)),
@@ -62,15 +68,5 @@ def format_video_summary(video: dict) -> dict:
 
 def _is_likely_short(iso_duration: str) -> bool:
     """Heuristic: videos <= 60 seconds are likely Shorts."""
-    if not iso_duration:
-        return False
-    s = iso_duration.replace("PT", "")
-    total_seconds = 0
-    if "H" in s:
-        return False
-    if "M" in s:
-        minutes, s = s.split("M")
-        total_seconds += int(minutes) * 60
-    if "S" in s:
-        total_seconds += int(s.replace("S", ""))
-    return total_seconds <= 60
+    total = iso_duration_seconds(iso_duration)
+    return total is not None and total <= 60
