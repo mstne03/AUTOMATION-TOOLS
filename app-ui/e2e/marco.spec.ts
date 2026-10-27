@@ -9,10 +9,10 @@ test("barra lateral: título, enlaces en orden, activo con aria-current y 248 px
   await expect(nav.locator("h2")).toHaveText("SEO Studio");
   const ids = await nav.locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("data-testid")));
   const falta = !s.has_anthropic_key || !s.has_client_secret || !yt.auth.authenticated;
-  expect(ids).toEqual(["nav-chat", "nav-publicar", "nav-canal", "nav-kb", ...(falta ? ["nav-onboarding"] : []), "nav-ajustes"]);
+  expect(ids).toEqual(["nav-chat", "nav-publicar", "nav-guiones", "nav-canal", "nav-kb", ...(falta ? ["nav-onboarding"] : []), "nav-ajustes"]);
   await expect(page.getByTestId("nav-kb")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-chat")).not.toHaveAttribute("aria-current", "page");
-  for (const [id, texto] of [["nav-chat", "Chat"], ["nav-publicar", "Publicar"], ["nav-canal", "Canal"], ["nav-kb", "Conocimiento"]]) {
+  for (const [id, texto] of [["nav-chat", "Chat"], ["nav-publicar", "Publicar"], ["nav-guiones", "Guiones"], ["nav-canal", "Canal"], ["nav-kb", "Conocimiento"]]) {
     await expect(page.getByTestId(id)).toHaveText(texto);
   }
   const ancho = await nav.evaluate((n) => n.getBoundingClientRect().width);

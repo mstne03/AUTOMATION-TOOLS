@@ -81,6 +81,7 @@ from youtube_mcp.tools import (  # noqa: E402
     playlists,  # noqa: F401
     publishing,  # noqa: F401
     reporting,  # noqa: F401
+    retention,  # noqa: F401
     search,  # noqa: F401
     transcripts,  # noqa: F401
 )
