@@ -178,14 +178,14 @@ def dobles():
     watch = [1.0] * 10 + [0.8] * 90  # caída de 20 pp en 10 s -> 11 s
     with (
         patch(
-            "youtube_mcp.tools.retention.youtube_get_video", return_value=dict(VIDEO)
+            "youtube_mcp.tools.channel.youtube_get_video", return_value=dict(VIDEO)
         ) as get_video,
         patch(
-            "youtube_mcp.tools.retention.youtube_analytics_retention",
+            "youtube_mcp.tools.analytics.youtube_analytics_retention",
             return_value={"results": _filas(watch)},
         ) as retention,
         patch(
-            "youtube_mcp.tools.retention.youtube_get_transcript", return_value=dict(TRANSCRIPCION)
+            "youtube_mcp.tools.transcripts.youtube_get_transcript", return_value=dict(TRANSCRIPCION)
         ) as transcript,
     ):
         yield get_video, retention, transcript
@@ -336,3 +336,28 @@ class TestFechasYVentana:
         get_video.return_value = {**VIDEO, "duration_seconds": 20}
         r = youtube_retention_moments("abcdefghijk")
         assert r["intro_window_s"] == 20
+
+
+class TestImports:
+    """retention importa analytics, channel y transcripts, que a su vez importan el servidor, y el
+    servidor importa retention: cualquiera de ellos debe poder importarse el primero."""
+
+    @pytest.mark.parametrize("modulo", ["analytics", "channel", "transcripts", "retention"])
+    def test_cada_modulo_se_importa_el_primero(self, modulo):
+        import subprocess
+        import sys
+
+        orden = [sys.executable, "-c", f"import youtube_mcp.tools.{modulo}"]
+        r = subprocess.run(orden, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+
+
+class TestAnalyticsComoDato:
+    def test_un_error_de_analytics_devuelto_como_dato_no_se_disfraza_de_sin_datos(self, dobles):
+        from youtube_mcp.tools.retention import youtube_retention_moments
+
+        _, analytics, transcript = dobles
+        analytics.return_value = {"error": "YouTube Analytics API 403: Forbidden", "status": 403}
+        r = youtube_retention_moments("abcdefghijk")
+        assert r == {"error": "YouTube Analytics: YouTube Analytics API 403: Forbidden"}
+        transcript.assert_not_called()

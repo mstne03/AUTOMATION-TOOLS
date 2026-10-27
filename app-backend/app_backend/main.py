@@ -71,6 +71,9 @@ def _fuentes_reales(tools: dict) -> Fuentes:
 
     def analytics(inicio: str, fin: str) -> dict:
         r = _run_analytics_query(metrics=METRICAS, start_date=inicio, end_date=fin)
+        # Un error de la API puede llegar como dato: que construir() lo muestre en metricas_error.
+        if "error" in r:
+            raise RuntimeError(r["error"])
         return r["results"][0] if r["results"] else {}
 
     return Fuentes(

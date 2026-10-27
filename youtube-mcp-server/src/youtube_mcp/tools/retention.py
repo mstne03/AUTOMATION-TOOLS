@@ -9,9 +9,10 @@ from datetime import UTC, date, datetime
 
 from youtube_mcp.auth import AuthError
 from youtube_mcp.server import mcp
-from youtube_mcp.tools.analytics import youtube_analytics_retention
-from youtube_mcp.tools.channel import youtube_get_video
-from youtube_mcp.tools.transcripts import youtube_get_transcript
+
+# Módulos, no funciones: los tres importan el servidor y el servidor importa este módulo, así
+# que si uno se importa el primero aún está a medio cargar. Las funciones se buscan al llamar.
+from youtube_mcp.tools import analytics, channel, transcripts
 from youtube_mcp.utils.quota import QuotaExhaustedError
 
 # Ventana del gancho por formato: YouTube mide la "Introducción" a los 30 s; en Shorts
@@ -138,7 +139,7 @@ def youtube_retention_moments(
     # Ninguna llamada a YouTube puede escaparse como excepción: el sidecar respondería 500 y la
     # pantalla perdería el mensaje (cuota agotada, token revocado...).
     try:
-        video = youtube_get_video(video_id)
+        video = channel.youtube_get_video(video_id)
     except Exception as e:  # noqa: BLE001
         return {"error": _legible(e)}
     if "error" in video:
@@ -152,9 +153,12 @@ def youtube_retention_moments(
     fin = end_date or _hoy_utc().isoformat()
     inicio = start_date or min((video.get("published_at") or "")[:10] or fin, fin)
     try:
-        retencion = youtube_analytics_retention(video_id, start_date=inicio, end_date=fin)
+        retencion = analytics.youtube_analytics_retention(video_id, start_date=inicio, end_date=fin)
     except Exception as e:  # noqa: BLE001 - al modelo le llega un error legible, no un traceback
         return {"error": f"YouTube Analytics: {_legible(e)}"}
+    # Un error de la API también puede llegar como dato: no es lo mismo que «aún no hay datos».
+    if "error" in retencion:
+        return {"error": f"YouTube Analytics: {retencion['error']}"}
     filas = retencion.get("results") or []
     if not filas:
         return {"error": NO_DATA}
@@ -162,7 +166,7 @@ def youtube_retention_moments(
     curva = _curva(filas, duracion)
     # Sin transcripción (o sin cuota para pedirla) la curva sigue valiendo: no es un error.
     try:
-        transcripcion = youtube_get_transcript(video_id, language)
+        transcripcion = transcripts.youtube_get_transcript(video_id, language)
     except Exception as e:  # noqa: BLE001
         transcripcion = {"error": _legible(e)}
     segmentos = transcripcion.get("segments") or []
