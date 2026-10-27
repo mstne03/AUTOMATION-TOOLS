@@ -36,9 +36,9 @@ def dobles():
     video = {"id": VIDEO_ID, "title": "Mi video", "published_at": "2026-09-01T00:00:00Z", "duration_seconds": 100}
     transcripcion = {"source": "official_api", "segments": [{"text": "aqui", "start": 6.0, "duration": 5.0}]}
     with (
-        patch("youtube_mcp.tools.retention.youtube_get_video", return_value=video) as get_video,
-        patch("youtube_mcp.tools.retention.youtube_analytics_retention", return_value={"results": filas}),
-        patch("youtube_mcp.tools.retention.youtube_get_transcript", return_value=transcripcion) as transcript,
+        patch("youtube_mcp.tools.channel.youtube_get_video", return_value=video) as get_video,
+        patch("youtube_mcp.tools.analytics.youtube_analytics_retention", return_value={"results": filas}),
+        patch("youtube_mcp.tools.transcripts.youtube_get_transcript", return_value=transcripcion) as transcript,
     ):
         yield get_video, transcript
 
