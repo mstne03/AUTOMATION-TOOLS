@@ -9,20 +9,22 @@ import { startAnthropicMock } from "./anthropic-mock";
 
 export const TOKEN = "e2e-token-playwright";
 export const VITE_PORT = 1420;
-const ESTADO = join(tmpdir(), "seo-studio-e2e-pids.json");
 const PREFIJO = "seo-studio-e2e-";
+/** Uno por ejecución (setup y teardown corren en el mismo proceso): dos ejecuciones a la vez, de
+ *  sesiones distintas, no se pisan los PIDs ni el directorio de estado. */
+const ESTADO = join(tmpdir(), `${PREFIJO}pids-${process.pid}.json`);
 const DIA_MS = 24 * 60 * 60 * 1000;
 
-/** Borra los directorios de estado de más de 24 h que dejaron ejecuciones interrumpidas (cada uno
- *  pesa ~470 MB: snapshot de la KB + modelo de embeddings). Los recientes se respetan por si hay
- *  otra ejecución en curso. */
+/** Borra los directorios de estado (y sus ficheros de PIDs) de más de 24 h que dejaron ejecuciones
+ *  interrumpidas (cada directorio pesa ~470 MB: snapshot de la KB + modelo de embeddings). Los
+ *  recientes se respetan por si hay otra ejecución en curso. */
 function limpiarEstadosHuerfanos() {
   for (const nombre of readdirSync(tmpdir())) {
     if (!nombre.startsWith(PREFIJO)) continue;
     const ruta = join(tmpdir(), nombre);
     try {
       const st = statSync(ruta);
-      if (st.isDirectory() && Date.now() - st.mtimeMs > DIA_MS) rmSync(ruta, { recursive: true, force: true });
+      if (Date.now() - st.mtimeMs > DIA_MS) rmSync(ruta, { recursive: true, force: true });
     } catch (e) {
       console.warn(`[e2e] No se pudo borrar ${ruta}: ${(e as Error).message}`);
     }
@@ -45,8 +47,10 @@ export default async function globalSetup() {
   const raiz = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   limpiarEstadosHuerfanos();
   const stateDir = mkdtempSync(join(tmpdir(), PREFIJO));
-  // Se anota ya, antes de arrancar nada, para que el teardown lo borre aunque el setup falle después.
-  writeFileSync(ESTADO, JSON.stringify({ stateDir }));
+  // Se anota cada pieza en cuanto existe, para que el teardown la limpie aunque el setup falle después.
+  const anotado: { stateDir: string; sidecar?: number; vite?: number } = { stateDir };
+  const anotar = (parte: Partial<typeof anotado>) => writeFileSync(ESTADO, JSON.stringify(Object.assign(anotado, parte)));
+  anotar({});
   const mock = await startAnthropicMock();
 
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
@@ -61,6 +65,7 @@ export default async function globalSetup() {
     shell: true,
     stdio: ["ignore", "pipe", "inherit"],
   });
+  anotar({ sidecar: sidecar.pid });
   const port = await new Promise<number>((ok, ko) => {
     let buf = "";
     sidecar.stdout!.on("data", (d) => {
@@ -91,12 +96,12 @@ export default async function globalSetup() {
     shell: true,
     stdio: "ignore",
   });
+  anotar({ vite: vite.pid });
   await esperarPuerto(`http://localhost:${VITE_PORT}/`, 60_000);
 
   process.env.E2E_SIDECAR = base;
   process.env.E2E_TOKEN = TOKEN;
   process.env.E2E_STATE_DIR = stateDir;
-  writeFileSync(ESTADO, JSON.stringify({ stateDir, sidecar: sidecar.pid, vite: vite.pid }));
   (globalThis as { __e2e?: unknown }).__e2e = { mock: mock.server, sidecar, vite };
 }
 
