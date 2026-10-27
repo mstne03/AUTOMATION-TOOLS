@@ -137,10 +137,10 @@ resultados.composicion = { duracion: montaje.duracion, usaWebgpu: montaje.usaWeb
 const gpuArgs = montaje.usaWebgpu ? ["--browser-gpu"] : [];
 console.error(`Composición lista: ${montaje.duracion} s, webgpu=${montaje.usaWebgpu}`);
 
-// 0) Control: mp4 directo sin --gpu (debe fallar por falta de libx264).
-await hf("0_mp4_sin_gpu_control", S("control.mp4"), ["--format", "mp4", ...gpuArgs]);
-// 1) Modo Rápido: HyperFrames codifica H.264 con la GPU.
-await hf("1_rapido_gpu", S("rapido_gpu.mp4"), ["--format", "mp4", "--gpu", ...gpuArgs]);
+// 0) mp4 directo SIN --gpu (control.mp4): con un ffmpeg sin libx264 HyperFrames cae solo al codificador de GPU, así que es el modo Rápido.
+await hf("0_rapido_mp4_sin_gpu_control", S("control.mp4"), ["--format", "mp4", ...gpuArgs]);
+// 1) mp4 directo con --gpu explícito (en la ejecución del spike falló; ver INFORME).
+await hf("1_mp4_con_gpu_explicito", S("rapido_gpu.mp4"), ["--format", "mp4", "--gpu", ...gpuArgs]);
 // 2) Intermedios.
 await hf("2_intermedio_mov", S("inter.mov"), ["--format", "mov", ...gpuArgs]);
 await hf("3_intermedio_webm", S("inter.webm"), ["--format", "webm", ...gpuArgs]);

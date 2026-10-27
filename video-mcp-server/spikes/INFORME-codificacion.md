@@ -1,7 +1,7 @@
 # Spike D11 — codificación H.264 en dos pasadas sin libx264
 
 Fecha: 2026-10-27 · Máquina: Windows 11, RTX 4060 Laptop (NVENC), HyperFrames 0.8.206.
-Script: `spikes/codificacion.mjs` (salidas en `spikes/salidas/`, ignorada por git).
+Scripts: `spikes/codificacion.mjs` (renders) y `spikes/medidas.mjs` (SSIM/PSNR, pruebas de tasa, ficha y PNG de control.mp4) (salidas en `spikes/salidas/`, ignorada por git).
 
 ## Veredicto
 
@@ -22,9 +22,17 @@ pasada.
 - `-encoders` contiene `h264_mf`, `h264_nvenc`, `h264_qsv`, `h264_amf`, `libopenh264`, `prores_ks`,
   `libvpx-vp9`, `aac`; **no** contiene `libx264` (configuración: `--disable-libx264`, sin
   `--enable-gpl`).
-- Comprobación de que HyperFrames usó este ffmpeg y no el de winget 8.1: el MP4 directo lleva la
-  etiqueta `Lavc61.19.101 h264_nvenc` (libavcodec 61 = ffmpeg 7.1; el de winget sería 62), y el
-  PATH del proceso solo tenía la carpeta LGPL.
+- **Evidencia de que HyperFrames usó este ffmpeg** (ffprobe de los ficheros de salida):
+  - `control.mp4` (mp4 directo): stream `encoder=Lavc61.19.101 h264_nvenc`, formato `encoder=Lavf61.7.103`, `hyperframes_version=0.8.206`.
+  - `inter.webm`: vídeo `ENCODER=Lavc61.19.101 libvpx-vp9`, audio `Lavc61.19.101 libopus`, formato `ENCODER=Lavf61.7.103`.
+  - Lavc 61.19 / Lavf 61.7 son las bibliotecas de ffmpeg 7.1 (n7.1.5); el ffmpeg de winget (8.1) usaría Lavc 62 / Lavf 62.
+    El log del render fallido con `--gpu` también imprimía `libavformat 61.7.103`.
+  - **`inter.mov`: no queda prueba por etiquetas.** Lo borré tras el spike (785 MB) sin guardar sus etiquetas; los MP4 derivados
+    no prueban nada sobre el primer paso. Se ejecutó con el mismo script y el mismo PATH que el webm, pero es una inferencia.
+  - PATH usado por los procesos de HyperFrames: `<carpeta bin del LGPL>;` + el PATH original **sin** las carpetas que contenían
+    `ffmpeg.exe`. En esta máquina la única retirada fue
+    `C:UsersMarcAppDataLocalMicrosoftWinGetPackagesGyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwefmpeg-8.1-full_buildin`;
+    además `FFMPEG_DIR` apuntaba al LGPL (`spikes/codificacion.mjs`, líneas 13–18).
 
 ## Composición de prueba
 
@@ -35,8 +43,8 @@ La de `test/e2e-mock.test.ts` (voz sintética, ruta con espacios), con voz de 50
 
 | Fase | Tiempo | Tamaño | Notas |
 |---|---|---|---|
-| Rápido: HyperFrames mp4 directo (sin `--gpu`, cae solo a NVENC) | **517 s** (8 m 37 s) | 20,3 MB | captura 6 m 29 s, codificación 16,5 s |
-| Rápido con `--gpu` explícito | **falló a los 717 s** | — | ver hallazgo 1 |
+| Rápido = `control.mp4`: HyperFrames mp4 directo **sin `--gpu`** (cae solo a NVENC) | **517 s** (8 m 37 s) | 20,3 MB | captura 6 m 29 s, codificación 16,5 s |
+| mp4 directo con `--gpu` explícito | **falló a los 717 s** | — | ver hallazgo 1 |
 | Intermedio `mov` (ProRes 4444) | 772 s | **785 MB** | captura 10 m 39 s, codificación 52,8 s |
 | Intermedio `webm` (VP9) | 830 s | **6,3 MB** | captura 11 m 25 s, codificación 61 s |
 | Paso 2 `mov` → `h264_mf` | 13,3 s | 20,6 MB | |
@@ -70,7 +78,7 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 
 | Salida | SSIM | PSNR (dB) |
 |---|---|---|
-| Rápido (NVENC directo) | 0,9958 | 52,1 |
+| Rápido (`control.mp4`, sin `--gpu`) | 0,9958 | 52,1 |
 | mov → mf | 0,9961 | 52,6 |
 | mov → nvenc | 0,9979 | 56,5 |
 | webm → mf | 0,9944 | 38,5 |
@@ -86,18 +94,15 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 
 ## Hallazgos que cambian el diseño
 
-1. **`--gpu` explícito es frágil.** Falló tras 12 min de captura con
-   `Unrecognized option 'x264-params'`: el codificador de chunk recibió «sin GPU» y montó
-   argumentos de libx264, que el ffmpeg LGPL no entiende. El mismo render **sin** `--gpu` funcionó
-   (HyperFrames detecta que no hay libx264 y cae a GPU por su cuenta). Causa probable, no
-   confirmada del todo: la sonda de NVENC de HyperFrames tiene un timeout fijo de 2 s
-   (`GPU_PROBE_TIMEOUT_MS2`, `chunk-RDDVQSNQ.js`) y se ejecuta en paralelo con las de qsv/vaapi/amf;
-   en reposo la sonda tarda 0,9–1,2 s con picos medidos de 2,9–5,4 s, y bajo carga de 5 Chromes puede
-   no llegar. Consecuencia: **no se puede confiar en que la detección dentro de HyperFrames no
-   falle a mitad de una ejecución larga.** Recomendación: (a) el motor lanza el Rápido sin
-   `--gpu` y detecta el fallo por código de salida/texto; (b) el reintento en Compatible de D11 es
-   obligatorio, no opcional; (c) el motor hace su propia sonda NVENC (ffmpeg del bundle, 256×256,
-   timeout ≥ 10 s) antes de ofrecer «Rápido».
+1. **Un fallo de detección de GPU a mitad de una ejecución larga.** Es **un solo fallo frente a un solo éxito**, no una tasa.
+   El render con `--gpu` explícito falló tras 12 min de captura con `Unrecognized option 'x264-params'` (el codificador de
+   chunk montó argumentos de libx264, que el ffmpeg LGPL no entiende); el mp4 sin `--gpu` funcionó. Por el código leído, ambos
+   caminos usan la misma detección (sin libx264 HyperFrames activa `gpu` por su cuenta), así que **no hay diferencia entre
+   lanzar con o sin `--gpu` y no es una mitigación.** *Hipótesis, sin confirmar:* la sonda de NVENC tiene un timeout fijo de 2 s
+   (`GPU_PROBE_TIMEOUT_MS2`, `chunk-RDDVQSNQ.js`) y en reposo tardó 0,9–1,2 s con picos de 2,9–5,4 s medidos aparte; bajo la
+   carga de 5 Chromes podría no llegar. No se reprodujo. **Conclusión firme:** (a) el reintento en Compatible de D11 es
+   obligatorio, no opcional; (b) el motor de la fase 1 debe sondear los codificadores él mismo (ffmpeg del bundle, con timeout
+   generoso) antes de ofrecer «Rápido», en vez de fiarse de la detección interna de HyperFrames.
 2. **`h264_mf` ignora el bitrate.** Con `-b:v 12M`, `-rate_control cbr`, `pc_vbr` o `quality`
    salió siempre ~3,2–3,4 Mb/s, perfil Constrained Baseline (es el codificador software de
    Windows; `-hw_encoding 1` falla en esta máquina: «format negotiation failed»). Aquí basta
@@ -116,7 +121,7 @@ los segundos 1, 10, 25 y 45 de cada salida (`spikes/salidas/*_{1,10,25,45}s.png`
 
 ## Decisión
 
-**Formato intermedio: `mov` (ProRes 4444).** Es el único sin pérdida: la calidad final depende solo
+**Formato intermedio: `mov` (ProRes 4444).** Es el único visualmente sin pérdida (ProRes 4444, no matemáticamente lossless): la calidad final depende solo
 de la segunda pasada, y es el que menos sorpresas da con fotos. Cuesta 785 MB de disco temporal
 por 50 s (≈ 16 MB/s; un vídeo de 60 s ≈ 0,95 GB) que se borran al terminar, y 1 minuto más de
 codificación que webm. **Alternativa documentada: `webm` (VP9) si el disco temporal libre es
@@ -132,7 +137,11 @@ con `--crf` bajo para acercarlo. El motor comprueba el espacio libre antes de el
   (el bitrate no se respeta; mantener `-b:v 12M` por si otra versión de Windows o un codificador
   por hardware sí lo respeta, y verificar el tamaño con fotos reales).
 
-Bitrate elegido: **12 Mb/s** como tope en ambos; no se puede validar más alto con esta prueba.
+**Bitrate: decisión ABIERTA.** Los 12 Mb/s vienen del brief, no de una medición. En este contenido `h264_mf` los ignora
+(~3,3 Mb/s con cualquier ajuste) y NVENC en VBR no los alcanza (~4,3 Mb/s reales; solo CBR llega a 12). Con fondos lisos no
+se puede concluir nada sobre fotos. La fase 1 debe medir, con fotos reales (grano, texturas, movimiento de cámara) y 60 s:
+tamaño y bitrate reales de `h264_mf` y de NVENC (vbr/cbr/cq), y SSIM/PSNR frente al intermedio, para fijar el bitrate o
+pasar a calidad constante (`-rc vbr -cq N` en NVENC).
 
 ## Ejecución
 
@@ -153,3 +162,29 @@ Tarda ~45 min (cinco renders de HyperFrames de 8–14 min); resultados en
   hemos podido probar.
 - Máquina sin GPU NVIDIA (qsv/amf/mf puro) sin probar: el camino mov → mf se ha ejecutado, pero con
   la captura de HyperFrames usando la GPU del equipo.
+
+## Reproducibilidad: mediciones de calidad y tasa
+
+`node spikes/medidas.mjs "<bin LGPL>" inter.mov` repite lo siguiente (ficha y PNG de `control.mp4`, pruebas de tasa,
+SSIM/PSNR → `spikes/salidas/medidas.json`). Los números de este informe salieron de estos mismos comandos lanzados a mano
+contra `inter.mov` (que luego borré, 785 MB); el script debe ejecutarse con un `inter.mov` regenerado por `codificacion.mjs`.
+Una pasada de comprobación del script contra `inter.webm` funcionó y reprodujo el patrón de tamaños (mf ≈ 14–15 MB con cualquier
+ajuste; nvenc vbr 25 MB; nvenc cbr 73 MB), pero sus SSIM/PSNR frente a webm (PSNR ~33 dB para todas las salidas) **no son
+comparables** con los de la tabla y no se han investigado; no se usan como resultado.
+
+Salidas crudas de la ejecución original (segunda pasada desde `inter.mov`, tamaño en MB):
+
+```
+mf -b:v 12M                      → 20,6   (3,24 Mb/s, Constrained Baseline)
+mf -rate_control cbr -b:v 12M    → 20,6
+mf -rate_control pc_vbr -b:v 12M → 19,9
+mf -rate_control quality -quality 100 → 21,5
+mf -hw_encoding 1 ...            → error: "format negotiation failed (1/0)" (sin MFT por hardware aquí)
+nvenc -preset p5 -rc vbr -b:v 12M -maxrate 16M -profile:v high → 27,2
+nvenc -preset p5 -rc cbr -b:v 12M -profile:v high             → 73,4
+nvenc -preset p5 -rc vbr -cq 19 -b:v 0 -profile:v high        →  8,9
+```
+
+SSIM (`-lavfi "[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]ssim"`, `All:`): control 0.995828, mov_mf 0.996079,
+mov_nvenc 0.997854, webm_mf 0.994447, webm_nvenc 0.994645, inter.webm 0.994750 (todos frente a `inter.mov`).
+PSNR medio (mismo grafo con `psnr`): control 52.08, mov_mf 52.62, mov_nvenc 56.53, webm_mf 38.53, webm_nvenc 38.56.
