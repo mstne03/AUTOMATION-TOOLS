@@ -4,3 +4,4 @@ dist/
 logs/
 test/.tmp/
 test/salidas/
+spikes/salidas/
