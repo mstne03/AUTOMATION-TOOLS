@@ -22,8 +22,8 @@ use rand::RngCore;
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Clone, Serialize)]
@@ -67,17 +67,25 @@ fn random_token() -> String {
 /// updater antes de salir no queda atado y no muere con nosotros.
 fn job_for(pid: u32) -> Result<win32job::Job, String> {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
 
     let job = win32job::Job::create().map_err(|e| e.to_string())?;
     let mut info = job.query_extended_limit_info().map_err(|e| e.to_string())?;
     info.limit_kill_on_job_close();
-    job.set_extended_limit_info(&info).map_err(|e| e.to_string())?;
+    job.set_extended_limit_info(&info)
+        .map_err(|e| e.to_string())?;
     let handle = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
     if handle.is_null() {
-        return Err(format!("OpenProcess({pid}): {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "OpenProcess({pid}): {}",
+            std::io::Error::last_os_error()
+        ));
     }
-    let r = job.assign_process(handle as isize).map_err(|e| e.to_string());
+    let r = job
+        .assign_process(handle as isize)
+        .map_err(|e| e.to_string());
     unsafe { CloseHandle(handle) };
     r.map(|_| job)
 }
@@ -117,28 +125,34 @@ fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
             match event {
                 CommandEvent::Stdout(line) => {
                     let text = String::from_utf8_lossy(&line);
-                    if state.info.lock().unwrap().is_none() {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if let Some(port) = v.get("port").and_then(|p| p.as_u64()) {
-                                // No se registra la línea: contiene el token.
-                                *state.info.lock().unwrap() = Some(SidecarInfo {
-                                    port: port as u16,
-                                    token: token.clone(),
-                                });
-                                continue;
-                            }
-                        }
+                    // El guard se suelta en esta línea: dentro del `if` se vuelve a bloquear el
+                    // mismo Mutex, y con el guard vivo en la condición sería un interbloqueo.
+                    let sin_puerto = state.info.lock().unwrap().is_none();
+                    if sin_puerto
+                        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+                        && let Some(port) = v.get("port").and_then(|p| p.as_u64())
+                    {
+                        // No se registra la línea: contiene el token.
+                        *state.info.lock().unwrap() = Some(SidecarInfo {
+                            port: port as u16,
+                            token: token.clone(),
+                        });
+                        continue;
                     }
                     eprint!("[sidecar] {text}");
                 }
-                CommandEvent::Stderr(line) => eprint!("[sidecar] {}", String::from_utf8_lossy(&line)),
+                CommandEvent::Stderr(line) => {
+                    eprint!("[sidecar] {}", String::from_utf8_lossy(&line))
+                }
                 CommandEvent::Error(e) => {
                     *state.failed.lock().unwrap() = Some(format!("Error del sidecar: {e}"));
                 }
                 CommandEvent::Terminated(status) => {
                     if state.info.lock().unwrap().is_none() {
-                        *state.failed.lock().unwrap() =
-                            Some(format!("El sidecar terminó antes de arrancar (código {:?}).", status.code));
+                        *state.failed.lock().unwrap() = Some(format!(
+                            "El sidecar terminó antes de arrancar (código {:?}).",
+                            status.code
+                        ));
                     }
                     break;
                 }
@@ -168,7 +182,10 @@ pub struct UpdateInfo {
 async fn update_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
-    Ok(update.map(|u| UpdateInfo { version: u.version.clone(), notes: u.body.clone() }))
+    Ok(update.map(|u| UpdateInfo {
+        version: u.version.clone(),
+        notes: u.body.clone(),
+    }))
 }
 
 /// Descarga el instalador, verifica su firma minisign con la clave pública embebida,
@@ -206,15 +223,23 @@ async fn elegir_video(app: tauri::AppHandle, dir_inicial: String) -> Option<Stri
         dialogo = dialogo.set_directory(&dir_inicial);
     }
     let ruta = dialogo.blocking_pick_file()?;
-    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+    ruta.into_path()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Abre el explorador de Windows filtrado a `.json` para elegir el `client_secret.json` de Google
 /// (Onboarding). Devuelve la ruta o `None` si se cancela; el sidecar lee y valida el fichero.
 #[tauri::command]
 async fn elegir_client_secret(app: tauri::AppHandle) -> Option<String> {
-    let ruta = app.dialog().file().add_filter("Credenciales de Google (JSON)", &["json"]).blocking_pick_file()?;
-    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+    let ruta = app
+        .dialog()
+        .file()
+        .add_filter("Credenciales de Google (JSON)", &["json"])
+        .blocking_pick_file()?;
+    ruta.into_path()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Abre el explorador de Windows para elegir una carpeta (Ajustes → Carpetas permitidas), situado
@@ -227,7 +252,9 @@ async fn elegir_carpeta(app: tauri::AppHandle, dir_inicial: String) -> Option<St
         dialogo = dialogo.set_directory(&dir_inicial);
     }
     let ruta = dialogo.blocking_pick_folder()?;
-    ruta.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+    ruta.into_path()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 // ------------------------------------------------------------------ enlaces
@@ -250,20 +277,6 @@ fn abrir_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.shell().open(url, None).map_err(|e| e.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::url_https_valida;
-
-    #[test]
-    fn solo_https() {
-        assert!(url_https_valida("https://console.cloud.google.com/apis/credentials"));
-        for mala in ["http://x.com", "file:///C:/Windows", "javascript:alert(1)", "https://", "https://a b", "https://a
-b", ""] {
-            assert!(!url_https_valida(mala), "{mala}");
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -271,7 +284,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(Sidecar::default())
-        .invoke_handler(tauri::generate_handler![sidecar_info, update_check, update_install, elegir_video, elegir_carpeta, elegir_client_secret, abrir_url])
+        .invoke_handler(tauri::generate_handler![
+            sidecar_info,
+            update_check,
+            update_install,
+            elegir_video,
+            elegir_carpeta,
+            elegir_client_secret,
+            abrir_url
+        ])
         .setup(|app| {
             spawn_sidecar(app.handle())?;
             Ok(())
@@ -283,4 +304,28 @@ pub fn run() {
                 kill_sidecar(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_https_valida;
+
+    #[test]
+    fn solo_https() {
+        assert!(url_https_valida(
+            "https://console.cloud.google.com/apis/credentials"
+        ));
+        for mala in [
+            "http://x.com",
+            "file:///C:/Windows",
+            "javascript:alert(1)",
+            "https://",
+            "https://a b",
+            "https://a
+b",
+            "",
+        ] {
+            assert!(!url_https_valida(mala), "{mala}");
+        }
+    }
 }
