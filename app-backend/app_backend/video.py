@@ -145,9 +145,20 @@ class MotorVideo:
 
     async def llamar(self, tool: str, args: dict | None = None, timeout: float | None = None) -> RespuestaMotor:
         s, sesion = await self._sesion_lista()
+        r = await self._esperar(s, sesion.call_tool(tool, args or {}), timeout)
+        return self._respuesta(r, s.clave)
+
+    async def herramientas(self) -> list[str]:
+        """Nombres de las tools que expone el motor (diagnóstico); mismos errores que `llamar`."""
+        s, sesion = await self._sesion_lista()
+        r = await self._esperar(s, sesion.list_tools(), None)
+        return [t.name for t in r.tools]
+
+    async def _esperar(self, s: _Sesion, peticion, timeout: float | None):
+        """Espera una petición MCP de la sesión `s` y traduce sus fallos a MotorError."""
         limite = self._timeout if timeout is None else timeout
         try:
-            r = await asyncio.wait_for(sesion.call_tool(tool, args or {}), limite)
+            return await asyncio.wait_for(peticion, limite)
         except TimeoutError:
             # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero.
             await self._descartar(s)
@@ -160,17 +171,6 @@ class MotorVideo:
         except (anyio.ClosedResourceError, anyio.BrokenResourceError, anyio.EndOfStream, EOFError, ConnectionError):
             await self._descartar(s)
             raise MotorNoDisponible(MENSAJE_DETENIDO) from None
-        return self._respuesta(r, s.clave)
-
-    async def herramientas(self) -> list[str]:
-        """Nombres de las tools que expone el motor (diagnóstico y smoke test)."""
-        s, sesion = await self._sesion_lista()
-        try:
-            r = await asyncio.wait_for(sesion.list_tools(), self._timeout)
-        except (TimeoutError, MCPError, anyio.ClosedResourceError, anyio.BrokenResourceError):
-            await self._descartar(s)
-            raise MotorNoDisponible(MENSAJE_DETENIDO) from None
-        return [t.name for t in r.tools]
 
     @staticmethod
     def _respuesta(r, clave: str | None) -> RespuestaMotor:
@@ -181,7 +181,8 @@ class MotorVideo:
         datos = None
         if len(textos) > 1:
             try:
-                valor = json.loads(textos[-1])
+                # La clave se oculta también en los datos: el JSON va tal cual a la respuesta HTTP.
+                valor = json.loads(_ocultar(textos[-1], clave))
             except ValueError:
                 valor = None
             if isinstance(valor, dict | list):

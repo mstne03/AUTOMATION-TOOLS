@@ -3,12 +3,14 @@
 Al arrancar crea VIDEO_STATE_DIR (si viene) y deja allí un log, como hace el motor real.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
 
 import anyio
 from mcp.server.mcpserver import MCPServer
+from mcp_types import TextContent
 
 mcp = MCPServer("motor-falso")
 
@@ -43,6 +45,16 @@ def entorno(nombre: str) -> str:
 def escribir_stderr(texto: str) -> str:
     print(texto, file=sys.stderr, flush=True)
     return "escrito"
+
+
+@mcp.tool()
+def datos_entorno(nombre: str) -> list[TextContent]:
+    """Como el motor real: un texto legible y, en el último bloque, el JSON de `datos`."""
+    valor = os.environ.get(nombre, "<ausente>")
+    return [
+        TextContent(type="text", text=f"{nombre} leída"),
+        TextContent(type="text", text=json.dumps({"nombre": nombre, "valor": valor, "eco": f"x{valor}x"})),
+    ]
 
 
 @mcp.tool()

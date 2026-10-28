@@ -7,6 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import anyio
 import httpx
 import pytest
 
@@ -139,6 +140,52 @@ async def test_env_del_motor_con_clave_y_sin_secretos_del_padre(motor, monkeypat
     assert (await motor.llamar("entorno", {"nombre": "VIDEO_ENGINE_EMBEDDED"})).texto == "1"
     assert (await motor.llamar("entorno", {"nombre": "HYPERFRAMES_NO_TELEMETRY"})).texto == "1"
     assert (await motor.llamar("entorno", {"nombre": "DO_NOT_TRACK"})).texto == "1"
+
+
+async def test_datos_con_la_clave_oculta(motor):
+    r = await motor.llamar("datos_entorno", {"nombre": "ELEVENLABS_API_KEY"})
+    assert r.texto == "ELEVENLABS_API_KEY leída"
+    assert r.datos == {"nombre": "ELEVENLABS_API_KEY", "valor": "***", "eco": "x***x"}
+    r = await motor.llamar("datos_entorno", {"nombre": "VIDEO_ENGINE_EMBEDDED"})
+    assert r.datos["valor"] == "1"
+
+
+async def test_herramientas_lista_las_tools(motor):
+    nombres = await motor.herramientas()
+    assert {"eco", "pid", "datos_entorno"} <= set(nombres)
+
+
+async def test_herramientas_con_la_sesion_rota_es_motor_no_disponible(motor, monkeypatch):
+    await motor.llamar("eco", {"texto": "x"})
+    sesion = motor._sesion.listo.result()
+
+    async def rota():
+        raise anyio.ClosedResourceError
+
+    monkeypatch.setattr(sesion, "list_tools", rota)
+    with pytest.raises(MotorNoDisponible, match="se relanzará"):
+        await motor.herramientas()
+    assert motor.pid is None  # sesión descartada; la siguiente acción relanza
+    assert (await motor.llamar("eco", {"texto": "sigue"})).texto == "sigue"
+
+
+async def test_herramientas_colgada_respeta_el_timeout(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    m = MotorVideo([sys.executable, str(MOTOR_FALSO)], MOTOR_FALSO.parent, lambda: entorno_motor(StoreFalso()), 0.5)
+    try:
+        await m.llamar("eco", {"texto": "x"}, timeout=30)
+        colgado = m.pid
+
+        async def colgada():
+            await asyncio.sleep(30)
+
+        monkeypatch.setattr(m._sesion.listo.result(), "list_tools", colgada)
+        with pytest.raises(MotorError, match="no respondió en 0.5 s") as e:
+            await m.herramientas()
+        assert not isinstance(e.value, MotorNoDisponible)
+        assert m.pid is None and not psutil_pid_vivo(colgado)  # proceso reiniciado
+    finally:
+        await m.cerrar()
 
 
 def test_entorno_motor():
