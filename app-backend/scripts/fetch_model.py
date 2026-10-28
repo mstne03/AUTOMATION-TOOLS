@@ -13,13 +13,16 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 REPO = "intfloat/multilingual-e5-small"
+# Commit fijado: la rama main del repo de Hugging Face puede cambiar y el binario empaquetaría
+# un modelo distinto (u hostil) sin que nada lo note. Para actualizarlo, cambia el commit a mano.
+REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 FILES = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model.onnx"]
 DEST = Path(__file__).resolve().parent.parent / "models" / "multilingual-e5-small"
 
 
 def main() -> int:
     DEST.mkdir(parents=True, exist_ok=True)
-    snapshot_download(REPO, allow_patterns=FILES, local_dir=DEST)
+    snapshot_download(REPO, revision=REVISION, allow_patterns=FILES, local_dir=DEST)
     faltan = [f for f in FILES if not (DEST / f).is_file()]
     if faltan:
         print(f"Faltan ficheros del modelo: {faltan}", file=sys.stderr)
