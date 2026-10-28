@@ -1,0 +1,94 @@
+<!doctype html>
+<!--
+  Todos los subtítulos en un solo host (data-track-kind="captions" en el index). Estilos:
+  - karaoke: el de v1 (palabra que suena en el color de acento);
+  - pildora: adaptado de caption-pill-karaoke (píldora clara, las palabras se oscurecen al sonar);
+  - neon: adaptado de caption-neon-glow (palabras apagadas que brillan al sonar; énfasis en acento);
+  - impacto: adaptado de caption-kinetic-slam (una palabra a pantalla completa, entradas alternas).
+  Fuentes del tema en vez de Poppins/Outfit de Google Fonts. Franja: 1056-1328 px, 140 px libres a la derecha.
+  Los grupos y palabras los escribe composicion.ts con el texto escapado. El estilo va en una clase del
+  envoltorio #subtitulos-capa, no de la raíz (check: subcomposition_root_styled_by_class).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="subtitulos" data-composition-id="subtitulos" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #subtitulos { position: relative; width: 1080px; height: 1920px; overflow: hidden; pointer-events: none; }
+        #subtitulos-capa { position: absolute; inset: 0; }
+        #subtitulos .grupo { position: absolute; left: 140px; top: 1056px; width: 800px; height: 272px; display: flex; align-items: center; justify-content: center; overflow: visible; }
+        #subtitulos .txt { width: 800px; text-align: center; line-height: 1.08; }
+        #subtitulos .p { display: inline-block; }
+        #subtitulos .enf { margin: 0 0.14em; }
+
+        /* karaoke */
+        .estilo-karaoke .txt { font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos); color: var(--texto);
+          text-transform: var(--mayusculas); -webkit-text-stroke: 8px var(--contorno); paint-order: stroke fill; text-shadow: 0 6px 18px rgba(0, 0, 0, 0.7); }
+        .estilo-karaoke .p { color: var(--texto); }
+
+        /* píldora */
+        .estilo-pildora .txt { width: auto; max-width: 800px; padding: 14px 40px 16px; border-radius: 22px; background: #e7e5e7;
+          box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos); text-transform: lowercase; }
+        .estilo-pildora .p { color: #a6a6a6; }
+
+        /* neón */
+        .estilo-neon .txt { font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos); text-transform: uppercase; letter-spacing: 0.04em; }
+        /* Más contorno y una sombra oscura que el original: sobre fotos claras o fondos rosas el cian no se leía. */
+        .estilo-neon .p { color: rgba(190, 255, 250, 0.55); -webkit-text-stroke: 6px rgba(0, 0, 0, 0.85); paint-order: stroke fill; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.8)); }
+
+        /* impacto: una palabra, centrada en la franja */
+        .estilo-impacto .txt { font-family: var(--fuente-titulos); font-weight: var(--peso-titulos); text-transform: uppercase; letter-spacing: 0.04em;
+          line-height: 1; color: var(--texto); -webkit-text-stroke: 6px var(--contorno); paint-order: stroke fill; text-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); }
+        .estilo-impacto .enf .p, .estilo-impacto .p.enf { color: var(--acento); }
+      </style>
+      <div id="subtitulos-capa" class="estilo-{{ESTILO}}">
+{{GRUPOS}}
+      </div>
+      <script id="subtitulos-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var d = JSON.parse(document.getElementById("subtitulos-datos").textContent);
+          var c = d.colores;
+          var tl = gsap.timeline({ paused: true });
+          var una = { ease: "none", immediateRender: false, lazy: false };
+          function de(a, b) { var o = {}; for (var k in a) o[k] = a[k]; for (var j in b) o[j] = b[j]; return o; }
+
+          d.grupos.forEach(function (g, gi) {
+            var txt = "#" + g.id + "-txt";
+            if (d.estilo === "impacto") {
+              var modo = gi % 4;
+              var desde = modo === 0 ? { y: -120, opacity: 0 } : modo === 1 ? { x: -300, opacity: 0 } : modo === 2 ? { x: 300, opacity: 0 } : { scale: 0.4, opacity: 0 };
+              var hasta = modo === 0 ? { y: 0, opacity: 1 } : modo === 1 ? { x: 0, opacity: 1 } : modo === 2 ? { x: 0, opacity: 1 } : { scale: 1, opacity: 1 };
+              tl.fromTo(txt, desde, de(hasta, { duration: modo === 3 ? 0.24 : 0.2, ease: modo === 0 ? "back.out(1.7)" : modo === 3 ? "back.out(2.2)" : "expo.out" }), g.inicio);
+            } else {
+              tl.fromTo(txt, { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.1, ease: "power2.out" }, g.inicio);
+            }
+            g.palabras.forEach(function (p) {
+              var s = "#" + p.id;
+              if (d.estilo === "karaoke") {
+                tl.fromTo(s, { color: c.texto }, de(una, { color: c.acento, duration: 0.04 }), p.inicio);
+                tl.fromTo(s, { color: c.acento }, de(una, { color: c.texto, duration: 0.04 }), p.fin);
+              } else if (d.estilo === "pildora") {
+                tl.fromTo(s, { color: "#a6a6a6" }, de(una, { color: "#1c1e1d", duration: 0.1 }), Math.max(g.inicio, p.inicio - 0.05));
+              } else if (d.estilo === "neon") {
+                var brillo = p.enfasis ? c.acento : "#00fff0";
+                var sombra = "0 0 10px " + brillo + ", 0 0 35px " + brillo + ", 0 0 90px " + brillo;
+                tl.fromTo(s, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)" }, de(una, { color: brillo, textShadow: sombra, duration: 0.06 }), p.inicio);
+                tl.fromTo(s, { color: brillo, textShadow: sombra }, de(una, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)", duration: 0.06 }), p.fin);
+              }
+              if (p.enfasis && d.estilo !== "impacto") {
+                tl.fromTo(s, { scale: 1 }, { scale: 1.12, duration: 0.12, ease: "back.out(3)", immediateRender: false }, p.inicio);
+                tl.fromTo(s, { scale: 1.12 }, { scale: 1.05, duration: 0.2, ease: "power2.out", immediateRender: false }, p.inicio + 0.12);
+              }
+            });
+          });
+          window.__timelines = window.__timelines || {};
+          window.__timelines["subtitulos"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

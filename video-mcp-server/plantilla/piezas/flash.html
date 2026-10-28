@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- Destello blanco global: en cada cambio de bloque y en el golpe. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="flash" data-composition-id="flash" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        #flash { position: relative; width: 1080px; height: 1920px; pointer-events: none; }
+        #flash-luz { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+      </style>
+      <div id="flash-luz" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-ignore data-layout-allow-occlusion></div>
+      <script id="flash-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var d = JSON.parse(document.getElementById("flash-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          d.destellos.forEach(function (e) {
+            tl.fromTo("#flash-luz", { opacity: 0 }, { opacity: e.opacidad, duration: e.sube, ease: "none", immediateRender: false }, e.t);
+            tl.fromTo("#flash-luz", { opacity: e.opacidad }, { opacity: 0, duration: e.baja, ease: "power2.out", immediateRender: false }, e.t + e.sube);
+          });
+          window.__timelines = window.__timelines || {};
+          window.__timelines["flash"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

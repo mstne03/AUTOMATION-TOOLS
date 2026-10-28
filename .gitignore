@@ -14,3 +14,6 @@ client_secret*.json
 .claude/worktrees/
 .claude/settings.local.json
 PROGRESO-DS.md
+
+# Motor de vídeo empaquetado (app-ui/scripts/prepare-video-engine.sh): binarios, nunca al repo
+app-ui/src-tauri/binaries/video-engine/

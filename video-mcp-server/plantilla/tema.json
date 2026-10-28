@@ -1,0 +1,28 @@
+{
+  "nombre": "",
+  "colores": {
+    "fondo": "#0B0F0C",
+    "texto": "#F4F1E8",
+    "acento": "#E8B931",
+    "contorno": "#000000",
+    "secundario": "#1F7A3A"
+  },
+  "fuentes": {
+    "titulos": { "familia": "Anton", "archivo": "anton-latin-400-normal.woff2", "peso": 400 },
+    "subtitulos": { "familia": "Inter Tight", "archivo": "inter-tight-latin-800-normal.woff2", "peso": 800 },
+    "mono": { "familia": "JetBrains Mono", "archivo": "jetbrains-mono-latin-700-normal.woff2", "peso": 700 }
+  },
+  "tamanos": {
+    "gancho": 150,
+    "ganchoMinimo": 84,
+    "subtitulo": 92,
+    "subtituloMinimo": 56
+  },
+  "subtitulos": {
+    "mayusculas": true
+  },
+  "degradado": {
+    "opacidad": 0.78
+  },
+  "paletaTunel": ["#E8B931", "#1F7A3A", "#F4F1E8", "#C8452D", "#0B0F0C", "#5BC0EB"]
+}

@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  Escena `barras`: adaptación vertical de bar-chart-race (catálogo).
+  Se conserva el modelo del original (10 fotogramas clave por periodo, rango horneado y posición
+  suavizada, todo función de t) y cambia la maqueta: nombre encima de cada barra, máximo 6 barras entre
+  400 y 1010 px (encima de la franja de subtítulos), año grande a la derecha del título, colores del tema
+  (la barra líder en acento) y la fuente solo si el guion la da. Sin datos de ejemplo.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; color: var(--texto); }
+        #{{ID}} .capa { position: absolute; inset: 0; }
+        #{{ID}}-velo { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); }
+        #{{ID}}-cab { position: absolute; left: 90px; top: 210px; width: 850px; height: 170px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+        #{{ID}}-titulo { flex: 1; font-family: var(--fuente-titulos); font-weight: var(--peso-titulos); font-size: 60px; line-height: 1.02; text-transform: uppercase;
+          -webkit-text-stroke: 4px var(--contorno); paint-order: stroke fill; }
+        #{{ID}}-periodo { font-family: var(--fuente-titulos); font-size: 120px; line-height: 0.9; color: var(--acento); font-variant-numeric: tabular-nums;
+          -webkit-text-stroke: 4px var(--contorno); paint-order: stroke fill; }
+        #{{ID}}-plot { position: absolute; left: 0; top: 400px; width: 1080px; height: 610px; overflow: hidden; }
+        #{{ID}} .fila { position: absolute; left: 0; top: 0; width: 1080px; }
+        #{{ID}} .nombre { position: absolute; left: 90px; top: 0; width: 700px; font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos);
+          font-size: 32px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase;
+          -webkit-text-stroke: 3px var(--contorno); paint-order: stroke fill; }
+        #{{ID}} .barra { position: absolute; left: 90px; border-radius: 4px; background: var(--texto); }
+        #{{ID}} .valor { position: absolute; left: 90px; padding-left: 14px; font-family: var(--fuente-titulos); font-size: 44px; line-height: 1;
+          font-variant-numeric: tabular-nums; white-space: nowrap; -webkit-text-stroke: 3px var(--contorno); paint-order: stroke fill; }
+        #{{ID}}-fuente { position: absolute; left: 90px; top: 1014px; width: 850px; font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos);
+          font-size: 28px; color: var(--texto); opacity: 0.8; }
+      </style>
+      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0">
+        <div id="{{ID}}-fundido" class="capa">
+          <div id="{{ID}}-golpe" class="capa">
+            <div id="{{ID}}-punch" class="capa">
+              <div id="{{ID}}-velo"></div>
+              <div id="{{ID}}-cab">
+                <div id="{{ID}}-titulo" data-layout-allow-occlusion>{{TITULO}}</div>
+                <div id="{{ID}}-periodo" data-layout-allow-occlusion>{{PRIMER_PERIODO}}</div>
+              </div>
+              <div id="{{ID}}-plot" data-layout-allow-overlap>
+{{FILAS}}
+              </div>
+              <div id="{{ID}}-fuente" data-layout-allow-occlusion>{{FUENTE}}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script id="{{ID}}-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          "use strict";
+          var id = "{{ID}}";
+          var d = JSON.parse(document.getElementById(id + "-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          {{ENVOLTURA}}
+          var SERIES = d.series, T = d.periodos.length, N = SERIES.length;
+          var PD = d.duracionPeriodo, K = 10, KFD = PD / K, KFN = T > 1 ? (T - 1) * K + 1 : 1;
+          var CARRERA = T > 1 ? (T - 1) * PD : 0;
+          var PITCH = 610 / Math.max(N, 1), BARRA_H = Math.min(64, PITCH * 0.5), TRACK_W = 640;
+          function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+          function valorEn(t, s) {
+            if (T < 2) return s.valores[0];
+            var u = t / PD, i = clamp(Math.floor(u), 0, T - 2), f = clamp(u - i, 0, 1);
+            return s.valores[i] + (s.valores[i + 1] - s.valores[i]) * f;
+          }
+          var RANGOS = [];
+          for (var m = 0; m < KFN; m++) {
+            var orden = SERIES.map(function (s, j) { return { j: j, v: valorEn(m * KFD, s) }; });
+            orden.sort(function (a, b) { return b.v - a.v || a.j - b.j; });
+            var fila = new Array(N);
+            for (var r = 0; r < orden.length; r++) fila[orden[r].j] = r;
+            RANGOS.push(fila);
+          }
+          function suave(x) { return x * x * (3 - 2 * x); }
+          function rangoEn(t, j) {
+            if (KFN < 2) return RANGOS[0][j];
+            var mm = t / KFD, m0 = clamp(Math.floor(mm), 0, KFN - 2), e = suave(clamp(mm - m0, 0, 1));
+            return RANGOS[m0][j] + (RANGOS[m0 + 1][j] - RANGOS[m0][j]) * e;
+          }
+          function fmt(v) { return d.prefijo + Math.round(v).toLocaleString("en-US") + d.sufijo; }
+          var filas = SERIES.map(function (s, j) {
+            var el = document.getElementById(id + "-f" + j);
+            el.style.height = PITCH + "px";
+            var barra = el.querySelector(".barra"), valor = el.querySelector(".valor");
+            barra.style.top = 40 + "px"; barra.style.height = BARRA_H + "px";
+            valor.style.top = 40 + (BARRA_H - 44) / 2 + "px";
+            return { el: el, barra: barra, valor: valor };
+          });
+          var periodo = document.getElementById(id + "-periodo");
+          function pinta(t) {
+            var vals = SERIES.map(function (s) { return valorEn(t, s); });
+            var lider = 0;
+            for (var q = 1; q < N; q++) if (vals[q] > vals[lider]) lider = q;
+            var max = Math.max(vals[lider] * 1.06, 1e-6);
+            for (var j = 0; j < N; j++) {
+              var w = (vals[j] / max) * TRACK_W;
+              filas[j].el.style.transform = "translateY(" + (rangoEn(t, j) * PITCH).toFixed(2) + "px)";
+              filas[j].barra.style.width = w.toFixed(2) + "px";
+              filas[j].barra.style.backgroundColor = j === lider ? d.colores.acento : d.colores.texto;
+              filas[j].valor.style.transform = "translateX(" + w.toFixed(2) + "px)";
+              filas[j].valor.textContent = fmt(vals[j]);
+            }
+            // El año va con los valores: cambia a mitad de camino hacia el siguiente periodo, no al salir del anterior.
+            periodo.textContent = d.periodos[clamp(Math.round(t / PD), 0, T - 1)];
+          }
+          var reloj = { _t: 0 };
+          Object.defineProperty(reloj, "t", { get: function () { return this._t; }, set: function (v) { this._t = v; pinta(v); } });
+          // La carrera empieza al acabar la entrada del bloque y termina antes de su final.
+          if (CARRERA > 0) tl.fromTo(reloj, { t: 0 }, { t: CARRERA, duration: CARRERA, ease: "none" }, d.empieza);
+          pinta(0);
+          window.__timelines = window.__timelines || {};
+          window.__timelines[id] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

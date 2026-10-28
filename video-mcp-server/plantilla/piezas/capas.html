@@ -1,0 +1,107 @@
+<!doctype html>
+<!--
+  Capas globales por encima de las escenas y por debajo de los textos:
+  - degradado inferior para leer los subtítulos (el de v1);
+  - viñeta (vignette del catálogo, valores del short-pro);
+  - destellos cálidos (organic-light-leak-overlay adaptado: tres capas ámbar, rojo y oro, máx. 0,62);
+  - look videocámara (camcorder-hud adaptado a vertical + scanlines + tinte) o película (grain-overlay
+    con iteraciones finitas en vez de `infinite`).
+  Los destellos y el look los genera composicion.ts.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="capas" data-composition-id="capas" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #capas { position: relative; width: 1080px; height: 1920px; overflow: hidden; pointer-events: none; }
+        #capas .lleno { position: absolute; inset: 0; pointer-events: none; }
+        #capas-degradado {
+          background:
+            linear-gradient(to bottom, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0) 22%),
+            linear-gradient(to top, rgba(0, 0, 0, var(--degradado)) 0%, rgba(0, 0, 0, calc(var(--degradado) * 0.75)) 32%, rgba(0, 0, 0, 0) 62%);
+        }
+        #capas-vineta { background: radial-gradient(ellipse at 50% 45%, transparent 48%, rgba(0, 0, 0, {{VINETA}}) 100%); }
+        #capas .leak { position: absolute; inset: -16%; opacity: 0; overflow: hidden; pointer-events: none; mix-blend-mode: screen; }
+        #capas .leak .ly { position: absolute; inset: -20%; }
+        #capas .leak .ambar { background: radial-gradient(ellipse 52% 110% at 10% 58%, rgb(255 241 197 / 92%), transparent 45%), radial-gradient(ellipse 72% 120% at 24% 54%, rgb(255 126 57 / 78%), transparent 66%); filter: blur(28px); }
+        #capas .leak .rojo { background: radial-gradient(ellipse 58% 105% at 78% 34%, rgb(255 79 61 / 72%), rgb(255 44 92 / 28%) 48%, transparent 76%); filter: blur(40px); }
+        #capas .leak .oro { background: linear-gradient(104deg, transparent 24%, rgb(255 144 62 / 30%) 40%, rgb(255 247 205 / 72%) 51%, rgb(255 124 48 / 22%) 62%, transparent 78%); filter: blur(20px); }
+        /* Videocámara: REC y batería por debajo de 180 px; fecha y contador encima de los subtítulos (acaban en 1040 px). */
+        #capas-hud { color: #fff; font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 44px; line-height: 1.2;
+          -webkit-text-stroke: 1.5px rgb(0 0 0 / 92%); text-shadow: 0 2px 7px rgb(0 0 0 / 90%); }
+        #capas-hud .esquina { position: absolute; }
+        #capas-hud .rec { top: 196px; left: 64px; display: flex; align-items: center; gap: 20px; }
+        #capas-hud .punto { width: 28px; height: 28px; border-radius: 50%; background: #f12c2c; box-shadow: 0 0 12px rgba(241, 44, 44, 0.55); }
+        #capas-hud .bateria { top: 200px; left: 800px; width: 84px; height: 42px; border: 4px solid currentcolor; }
+        #capas-hud .bateria::before { position: absolute; top: 8px; left: 8px; width: 56px; height: 18px; background: currentcolor; content: ""; }
+        #capas-hud .bateria::after { position: absolute; top: 8px; right: -12px; width: 8px; height: 18px; background: currentcolor; content: ""; }
+        #capas-hud .fecha { top: 930px; left: 64px; }
+        #capas-hud .contador { top: 930px; left: 560px; width: 380px; text-align: right; }
+        #capas-hud .modo { display: block; font-size: 32px; margin-bottom: 4px; }
+        #capas-scan { background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.22) 0px, rgba(0, 0, 0, 0.22) 2px, transparent 2px, transparent 4px); }
+        #capas-tinte { mix-blend-mode: overlay; background: linear-gradient(160deg, rgba(255, 170, 90, 0.35), rgba(70, 110, 190, 0.3)); }
+        #capas-grano { overflow: hidden; }
+        #capas-grano .textura {
+          position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; opacity: 0.15;
+          background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+      </style>
+      <div id="capas-degradado" class="clip lleno" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-ignore data-layout-allow-occlusion></div>
+      <div id="capas-vineta" class="clip lleno" data-start="0" data-duration="{{DURACION}}" data-track-index="1" data-layout-ignore data-layout-allow-occlusion></div>
+{{BLOQUES_LUZ}}
+{{LOOK}}
+      <script id="capas-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var d = JSON.parse(document.getElementById("capas-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+
+          // Destellos: sube en el 24 %, baja a 0,4 a mitad y se apaga en el 28 % final.
+          d.destellos.forEach(function (e) {
+            var s = "#" + e.id, t0 = e.t, D = e.duracion;
+            tl.fromTo(s, { opacity: 0 }, { opacity: 0.62, duration: D * 0.24, ease: "sine.out" }, t0 + D * 0.06);
+            tl.fromTo(s, { opacity: 0.62 }, { opacity: 0.4, duration: D * 0.2, ease: "sine.inOut", immediateRender: false }, t0 + D * 0.42);
+            tl.fromTo(s, { opacity: 0.4 }, { opacity: 0, duration: D * 0.28, ease: "sine.in", immediateRender: false }, t0 + D * 0.68);
+            tl.fromTo(s + " .ambar", { xPercent: -20, scale: 0.92, rotation: -4 }, { xPercent: 18, scale: 1.1, rotation: 2, duration: D, ease: "sine.inOut" }, t0);
+            tl.fromTo(s + " .rojo", { xPercent: 20, yPercent: -8, scale: 1.08 }, { xPercent: -16, yPercent: 8, scale: 0.94, duration: D, ease: "sine.inOut" }, t0);
+            tl.fromTo(s + " .oro", { xPercent: -28, rotation: -6 }, { xPercent: 24, rotation: 4, duration: D, ease: "sine.inOut" }, t0);
+          });
+
+          // HUD: contador y punto de REC como función del tiempo (setter: seek no dispara onUpdate).
+          var contador = document.getElementById("capas-contador");
+          var punto = document.getElementById("capas-punto");
+          if (contador && punto) {
+            var reloj = { _t: 0 };
+            var pinta = function (t) {
+              var s = Math.max(0, Math.floor(t));
+              var hh = String(Math.floor(s / 3600)).padStart(2, "0");
+              var mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+              var ss = String(s % 60).padStart(2, "0");
+              contador.textContent = hh + ":" + mm + ":" + ss;
+              punto.style.opacity = Math.floor(t / 0.55) % 2 === 0 ? "1" : "0.25";
+            };
+            Object.defineProperty(reloj, "t", { get: function () { return this._t; }, set: function (v) { this._t = v; pinta(v); } });
+            tl.fromTo(reloj, { t: 0 }, { t: d.duracion, duration: d.duracion, ease: "none" }, 0);
+            pinta(0);
+          }
+
+          // Grano: saltos discretos cada 0,1 s, en número finito.
+          var grano = document.querySelector("#capas-grano .textura");
+          if (grano) {
+            var pos = [[0, 0], [-5, -5], [-10, 5], [5, -10], [-5, 15], [-10, 5], [15, 0], [0, 10], [-15, 0], [10, 5]];
+            var n = Math.ceil(d.duracion / 0.1);
+            for (var i = 0; i < n; i++) {
+              var p = pos[i % pos.length], q = pos[(i + 1) % pos.length];
+              tl.fromTo(grano, { xPercent: p[0], yPercent: p[1] }, { xPercent: q[0], yPercent: q[1], duration: 0.001, ease: "none", immediateRender: i === 0 }, i * 0.1 + 0.099);
+            }
+          }
+          window.__timelines = window.__timelines || {};
+          window.__timelines["capas"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

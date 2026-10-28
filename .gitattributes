@@ -4,3 +4,11 @@
 
 # Hooks de git: siempre LF (bash)
 .githooks/* text eol=lf
+
+# Motor de vídeo: fuentes y plantillas siempre con LF (core.autocrlf=true las pasaría a CRLF en Windows).
+video-mcp-server/**/*.ts text eol=lf
+video-mcp-server/**/*.html text eol=lf
+video-mcp-server/**/*.js text eol=lf
+video-mcp-server/**/*.json text eol=lf
+video-mcp-server/**/*.md text eol=lf
+video-mcp-server/**/*.txt text eol=lf

@@ -19,12 +19,17 @@ import { Estado, Toaster } from "./ui";
 // Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
 const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
 
+// Spike D6 (desechable): preview de la composición de vídeo en un iframe aislado. Solo en desarrollo.
+const PreviewSpike = import.meta.env.DEV ? lazy(() => import("./spikes/PreviewSpike").then((m) => ({ default: m.PreviewSpike }))) : null;
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
   // El asistente de bienvenida va a ancho completo, fuera de la barra lateral.
   { path: "onboarding", element: <OnboardingScreen /> },
+  // Spike D6, también fuera del marco: la captura de fotogramas necesita la preview sin barra lateral encima.
+  ...(PreviewSpike ? [{ path: "spike-preview", element: <Suspense fallback={null}><PreviewSpike /></Suspense> }] : []),
   {
     element: <AppShell />,
     children: [

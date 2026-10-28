@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  Gancho: adaptación vertical de headline-slam (catálogo HyperFrames).
+  Cambios: texto y palabra de acento generados en el servidor (escapados), tamaño en px calculado por
+  composicion.ts, contorno de 4 px, entrada 1.12 → 1 y temblor de aterrizaje con fromTo explícitos
+  (los .to() encadenados daban overlapping_gsap_tweens), salida hacia arriba.
+  Host: top 200 px, 1080×620 px, 2,3 s.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="gancho" data-composition-id="gancho" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="620">
+      <style>
+        {{FUENTES}}
+        #gancho { position: relative; width: 1080px; height: 620px; overflow: hidden; pointer-events: none; }
+        #gancho-escena { position: absolute; inset: 0; }
+        #gancho-stage { position: absolute; inset: 0; display: grid; place-items: center; }
+        #gancho-titular {
+          display: flex; flex-wrap: wrap; align-items: center; justify-content: center; column-gap: 0.28em; row-gap: 0;
+          width: 972px; color: var(--texto); font-family: var(--fuente-titulos); font-weight: var(--peso-titulos);
+          line-height: 0.98; text-align: center; text-transform: uppercase;
+          -webkit-text-stroke: 4px var(--contorno); paint-order: stroke fill;
+          text-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); transform-origin: 50% 50%;
+        }
+        #gancho .palabra { display: inline-block; }
+        #gancho .acento { color: var(--acento); }
+      </style>
+      <div id="gancho-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow>
+        <div id="gancho-stage">
+          <div id="gancho-titular" style="font-size: {{TAMANO}}px">{{PALABRAS}}</div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          var D = {{DURACION}};
+          var IN = 0.72, OUT = 0.46, LAND = 0.58, F = 1 / 30;
+          if (D < IN + OUT) { var k = D / (IN + OUT); IN *= k; OUT *= k; LAND *= k; F *= k; }
+          var tl = gsap.timeline({ paused: true });
+          tl.fromTo("#gancho-titular", { scale: 1.12, y: 0 }, { scale: 1, y: 0, duration: LAND, ease: "expo.out" }, 0);
+          var pasos = [[0, 0], [6, -6], [-4, 4], [0, 0]];
+          for (var i = 0; i < 3; i++) {
+            tl.fromTo("#gancho-stage", { x: pasos[i][0], y: pasos[i][1] }, { x: pasos[i + 1][0], y: pasos[i + 1][1], duration: F, ease: "power2.out", immediateRender: false }, LAND + i * F);
+          }
+          var hold = Math.max(0, D - IN - OUT);
+          if (hold > 0) {
+            tl.fromTo("#gancho-titular", { y: 0 }, { y: -6, duration: hold, ease: "sine.inOut", immediateRender: false }, IN);
+          }
+          tl.fromTo("#gancho-titular", { y: hold > 0 ? -6 : 0 }, { y: -900, duration: OUT, ease: "power4.in", immediateRender: false }, IN + hold);
+          window.__timelines = window.__timelines || {};
+          window.__timelines["gancho"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

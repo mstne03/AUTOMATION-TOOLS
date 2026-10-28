@@ -1,0 +1,109 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/hyperframes.json",
+  "registry": "https://raw.githubusercontent.com/heygen-com/hyperframes/main/registry",
+  "paths": {
+    "blocks": "compositions",
+    "components": "compositions/components",
+    "assets": "assets"
+  },
+  "media": {
+    "autoProxy": true
+  },
+  "registryItems": [
+    {
+      "name": "headline-slam",
+      "type": "hyperframes:component",
+      "target": "compositions/components/headline-slam.html"
+    },
+    {
+      "name": "organic-light-leak-overlay",
+      "type": "hyperframes:block",
+      "target": "compositions/organic-light-leak-overlay.html"
+    },
+    {
+      "name": "vignette",
+      "type": "hyperframes:component",
+      "target": "compositions/components/vignette.html"
+    },
+    {
+      "name": "camcorder-hud",
+      "type": "hyperframes:block",
+      "target": "compositions/camcorder-hud.html"
+    },
+    {
+      "name": "grain-overlay",
+      "type": "hyperframes:component",
+      "target": "compositions/components/grain-overlay.html"
+    },
+    {
+      "name": "caption-pill-karaoke",
+      "type": "hyperframes:component",
+      "target": "compositions/components/caption-pill-karaoke.html"
+    },
+    {
+      "name": "caption-neon-glow",
+      "type": "hyperframes:component",
+      "target": "compositions/components/caption-neon-glow.html"
+    },
+    {
+      "name": "caption-kinetic-slam",
+      "type": "hyperframes:component",
+      "target": "compositions/components/caption-kinetic-slam.html"
+    },
+    {
+      "name": "spain-map",
+      "type": "hyperframes:block",
+      "target": "compositions/spain-map.html"
+    },
+    {
+      "name": "world-map",
+      "type": "hyperframes:block",
+      "target": "compositions/world-map.html"
+    },
+    {
+      "name": "bar-chart-race",
+      "type": "hyperframes:block",
+      "target": "compositions/bar-chart-race.html"
+    },
+    {
+      "name": "mk-progress-stat",
+      "type": "hyperframes:block",
+      "target": "compositions/mk-progress-stat.html"
+    },
+    {
+      "name": "extruded-logo",
+      "type": "hyperframes:block",
+      "target": "compositions/extruded-logo.html"
+    },
+    {
+      "name": "gallery-tunnel",
+      "type": "hyperframes:block",
+      "target": "compositions/gallery-tunnel.html"
+    },
+    {
+      "name": "weight-wave",
+      "type": "hyperframes:block",
+      "target": "compositions/weight-wave.html"
+    },
+    {
+      "name": "aurora",
+      "type": "hyperframes:block",
+      "target": "compositions/aurora.html"
+    },
+    {
+      "name": "plasma",
+      "type": "hyperframes:block",
+      "target": "compositions/plasma.html"
+    },
+    {
+      "name": "nebula",
+      "type": "hyperframes:block",
+      "target": "compositions/nebula.html"
+    },
+    {
+      "name": "mesh-gradient",
+      "type": "hyperframes:block",
+      "target": "compositions/mesh-gradient.html"
+    }
+  ]
+}

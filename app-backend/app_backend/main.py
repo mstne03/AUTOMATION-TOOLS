@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from anthropic import (
     APIConnectionError,
     APIStatusError,
@@ -25,14 +26,14 @@ from anthropic import (
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, registry
+from app_backend import config, registry, video
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -93,6 +94,7 @@ def create_app(
     kb_auto_update: bool = True,
     canal_fuentes: Fuentes | None = None,
     conversaciones_dir: str | Path | None = None,
+    elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -117,12 +119,16 @@ def create_app(
         app.state.kb_updater = kb_updater or KBUpdater(
             config.KB_UPDATE_URL, config.KB_MINISIGN_PUBKEY, config.KB_PUBLIC_PATH
         )
+        # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
+        argv, cwd = video.comando_motor()
+        app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
         tareas = []
         if kb_auto_update:
             tareas.append(asyncio.create_task(_arranque_kb(app.state.kb_updater)))
         yield
         for t in tareas:
             t.cancel()
+        await app.state.motor.cerrar()
         await app.state.jobs.stop()
 
     async def _arranque_kb(updater: KBUpdater) -> None:
@@ -409,6 +415,22 @@ def create_app(
         fn = tools["youtube_retention_moments"].fn
         return await asyncio.to_thread(fn, video_id, format, language)
 
+    # ------------------------------------------------------------------ vídeo
+
+    @app.get("/video/capacidades", dependencies=protegido)
+    async def video_capacidades():
+        try:
+            r = await app.state.motor.llamar(
+                "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
+            )
+        except video.MotorNoDisponible as e:
+            raise HTTPException(status_code=503, detail=str(e)) from None
+        except video.MotorError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        if not isinstance(r.datos, dict):
+            raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
+        return r.datos
+
     # ---------------------------------------------------------------- youtube
 
     class YouTubeAuthIn(BaseModel):
@@ -462,10 +484,14 @@ def create_app(
     # --------------------------------------------------------------- settings
 
     class SettingsIn(BaseModel):
+        # Una clave pegada con salto de línea se guardaría tal cual y fallaría al validar.
+        model_config = ConfigDict(str_strip_whitespace=True)
+
         model: str | None = None
         allowed_dirs: list[dict] | None = None
         profile: str | None = None
         anthropic_api_key: str | None = None
+        elevenlabs_api_key: str | None = None  # "" la borra
 
     class ClientSecretIn(BaseModel):
         path: str | None = None
@@ -479,6 +505,7 @@ def create_app(
             **s,
             "models": list(config.MODELS),
             "has_anthropic_key": config.anthropic_api_key(yt_auth.store) is not None,
+            "has_elevenlabs_key": config.elevenlabs_api_key(yt_auth.store) is not None,
             "has_client_secret": yt_auth.has_client_secret(),
             "google_project": yt_auth.client_info(),
             "state_dir": str(config.STATE_DIR),
@@ -515,11 +542,21 @@ def create_app(
                 yt_auth.store.set(config.ANTHROPIC_KEY, body.anthropic_api_key)
             else:
                 yt_auth.store.delete(config.ANTHROPIC_KEY)
+        if body.elevenlabs_api_key is not None:
+            if body.elevenlabs_api_key:
+                yt_auth.store.set(config.ELEVENLABS_KEY, body.elevenlabs_api_key)
+            else:
+                yt_auth.store.delete(config.ELEVENLABS_KEY)
+            # El motor recibe la clave por su entorno al arrancar: se para y la siguiente llamada lo
+            # relanza con la nueva (o sin ninguna). Si no, seguiría usando y ocultando la revocada.
+            await app.state.motor.cerrar()
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
 
     class ValidarClaveIn(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True)
+
         api_key: str | None = None  # sin ella, se valida la clave guardada
 
     @app.post("/settings/validate-key", dependencies=protegido)
@@ -541,6 +578,23 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"Anthropic respondió con un error ({e.status_code}).") from e
         return {"valida": True, "detalle": None}
 
+    @app.post("/settings/validate-elevenlabs-key", dependencies=protegido)
+    async def validate_elevenlabs_key(body: ValidarClaveIn):
+        """Comprueba la clave de ElevenLabs con GET /v1/user (sin coste). La clave nunca sale en la respuesta."""
+        clave = body.api_key or config.elevenlabs_api_key(yt_auth.store)
+        if not clave:
+            raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
+        try:
+            async with httpx.AsyncClient(transport=elevenlabs_transport, timeout=15) as http:
+                r = await http.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": clave})
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="No se pudo conectar con ElevenLabs: comprueba tu conexión.") from None
+        if r.status_code in (401, 403):
+            return {"valida": False, "detalle": "ElevenLabs no reconoce esta clave."}
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs respondió con un error ({r.status_code}).")
+        return {"valida": True, "detalle": None}
+
     @app.post("/settings/client-secret", dependencies=protegido)
     async def put_client_secret(body: ClientSecretIn):
         source = body.json_text or body.path
@@ -559,6 +613,20 @@ def create_app(
         """Quita el proyecto de Google y, con él, la autorización de todos los canales."""
         desautorizados = yt_auth.remove_client_secret()
         return {**settings_out(), "desautorizados": desautorizados}
+
+    # Spike D6 (desechable): solo con APP_BACKEND_SPIKES=1 y una composición indicada, y nunca en el
+    # binario congelado (la variable podría llegar del entorno del usuario); sí en `tauri dev`.
+    if (
+        not config.FROZEN
+        and os.environ.get("APP_BACKEND_SPIKES") == "1"
+        and os.environ.get("APP_BACKEND_SPIKE_COMPOSICION")
+    ):
+        from app_backend import spike_preview
+
+        runtime = os.environ.get("APP_BACKEND_SPIKE_RUNTIME")
+        spike_preview.montar(
+            app, protegido, Path(os.environ["APP_BACKEND_SPIKE_COMPOSICION"]), Path(runtime) if runtime else None
+        )
 
     return app
 

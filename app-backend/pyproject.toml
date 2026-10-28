@@ -12,6 +12,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "cryptography>=42",
     "httpx>=0.27",
+    # Cliente del motor de vídeo (video.py): importa mcp y mcp_types directamente y envuelve
+    # mcp.client.stdio._create_platform_compatible_process, un nombre privado del SDK. Fijado a
+    # la serie 2.3 para que una versión nueva no lo rompa sin pasar por los tests.
+    "mcp==2.3.*",
+    "mcp-types==2.3.*",
     "youtube-studio-mcp",
     "kb-seo",
 ]

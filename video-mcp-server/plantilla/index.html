@@ -1,0 +1,54 @@
+<!doctype html>
+<!--
+  Raíz 1080×1920 de video-mcp-server: solo hosts de subcomposiciones, audio y variables del tema.
+  composicion.ts sustituye los marcadores {{…}}; los textos del guion nunca se concatenan sin escapar.
+  Orden de pintado: bloques y fondos (11-23) → capas (40) → gancho y etiqueta (50) → subtítulos (60) → flash (70).
+-->
+<html lang="en" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>{{TITULO}}</title>
+{{IMPORTMAP}}
+    <script src="assets/gsap.min.js"></script>
+    <style>
+      :root {
+        {{TEMA_CSS}}
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: var(--fondo);
+      }
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+      }
+      #suelo {
+        position: absolute;
+        inset: 0;
+        background: var(--fondo);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <div id="suelo" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-ignore></div>
+{{HOSTS}}
+{{AUDIO}}
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

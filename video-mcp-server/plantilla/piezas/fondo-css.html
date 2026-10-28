@@ -1,0 +1,38 @@
+<!doctype html>
+<!--
+  Fondo sin WebGPU: dos radial-gradient con los colores del tema que se desplazan con GSAP.
+  Sirve para `fondo: gradiente` y como sustituto de los shaders cuando no hay GPU. Con `fondo: ninguno`
+  queda liso (sin movimiento).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+        #{{ID}}-base { position: absolute; inset: 0; background: var(--fondo); }
+        #{{ID}} .mancha { position: absolute; width: 1600px; height: 1600px; border-radius: 50%; filter: blur(40px); }
+        #{{ID}}-a { left: -700px; top: -300px; background: radial-gradient(circle at 50% 50%, {{COLOR_A}} 0%, transparent 62%); opacity: 0.55; }
+        #{{ID}}-b { left: 200px; top: 900px; background: radial-gradient(circle at 50% 50%, {{COLOR_B}} 0%, transparent 60%); opacity: 0.5; }
+      </style>
+      <div id="{{ID}}-base" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow>
+        <div id="{{ID}}-a" class="mancha" style="{{OCULTO}}"></div>
+        <div id="{{ID}}-b" class="mancha" style="{{OCULTO}}"></div>
+      </div>
+      <script>
+        (function () {
+          var D = {{DURACION}};
+          var tl = gsap.timeline({ paused: true });
+          if ({{ANIMADO}}) {
+            tl.fromTo("#{{ID}}-a", { x: 0, y: 0, scale: 1 }, { x: 420, y: 520, scale: 1.15, duration: D, ease: "sine.inOut" }, 0);
+            tl.fromTo("#{{ID}}-b", { x: 0, y: 0, scale: 1.1 }, { x: -480, y: -620, scale: 0.95, duration: D, ease: "sine.inOut" }, 0);
+          }
+          window.__timelines = window.__timelines || {};
+          window.__timelines["{{ID}}"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>
