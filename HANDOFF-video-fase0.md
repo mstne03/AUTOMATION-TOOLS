@@ -29,7 +29,7 @@ Chrome for Testing) y el spike de preview no cumplió su criterio de salida. Tod
 | 7a · Ajustes del motor | `7901ff5..9a95e6c` | minors aplazados de 4 y 5: timeouts acotados, catálogo, respaldo de `taskkill`, mensajes en modo integrado |
 | 7 · `MotorVideo` (D1) | `9a95e6c..7a621d5` | cliente MCP por stdio en `app_backend/video.py`: arranque perezoso, un solo hijo con llamadas concurrentes, relanzado si muere, timeout; `GET /video/capacidades` |
 | 8 · Empaquetado (D10) | `7a621d5..0b0a4ac` | `app-ui/scripts/prepare-video-engine.sh` (versiones y SHA-256 fijados), recursos en `tauri.conf.json`, smoke test del motor desde el bundle, clave oculta también en `datos`, `mcp==2.3.*` |
-| 9 · Licencias y cierre | este commit | `video-mcp-server/LICENCIAS.md`, SPEC (D6, D10, D11), este handoff; aviso OFL de Recursive y atribución del IGN en `LICENSES/` |
+| 9 · Licencias y cierre | `0b0a4ac..ef14731` (+ ronda de correcciones) | `video-mcp-server/LICENCIAS.md`, SPEC (D6, D10, D11), este handoff; aviso OFL de Recursive y atribución del IGN en `LICENSES/` |
 
 Ninguna tool nueva entra en `registry.build()` (D2): `test_registry.py` no cambia.
 
@@ -62,17 +62,28 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 1. **GSAP — BLOQUEANTE.** La licencia de Webflow prohíbe usar GSAP en herramientas que permiten crear
    animaciones visuales sin código («Prohibited Uses», restricción III.1 de
    https://gsap.com/standard-license). SEO Studio es eso, con o sin editor.
-   **Recomiendo** reescribir las plantillas con **Web Animations API** mediante el adaptador `waapi`
-   que ya trae el runtime de HyperFrames (~110 llamadas en `plantilla/`), precedido de un spike corto
-   que pruebe que el seek es determinista en preview y render. Sacrifica: trabajo de reescritura y
-   reutilizar tal cual los bloques del registro de HyperFrames. Plan B: anime.js. No recomiendo pedir
-   consentimiento a Webflow como base (pueden revisar la licencia y congelarnos en una versión).
-2. **Chrome for Testing — BLOQUEANTE (dudosa).** Binario de Google («All rights reserved», términos de
-   Google: «You may not copy, modify, distribute…»), sin concesión de redistribución.
-   **Recomiendo descargarlo en el primer uso** desde el almacén de Google con el SHA-256 ya fijado,
-   verificado y extraído en carpeta vacía. Sacrifica: robustez sin red en el primer render (~114 MB de
-   descarga) frente a D10; a cambio quita 270 MB del instalador. Alternativas: Chromium `headless_shell`
-   propio (BSD; muy caro de mantener) o Edge del sistema (sin versión fija; solo de reserva).
+   **Recomiendo** reescribir las plantillas con **Web Animations API** (adaptador `waapi` del runtime
+   de HyperFrames) **más un motor de tiempo propio**: WAAPI solo anima propiedades CSS, y cinco piezas
+   animan objetos JS con setters de GSAP (contador del HUD de `capas`, reloj de `escena-barras`, cuenta
+   de `escena-cifra`, three.js de `escena-titulo3d` y `escena-tunel`). Candidato sin verificar: el
+   evento `hf-seek` del runtime, o un adaptador propio. Es una tarea propia de la fase 1 (14 piezas +
+   motor de tiempo + comparación de fotogramas por pieza), no un retoque, y **empieza por un spike**
+   con una pieza CSS y una JS en preview y render. Al adoptarla, excluir del bundle las copias de gsap
+   que trae el propio paquete `hyperframes`. Plan B: anime.js. No recomiendo pedir consentimiento a
+   Webflow como base: puede terminar la licencia a su discreción (V) y endurecer las versiones futuras.
+2. **Chrome for Testing — BLOQUEANTE (dudosa / no concedida).** Binario de Google («All rights
+   reserved», términos de Google: «You may not copy, modify, distribute…»), sin concesión de
+   redistribución. En Windows HyperFrames captura siempre por pantallazo y acepta cualquier navegador
+   por `HYPERFRAMES_BROWSER_PATH`, así que no necesita headless-shell.
+   **Recomiendo un spike con un snapshot de Chromium precompilado** (`chromium-browser-snapshots`,
+   BSD, sin marca de Google, sin compilar nada; revisión y SHA-256 fijados) comparado por SSIM con el
+   render del CfT. Si pasa, va en el instalador y se mantiene la robustez sin red de D10; sacrifica
+   tamaño (~370 MB de zip, navegador completo), builds de tronco no estables y códecs propietarios
+   (verificar clips H.264). **Si no pasa, descarga del CfT en el primer uso** con el SHA-256 ya fijado
+   (sacrifica el primer render sin red; quita 270 MB). Descartados como base: WebView2 Fixed Version
+   (redistribuible por Microsoft, pero no se lanza en headless y HyperFrames no sabe conectarse a un
+   navegador abierto), Chromium compilado por nosotros (muy caro de mantener) y Edge del sistema (sin
+   versión fija; solo de reserva).
 3. **ffmpeg — condiciones antes de la primera versión pública.** Publicar el código fuente
    correspondiente (ffmpeg y bibliotecas LGPL estáticas) y reunir los avisos BSD/MIT de las estáticas.
    **Recomiendo** una **build LGPL propia y mínima**: cumple ambas cosas, quita `libopenh264` (riesgo de
@@ -80,7 +91,8 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 4. **Fallo de fase del shader en la preview.** **Recomiendo** diagnosticar la causa raíz acotado en
    tiempo, con el seek de calentamiento como red; fondo CSS solo en la preview si no sale. Si se adopta
    WAAPI (punto 1), repetir la comparación de fotogramas con las plantillas nuevas.
-5. **Tamaño del instalador (783 MB vs ≈300 MB de la spec).** **Recomiendo** sacar Chrome (punto 2),
+5. **Tamaño del instalador (783 MB vs ≈300 MB de la spec).** Depende del punto 2: el snapshot de
+   Chromium lo empeora y la descarga en el primer uso lo reduce. **Recomiendo** decidir el 2 primero,
    build mínima de ffmpeg (punto 3), revisar si `three147` (con `three`, 73 MB) sigue siendo necesario
    y probar LZMA en NSIS; medir el instalador comprimido después, no antes.
 6. **Bitrate (abierto).** **Recomiendo** medir en la fase 1 con fotos reales y 60 s (`h264_mf` y NVENC
@@ -99,6 +111,11 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 - Chrome huérfano en POSIX (Puppeteer lo lanza en su propio grupo): solo se distribuye para Windows,
   donde `taskkill /T` cubre el árbol. Antes de usar el motor en Linux/VPS hay que recorrer el árbol.
 - Ruling 1: la medición de la preview dentro de la app con la RTX quedó como paso manual (abajo).
+- **Ruling 6 (mantener en la fase 1):** el binario congelado **no acepta ninguna ruta alternativa
+  para el motor**: siempre usa `exe.parent/video-engine`. El smoke test monta una junction temporal en
+  vez de un override. Un override por entorno o argumento reabriría la vía de exfiltración (un
+  `node.exe` ajeno recibiría la clave de ElevenLabs en su entorno). Si se descarga el navegador en el
+  primer uso, la misma regla aplica a su ruta: fija, dentro del estado de la app y verificada por hash.
 
 **Minors aplazados:**
 - **Borrar el spike de preview** (`app_backend/spike_preview.py` y su test, `app-ui/src/spikes/`,
@@ -154,7 +171,7 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 
 ## Seguridad (lo que cambia con las decisiones)
 
-- Descarga de Chrome en el primer uso: es un binario ejecutable bajado en tiempo de ejecución. Defensa:
+- Si se elige la descarga de Chrome en el primer uso: es un binario ejecutable bajado en tiempo de ejecución. Defensa:
   HTTPS, SHA-256 fijado comprobado **antes** de abrir el zip, extracción en carpeta nueva y vacía,
   nunca reutilizar una carpeta escribible sin volver a verificar; si el hash no cuadra, error visible.
 - WAAPI no añade código de terceros a la composición (menos superficie que GSAP).
@@ -166,6 +183,9 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 - HyperFrames 0.8.206 no depende de gsap (no está en sus `dependencies`) y su runtime trae adaptadores
   `waapi`, `css`, `animejs`, `lottie` y `gsap`.
 - El paquete npm de gsap no incluye el texto de la licencia; solo remite a la URL.
+- En Windows HyperFrames captura siempre por pantallazo (`beginframe` solo en Linux), acepta cualquier
+  navegador por `HYPERFRAMES_BROWSER_PATH` y solo lanza (`puppeteer.launch`), nunca se conecta.
+- El paquete `hyperframes` trae su propia copia de gsap 3.15.0 (`dist/vendor/npm/`, `dist/studio/`).
 - `LICENSE.headless_shell` de Chrome for Testing son las licencias abiertas de Chromium (2,1 MB); el `ABOUT`
   es el que lo identifica como Google Chrome bajo los términos de Google.
 - En `app-backend`, los tests se lanzan con `uv run --extra dev pytest`.

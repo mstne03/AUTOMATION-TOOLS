@@ -83,9 +83,9 @@ Este documento describe cómo se generaliza y se integra como módulo del produc
   write nueva expuesta al modelo cuenta.
 - Sin atribución a Claude en commits/PR; ramas `<tipo>/<slug>`, nunca `claude/…`.
 - Licencias: HyperFrames es Apache-2.0 (redistribuible con su aviso); ffmpeg debe ser build
-  **LGPL**, no GPL, para ir dentro de un .exe no libre. GSAP y el Chrome for Testing de Google
-  **no** se pueden redistribuir en este producto (puerta de licencias, D10 y
-  `video-mcp-server/LICENCIAS.md`).
+  **LGPL**, no GPL, para ir dentro de un .exe no libre. La licencia de GSAP **no permite** este
+  producto, y la redistribución del Chrome for Testing de Google es **dudosa / no concedida**
+  (puerta de licencias, D10 y `video-mcp-server/LICENCIAS.md`).
 - Equipo de referencia del usuario final: portátil Windows con GPU modesta; el render debe
   funcionar sin WebGPU (footy ya tiene reserva CSS para los fondos de shader).
 
@@ -300,12 +300,13 @@ borrador.
   - **GSAP:** su licencia excluye las herramientas que permiten crear animaciones visuales sin
     código (definición «Prohibited Uses» y restricción III.1 de https://gsap.com/standard-license),
     que es lo que hace el producto. Alternativa recomendada: plantillas con Web Animations API
-    mediante el adaptador `waapi` del runtime de HyperFrames.
-  - **chrome-headless-shell (Chrome for Testing):** binario con marca de Google sujeto a sus
-    términos, que prohíben distribuir su software; ninguna fuente concede redistribución.
-    Alternativa recomendada: descarga en el primer uso desde Google con el SHA-256 fijado
-    (sacrifica funcionar sin red en el primer render); Chromium propio (BSD) o Edge del sistema
-    como alternativas.
+    (adaptador `waapi` del runtime de HyperFrames) más un motor de tiempo propio para las piezas
+    que animan objetos JS (contadores, three.js), empezando por un spike.
+  - **chrome-headless-shell (Chrome for Testing):** redistribución **dudosa / no concedida**:
+    binario con marca de Google sujeto a sus términos, que prohíben distribuir su software.
+    Alternativa recomendada: spike con un snapshot de Chromium precompilado (BSD) vía
+    `HYPERFRAMES_BROWSER_PATH` para seguir en el instalador; si no pasa, descarga del CfT en el
+    primer uso con el SHA-256 fijado (sacrifica funcionar sin red en el primer render).
   - ffmpeg LGPL: redistribuible, pero falta publicar el código fuente correspondiente y los
     avisos de sus bibliotecas estáticas antes de la primera versión pública.
   - HyperFrames, Node, three, d3, topojson, atlas (atribución al IGN para el mapa de España),

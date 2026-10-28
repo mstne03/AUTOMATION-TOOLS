@@ -12,8 +12,8 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 
 | Pieza | Veredicto | Alternativa recomendada |
 |---|---|---|
-| **GSAP 3.15.0** | **BLOQUEANTE** — la licencia prohíbe su uso en herramientas que permiten crear animaciones visuales sin código, que es lo que es el producto (no solo el editor). | Reescribir las plantillas con **Web Animations API** (nativa, sin licencia de terceros) a través del adaptador `waapi` que ya trae el runtime de HyperFrames; anime.js como plan B. |
-| **chrome-headless-shell 152 (Chrome for Testing, Google)** | **BLOQUEANTE (dudosa)** — es un binario de Google con marca «Google Chrome», «All rights reserved» y sujeto a los términos de Google, que prohíben distribuir su software. No hay ninguna concesión de redistribución. | **Descargarlo en el primer uso** desde el almacén oficial de Google con el SHA-256 ya fijado (lo hace Google, no nosotros). Alternativas: Chromium `headless_shell` compilado por nosotros (BSD) o el Edge del sistema. |
+| **GSAP 3.15.0** | **BLOQUEANTE** — la licencia prohíbe su uso en herramientas que permiten crear animaciones visuales sin código, que es lo que es el producto (no solo el editor). | Plantillas con **Web Animations API** (nativa) a través del adaptador `waapi` del runtime de HyperFrames, **más un motor de tiempo propio** para las cinco piezas que animan objetos JS (contadores, three.js); empieza por un spike. anime.js como plan B. |
+| **chrome-headless-shell 152 (Chrome for Testing, Google)** | **BLOQUEANTE (dudosa / redistribución no concedida)** — binario de Google con marca «Google Chrome», «All rights reserved» y sujeto a los términos de Google, que prohíben distribuir su software; ninguna fuente concede redistribución. | Spike con un **snapshot de Chromium** (código abierto, BSD, precompilado; versión y SHA-256 fijados) vía `HYPERFRAMES_BROWSER_PATH`; si pasa, va en el instalador. Si no, **descarga del CfT en el primer uso** con el SHA-256 ya fijado. |
 | ffmpeg LGPL 7.1 (BtbN) | Sí, **con condiciones pendientes** antes de publicar (código fuente correspondiente y avisos de las bibliotecas estáticas). Riesgo de patentes a decidir. | Build LGPL propia y mínima (también reduce tamaño). |
 | Resto (HyperFrames, Node, three, d3, topojson, atlas, fuentes, shaders, dependencias de npm) | Sí, con aviso (ya incluido) o atribución. | — |
 
@@ -54,9 +54,12 @@ Cláusulas en las que me apoyo:
   o gestionar animaciones mediante una interfaz visual.
 - **Restricción III.1**: no usar GSAP para un Prohibited Use sin consentimiento previo por escrito.
   La licencia (II) se concede *solo* para «Permitted Uses» (uso en webs, apps web o interfaces).
-- **V (terminación)**: si se incumple, Webflow puede terminar la licencia y obliga a dejar de usar y
-  destruir las copias. **VI.2 (modificaciones)**: tras una revisión, no se pueden usar versiones
-  publicadas después de la nueva fecha efectiva — riesgo de quedarse congelado en una versión.
+- **V (terminación)**: «Webflow may terminate this GSAP License and revoke your access in its
+  discretion» (a su discreción, no solo por incumplimiento) y «Upon termination, you must cease all
+  use of GSAP Products and destroy all copies in your possession».
+- **VI.2 (modificaciones)**: Webflow puede cambiar la licencia en cualquier momento, aunque «you may
+  continue using previous versions of GSAP Products under the applicable terms». El riesgo no es
+  quedarse congelado: es que las versiones futuras lleguen con condiciones peores.
 
 Aplicación a SEO Studio: el creador **construye un vídeo animado sin escribir código**: elige escenas
 del catálogo, rellena datos desde el guion y, en la fase 1, mueve, recorta y reordena escenas en una
@@ -70,20 +73,41 @@ inaceptable sin consentimiento escrito.
 
 **Alternativas (recomendación primero):**
 
-1. **Web Animations API (WAAPI)** en las plantillas. HyperFrames 0.8.206 trae adaptadores de runtime
-   para `waapi`, `css`, `animejs` y `lottie` además de `gsap` (`runtime.adapters.*` en `dist/`), y no
-   depende de gsap (no está en sus `dependencies`). Es estándar del navegador, sin licencia de
-   terceros, y el mismo motor (Chromium) la ejecuta en la preview (WebView2) y en el render. Alcance
-   medido: ~110 llamadas (`fromTo` 48, `add` 45, `set` 7, `to` 6, `from` 3, `call` 1) sobre 14
-   `gsap.timeline` en `plantilla/` más la composición de la sonda de `src/capacidades.ts`. Sacrifica:
-   reescritura de las piezas y no poder reutilizar tal cual los bloques del registro de HyperFrames,
-   que suelen usar GSAP. Antes de reescribir: un spike corto que pruebe que el seek de HyperFrames es
-   determinista con WAAPI en preview y en render (fotograma a fotograma contra el MP4).
-2. **anime.js** si WAAPI se queda corta (stagger, texto). Licencia a verificar al adoptarla (se
+1. **Web Animations API (WAAPI) + motor de tiempo propio para lo que no es CSS.** HyperFrames 0.8.206
+   no depende de gsap (no está en sus `dependencies`) y su runtime trae adaptadores `waapi`, `css`,
+   `animejs`, `lottie`, `three`, `typegpu` y `frame-source` además de `gsap`. WAAPI es estándar del
+   navegador, sin licencia de terceros, y el mismo motor (Chromium) la ejecuta en la preview (WebView2)
+   y en el render.
+   - **Lo que WAAPI cubre:** propiedades CSS de elementos, que es la mayoría de las ~110 llamadas de
+     `plantilla/` (`fromTo` 48, `add` 45, `set` 7, `to` 6, `from` 3, `call` 1, sobre 14 `gsap.timeline`)
+     y la sonda de `src/capacidades.ts`. Hay que traducir `xPercent`/`yPercent` (a `translate` en %),
+     `scale`/`rotation` (a las propiedades individuales `scale`/`rotate`, sin componer un `transform`),
+     las curvas `expo.out`, `sine.*` y `back.out(2)` con rebote (a `linear()` o `cubic-bezier`),
+     `filter: blur()` y los escalonados (en `escena-cartel` son desfases manuales `i · 0,067 s`, no
+     `stagger`).
+   - **Lo que WAAPI no cubre: cinco piezas animan objetos JS con un setter de GSAP**: el contador del
+     HUD de `capas.html` (líneas 73–87), el reloj de carrera de `escena-barras`, la cuenta de
+     `escena-cifra`, y el render de three.js de `escena-titulo3d` y de `escena-tunel` (línea 418).
+     Necesitan **otro motor de tiempo**: candidatos, **sin verificar**, el evento `hf-seek` que el
+     runtime despacha en `window` con `{time, waitUntil}` (visto en `hyperframe.runtime.iife.js`; no
+     sé si se emite en cada fotograma de la reproducción y del render, o solo en seeks), un adaptador
+     propio, o el adaptador `three` del runtime (fija `window.__hfThreeTime` en el seek).
+   - **Esfuerzo revisado:** no es un retoque, es una tarea propia de la fase 1: reescribir 14 piezas,
+     construir el motor de tiempo de las cinco y comparar cada pieza fotograma a fotograma contra su
+     render actual con GSAP. Sacrifica ese trabajo y reutilizar tal cual los bloques del registro de
+     HyperFrames, que suelen usar GSAP.
+   - **Primer paso: un spike** con una pieza CSS (`escena-cifra` sin la cuenta) y una JS (el HUD de
+     `capas`) que pruebe (a) que el seek con WAAPI es determinista en preview y render (fotograma contra
+     MP4), (b) que el motor de tiempo de las piezas JS avanza igual reproduciendo, buscando y
+     renderizando, y (c) que `hf-seek` (o el adaptador elegido) se emite en el render.
+   - Ojo: el propio paquete `hyperframes` trae copias de gsap 3.15.0 (`dist/vendor/npm/gsap@3.15.0/`
+     y el bundle de `dist/studio/`). Aunque no las usemos, viajan en el instalador: al adoptar esta
+     alternativa, excluirlas del bundle tras comprobar que el render no las carga.
+2. **anime.js** si WAAPI + motor de tiempo se quedan cortos. Licencia a verificar al adoptarla (se
    publica como MIT; no está instalada y no la he leído).
 3. **Pedir consentimiento escrito a Webflow.** Da seguridad jurídica si lo conceden, pero deja el
-   producto a merced de un tercero que puede revisar la licencia (VI.2) y no resuelve las versiones
-   futuras. No recomendado como base.
+   producto a merced de un tercero que puede terminarla a su discreción (V) y cambiar las condiciones
+   de las versiones futuras (VI.2). No recomendado como base.
 
 ## Chrome for Testing: por qué es dudoso
 
@@ -100,21 +124,45 @@ inaceptable sin consentimiento escrito.
 
 Ninguna fuente concede redistribución → dudosa → bloqueante según la regla de la puerta.
 
+Dato técnico que amplía las alternativas: en Windows HyperFrames captura **siempre por pantallazo**
+(`beginframe`, que exige headless-shell, solo se activa en Linux: `requestedCaptureMode` en
+`dist/chunk-RDDVQSNQ.js`) y acepta cualquier binario por `HYPERFRAMES_BROWSER_PATH` («system Chrome
+instead of the pinned chrome-headless-shell», según su propio mensaje de ayuda). En cambio, solo
+**lanza** el navegador (`puppeteer.launch`); no sabe conectarse a uno ya abierto.
+
 **Alternativas (recomendación primero):**
 
-1. **Descarga en el primer uso** desde `storage.googleapis.com/chrome-for-testing-public` con el SHA-256
+1. **Snapshot de Chromium precompilado** (`storage.googleapis.com/chromium-browser-snapshots/Win_x64/<rev>/chrome-win.zip`):
+   builds de Chromium de código abierto, sin marca de Google, bajo BSD-3 + licencias de terceros; no
+   hay que compilarlo. Se redistribuye con sus avisos y lo usa el motor por `HYPERFRAMES_BROWSER_PATH`
+   en headless normal. *A verificar al descargarlo (con permiso de Marc):* que el `ABOUT`/`LICENSE` del
+   zip no traiga términos de Google. Mantiene la robustez sin red de D10. Sacrifica: son builds de
+   tronco no cualificados como versión estable (sin parches de rama); solo hay navegador completo, sin
+   headless-shell (el zip pesa ~370 MB en la rev 1728808, frente a 114 MB del CfT: empeora el tamaño);
+   sin códecs propietarios (verificar si los clips H.264 del usuario se decodifican por el adaptador
+   `frame-source`/ffmpeg o en el navegador); hay que elegir la revisión del punto de rama de la 152.
+   **Primer paso: spike** que renderice la composición de prueba con el snapshot y compare (SSIM) con
+   el render del CfT, con fondo WebGPU y con un clip.
+2. **Descarga en el primer uso** (si el spike 1 no pasa) desde `storage.googleapis.com/chrome-for-testing-public` con el SHA-256
    ya fijado en `prepare-video-engine.sh`, a una carpeta del estado de la app, verificada antes de
    extraer (mismo patrón que Puppeteer y la CLI de HyperFrames: quien distribuye es Google). Mismo binario
    ya probado; quita ~270 MB del instalador. **Sacrifica robustez offline** (D10): el primer render
    necesita red y ~114 MB de descarga; si la descarga falla hay que mostrarlo, nunca silenciarlo.
    Seguridad: SHA-256 fijado (TOFU, Google no publica SHA-256), extracción en carpeta vacía, carpeta no
    escribible por otras apps si es posible.
-2. **Chromium `headless_shell` compilado por nosotros** (BSD-3, redistribuible con avisos). Máxima
+3. **WebView2 Fixed Version Runtime** (Microsoft): Microsoft lo documenta para empaquetarlo con la app
+   con versión fija (condiciones exactas de su licencia a leer al adoptarlo). Pero `msedgewebview2.exe`
+   no es un navegador lanzable en headless: lo aloja una app a través del loader de WebView2.
+   HyperFrames solo lanza y no sabe conectarse, así que haría falta parchear su productor para
+   conectarse por CDP a un WebView2 oculto de nuestra app (el spike de preview ya usó CDP sobre
+   WebView2). Mucho trabajo y fuera de lo que HyperFrames soporta: no recomendado salvo que 1 y 2
+   fallen.
+4. **Chromium `headless_shell` compilado por nosotros** (BSD-3, redistribuible con avisos). Máxima
    robustez offline y claridad legal; sacrifica mantenibilidad (compilar Chromium en CI: horas y ~100 GB,
    parches de seguridad a nuestro cargo) y quizá códecs propietarios (H.264 de los clips del usuario:
    a verificar si HyperFrames los decodifica con ffmpeg o en el navegador).
-3. **Edge del sistema** (`msedge.exe`) vía `puppeteer-core` en modo captura por pantallazo
-   (`forceScreenshot`, que HyperFrames ya usa en este equipo según el spike D11). Cero bytes y nada que
+5. **Edge del sistema** (`msedge.exe`) por `HYPERFRAMES_BROWSER_PATH`, en el mismo modo de captura
+   por pantallazo que HyperFrames ya usa en Windows. Cero bytes y nada que
    redistribuir; sacrifica determinismo (versión no fijada, se actualiza sola) y robustez (Edge se puede
    desinstalar en el EEE; políticas de empresa). Solo como reserva.
 
