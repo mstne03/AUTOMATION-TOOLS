@@ -7,7 +7,7 @@ name = "youtube-studio-mcp"
 version = "0.1.0"
 description = "A comprehensive MCP server for YouTube Data API, Analytics API, and Reporting API"
 readme = "README.md"
-license = "MIT"
+license = "LicenseRef-PolyForm-Shield-1.0.0 AND MIT"
 requires-python = ">=3.11"
 authors = [
     { name = "Youtube MCP Server" },
@@ -16,7 +16,6 @@ keywords = ["mcp", "youtube", "analytics", "model-context-protocol"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
