@@ -560,6 +560,15 @@ def create_app(
         desautorizados = yt_auth.remove_client_secret()
         return {**settings_out(), "desautorizados": desautorizados}
 
+    # Spike D6 (desechable): solo con APP_BACKEND_SPIKES=1 y una composición indicada; nunca en producción.
+    if os.environ.get("APP_BACKEND_SPIKES") == "1" and os.environ.get("APP_BACKEND_SPIKE_COMPOSICION"):
+        from app_backend import spike_preview
+
+        runtime = os.environ.get("APP_BACKEND_SPIKE_RUNTIME")
+        spike_preview.montar(
+            app, protegido, Path(os.environ["APP_BACKEND_SPIKE_COMPOSICION"]), Path(runtime) if runtime else None
+        )
+
     return app
 
 
