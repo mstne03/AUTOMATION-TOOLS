@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from anthropic import (
     APIConnectionError,
     APIStatusError,
@@ -93,6 +94,7 @@ def create_app(
     kb_auto_update: bool = True,
     canal_fuentes: Fuentes | None = None,
     conversaciones_dir: str | Path | None = None,
+    elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -466,6 +468,7 @@ def create_app(
         allowed_dirs: list[dict] | None = None
         profile: str | None = None
         anthropic_api_key: str | None = None
+        elevenlabs_api_key: str | None = None  # "" la borra
 
     class ClientSecretIn(BaseModel):
         path: str | None = None
@@ -479,6 +482,7 @@ def create_app(
             **s,
             "models": list(config.MODELS),
             "has_anthropic_key": config.anthropic_api_key(yt_auth.store) is not None,
+            "has_elevenlabs_key": config.elevenlabs_api_key(yt_auth.store) is not None,
             "has_client_secret": yt_auth.has_client_secret(),
             "google_project": yt_auth.client_info(),
             "state_dir": str(config.STATE_DIR),
@@ -515,6 +519,11 @@ def create_app(
                 yt_auth.store.set(config.ANTHROPIC_KEY, body.anthropic_api_key)
             else:
                 yt_auth.store.delete(config.ANTHROPIC_KEY)
+        if body.elevenlabs_api_key is not None:
+            if body.elevenlabs_api_key:
+                yt_auth.store.set(config.ELEVENLABS_KEY, body.elevenlabs_api_key)
+            else:
+                yt_auth.store.delete(config.ELEVENLABS_KEY)
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
@@ -539,6 +548,23 @@ def create_app(
             raise HTTPException(status_code=502, detail="No se pudo conectar con Anthropic: comprueba tu conexión.") from e
         except APIStatusError as e:
             raise HTTPException(status_code=502, detail=f"Anthropic respondió con un error ({e.status_code}).") from e
+        return {"valida": True, "detalle": None}
+
+    @app.post("/settings/validate-elevenlabs-key", dependencies=protegido)
+    async def validate_elevenlabs_key(body: ValidarClaveIn):
+        """Comprueba la clave de ElevenLabs con GET /v1/user (sin coste). La clave nunca sale en la respuesta."""
+        clave = body.api_key or config.elevenlabs_api_key(yt_auth.store)
+        if not clave:
+            raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
+        try:
+            async with httpx.AsyncClient(transport=elevenlabs_transport, timeout=15) as http:
+                r = await http.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": clave})
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="No se pudo conectar con ElevenLabs: comprueba tu conexión.") from None
+        if r.status_code in (401, 403):
+            return {"valida": False, "detalle": "ElevenLabs no reconoce esta clave."}
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs respondió con un error ({r.status_code}).")
         return {"valida": True, "detalle": None}
 
     @app.post("/settings/client-secret", dependencies=protegido)

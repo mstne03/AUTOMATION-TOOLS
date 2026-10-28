@@ -77,6 +77,14 @@ def anthropic_api_key(store) -> str | None:
     return store.get(ANTHROPIC_KEY) or os.environ.get("ANTHROPIC_API_KEY") or None
 
 
+ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
+
+
+def elevenlabs_api_key(store) -> str | None:
+    """Clave de ElevenLabs: el almacen manda; ELEVENLABS_API_KEY es el respaldo de desarrollo."""
+    return store.get(ELEVENLABS_KEY) or os.environ.get("ELEVENLABS_API_KEY") or None
+
+
 def load_settings() -> dict:
     try:
         data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
