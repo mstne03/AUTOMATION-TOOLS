@@ -1,0 +1,335 @@
+# CI de calidad y seguridad: cada PR (contra cualquier rama) y cada push a main y ds/v1.
+#
+# El único check que hay que exigir en el ruleset es `ci-ok`. Agrega a los demás, y un job que
+# se salta porque la PR no toca su carpeta cuenta como bueno. Exigir los jobs uno a uno
+# dejaría las PRs esperando para siempre a un check que nunca arranca.
+#
+# Seguridad del propio workflow:
+#   - `pull_request` (nunca `pull_request_target`): una PR desde un fork ejecuta con un token de
+#     solo lectura y sin secretos. Este workflow no necesita ninguno.
+#   - Texto que controla quien abre la PR (rama, título, descripción) solo entra por `env:`,
+#     nunca interpolado en `run:` con ${{ }}, que lo ejecutaría como código.
+#   - Actions fijadas por SHA; Dependabot las actualiza.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, ds/v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Qué subproyectos tocó el cambio. app-backend importa kb-seo y youtube-mcp-server por ruta,
+  # así que un cambio en ellos también prueba app-backend. Tocar .github/ lo ejecuta todo.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.d.outputs.python }}
+      ui: ${{ steps.d.outputs.ui }}
+      rust: ${{ steps.d.outputs.rust }}
+      video: ${{ steps.d.outputs.video }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: d
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # Sin una base válida (rama nueva, workflow_dispatch) se ejecuta todo.
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            cambios=$(git diff --name-only "$BASE" "$GITHUB_SHA")
+          else
+            cambios=TODO
+          fi
+          echo "$cambios"
+          toca() { [ "$cambios" = TODO ] || grep -qE "$1|^\.github/|^\.gitleaks\.toml$" <<<"$cambios"; }
+          py=()
+          toca '^youtube-mcp-server/' && py+=('"youtube-mcp-server"')
+          toca '^kb-seo/' && py+=('"kb-seo"')
+          toca '^(app-backend|kb-seo|youtube-mcp-server)/' && py+=('"app-backend"')
+          echo "python=[$(IFS=,; echo "${py[*]}")]" >> "$GITHUB_OUTPUT"
+          toca '^app-ui/' && echo ui=true >> "$GITHUB_OUTPUT"
+          toca '^app-ui/src-tauri/' && echo rust=true >> "$GITHUB_OUTPUT"
+          toca '^video-mcp-server/' && echo video=true >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  python:
+    needs: changes
+    if: needs.changes.outputs.python != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        paquete: ${{ fromJSON(needs.changes.outputs.python) }}
+    services:
+      # Solo para kb-seo (una imagen vacía no arranca el servicio): sus tests de ingesta y
+      # búsqueda contra Postgres + pgvector se saltan si la base no está.
+      postgres:
+        image: ${{ matrix.paquete == 'kb-seo' && 'pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d' || '' }}
+        env:
+          POSTGRES_USER: kb_admin
+          POSTGRES_PASSWORD: ci_admin
+          POSTGRES_DB: kb_seo
+        ports: ["127.0.0.1:5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kb_admin -d kb_seo"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      # Credenciales desechables de la base efímera del job, no de ningún entorno real.
+      PGHOST: 127.0.0.1
+      PGPORT: "5433"
+      PGDATABASE: kb_seo
+      POSTGRES_USER: kb_admin
+      POSTGRES_PASSWORD: ci_admin
+      KB_WRITER_USER: kb_writer
+      KB_WRITER_PASSWORD: ci_writer
+      KB_READER_USER: kb_reader
+      KB_READER_PASSWORD: ci_reader
+      EMBED_CACHE_DIR: ${{ github.workspace }}/.cache/fastembed
+    defaults:
+      run:
+        working-directory: ${{ matrix.paquete }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.0"
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.paquete }}/uv.lock
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/fastembed
+          key: fastembed-${{ hashFiles('kb-seo/kb/embeddings.py', 'kb-seo/kb/config.py') }}
+
+      # --locked: falla si uv.lock no corresponde a pyproject.toml, en vez de regenerarlo.
+      - run: uv sync --locked --extra dev
+      - name: Esquema de la base (init.sql + migraciones)
+        if: matrix.paquete == 'kb-seo'
+        env:
+          PGUSER: kb_admin
+          PGPASSWORD: ci_admin
+        run: |
+          psql -v ON_ERROR_STOP=1 -f sql/init.sql
+          uv run --no-sync kb-migrate
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync pytest -q -rs
+
+  app-ui:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 9
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app-ui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  # Windows y con ffmpeg, como en el producto: los tests validan rutas de Windows y el render
+  # comprueba ffmpeg antes que el guion. El ffmpeg es el del instalador (URL y SHA-256 salen de
+  # prepare-video-engine.sh, así hay una sola fuente de verdad).
+  video:
+    needs: changes
+    if: needs.changes.outputs.video == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: video-mcp-server
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: video-mcp-server/package-lock.json
+      - name: ffmpeg LGPL del instalador
+        run: |
+          eval "$(grep -E '^FFMPEG_(ZIP|URL|SHA256)=' ../app-ui/scripts/prepare-video-engine.sh)"
+          curl -fsSL -o "$RUNNER_TEMP/$FFMPEG_ZIP" "$FFMPEG_URL"
+          echo "$FFMPEG_SHA256  $RUNNER_TEMP/$FFMPEG_ZIP" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/$FFMPEG_ZIP" > /dev/null
+          echo "FFMPEG_DIR=$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - run: npm test
+
+  # Windows: el shell enlaza win32job y windows-sys, y es la única plataforma que se publica.
+  tauri-rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: app-ui/src-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app-ui/src-tauri
+      - name: Marcadores de lo que empaqueta Tauri
+        # build.rs exige que existan el sidecar, sus recursos y el frontend; aquí no se empaqueta.
+        run: |
+          mkdir -p binaries/_internal binaries/video-engine ../dist
+          touch binaries/app-backend-x86_64-pc-windows-msvc.exe binaries/video-engine/.vacio
+          [ -f ../dist/index.html ] || echo '<!doctype html>' > ../dist/index.html
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  secretos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks sobre los commits nuevos
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          # Sin base válida se revisa todo el historial.
+          rango=""
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then rango="$BASE..$HEAD"; fi
+          "$RUNNER_TEMP/gitleaks" git . --no-banner --redact --config .gitleaks.toml --log-opts="$rango"
+
+  workflows-y-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.0"
+      - name: zizmor (seguridad de los workflows)
+        env:
+          GH_TOKEN: ${{ github.token }} # solo lectura: comprueba que los SHA fijados existen en su repo
+        run: uvx zizmor@1.31.1 .github/workflows
+      - name: actionlint (sintaxis y shellcheck de los run:)
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
+      - name: shellcheck (scripts del VPS, de empaquetado y hooks)
+        run: uvx --from shellcheck-py==0.11.0.1 shellcheck --severity=warning kb-seo/deploy/*.sh app-ui/scripts/*.sh .githooks/*
+      - name: Invariantes de seguridad del producto
+        run: python3 .github/scripts/invariantes.py
+
+  # Lo que piden CLAUDE.md y los .githooks, comprobado en el servidor: los hooks son opcionales
+  # en cada clon y no protegen si un día no están activados.
+  higiene-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - env:
+          RAMA: ${{ github.head_ref }}
+          AUTOR: ${{ github.event.pull_request.user.login }}
+          CUERPO: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          fallo=0
+          mal() { echo "::error::$1"; fallo=1; }
+          if [ "$AUTOR" != "dependabot[bot]" ]; then
+            [[ "$RAMA" =~ ^(feat|fix|chore|docs|ds)/[a-z0-9][a-z0-9._-]*$ ]] \
+              || mal "Rama '$RAMA': usa <tipo>/<slug> con tipo feat|fix|chore|docs|ds, nunca claude/…"
+            for s in "Qué cambia" "Por qué" "Cómo se ha probado" "Pasos manuales pendientes"; do
+              grep -qF "## $s" <<<"$CUERPO" || mal "Falta la sección '## $s' en la descripción de la PR"
+            done
+          fi
+          if git log --format='%an <%ae>%n%B' "$BASE..$HEAD" \
+            | grep -Eiq 'noreply@anthropic\.com|co-authored-by:.*(claude|anthropic)|generated with .*claude|claude-session:|claude\.ai/code'; then
+            mal "Hay commits con autor o atribución de Claude: reescríbelos antes de fusionar"
+          fi
+          # Aviso y no error: 26 commits que ya están en ds/v1 superan los 72 caracteres y no se
+          # pueden reescribir sin romper el historial compartido.
+          git log --no-merges --format=%s "$BASE..$HEAD" | awk 'length > 72 { print "::warning::Asunto de más de 72 caracteres: " $0 }'
+          exit $fallo
+
+  # Fase 1: informa de las vulnerabilidades conocidas sin bloquear. En la Fase 2, con la línea
+  # base ya actualizada, pasa a ser obligatorio (entra en `ci-ok`).
+  dependencias:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.0"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 9
+      - name: pip-audit (uv.lock de cada paquete)
+        run: |
+          fallo=0
+          for p in app-backend kb-seo youtube-mcp-server; do
+            echo "== $p"
+            (cd "$p" && uv export --locked --all-extras --no-hashes --no-emit-project --no-emit-workspace \
+              | grep -v '^-e ' > "$RUNNER_TEMP/req-$p.txt")
+            uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/req-$p.txt" --no-deps --disable-pip --progress-spinner off || fallo=1
+          done
+          exit $fallo
+      - name: pnpm audit (app-ui, producción)
+        if: ${{ !cancelled() }}
+        working-directory: app-ui
+        run: pnpm audit --prod --audit-level high
+      - name: npm audit (video-mcp-server, producción)
+        if: ${{ !cancelled() }}
+        working-directory: video-mcp-server
+        run: npm audit --omit=dev --audit-level high
+
+  ci-ok:
+    if: always()
+    needs: [changes, python, app-ui, video, tauri-rust, secretos, workflows-y-scripts, higiene-pr]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Resultados: $RESULTADOS"
+          case " $RESULTADOS " in *" failure "*|*" cancelled "*) exit 1 ;; esac

@@ -54,7 +54,7 @@ class AuthError(Exception):
     pass
 
 
-class ClientSecretConflict(AuthError):
+class ClientSecretConflict(AuthError):  # noqa: N818 - nombre público, lo usa app-backend
     """El client_secret.json nuevo es de otro proyecto y hay canales autorizados con el actual."""
 
     def __init__(self, afectados: list[str]):

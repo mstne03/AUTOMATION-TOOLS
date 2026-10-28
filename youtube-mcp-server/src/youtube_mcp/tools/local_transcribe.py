@@ -35,7 +35,7 @@ _modelo_info: dict = {}
 _lock = threading.Lock()
 
 
-class _ErrorLocal(Exception):
+class _ErrorLocal(Exception):  # noqa: N818
     """Error con un mensaje ya legible para el modelo."""
 
 

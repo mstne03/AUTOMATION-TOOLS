@@ -15,6 +15,13 @@
 #                 bloqueantes de video-mcp-server/LICENCIAS.md (Chrome for Testing, GSAP, ffmpeg LGPL).
 # Despues, en el VPS: bash deploy/publish-app.sh vX.Y.Z (kb-seo/deploy) para servir
 # latest.json y el instalador en https://kb.mstne.dev/app/.
+#
+# Seguridad: este job tiene la clave que firma las actualizaciones de todos los usuarios.
+#   - Actions fijadas por SHA (una etiqueta como v0 la puede mover quien controle esa action).
+#   - Sin cachés: un caché lo puede escribir otro workflow y el build lo usaría sin verificarlo.
+#   - Environment "release": los secretos de firma viven ahí, no en el repositorio, y solo los
+#     ve un job aprobado a mano (Settings > Environments > release > Required reviewers).
+#   - Solo tags sobre un commit de main.
 name: release
 
 on:
@@ -22,17 +29,28 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   windows:
     runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write # crear la release y subir el instalador
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # para comprobar que el tag está en main
+          persist-credentials: false
+
+      - name: El tag debe estar en main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "El tag ${GITHUB_REF_NAME} no apunta a un commit de main" >&2; exit 1; }
 
       - name: El tag debe ser la version de tauri.conf.json
         if: startsWith(github.ref, 'refs/tags/')
@@ -40,32 +58,26 @@ jobs:
           v="v$(jq -r .version app-ui/src-tauri/tauri.conf.json)"
           [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "El tag ${GITHUB_REF_NAME} no coincide con $v" >&2; exit 1; }
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           python-version: "3.12"
-      - uses: pnpm/action-setup@v4
+          enable-cache: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      # v4 solo cachea con el input `cache`, que aquí no se pone (la caché automática es de la v5).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: app-ui/pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          workspaces: app-ui/src-tauri
+          toolchain: stable
 
-      # El modelo ONNX (470 MB) se baja de Hugging Face una vez y se cachea.
-      - uses: actions/cache@v4
-        with:
-          path: app-backend/models
-          key: e5-small-${{ hashFiles('app-backend/scripts/fetch_model.py') }}
-
+      # El modelo ONNX (470 MB) se baja en cada release, del commit fijado en fetch_model.py.
       - name: Sidecar - tests, modelo y PyInstaller
         working-directory: app-backend
         run: |
-          uv sync --extra dev
+          uv sync --locked --extra dev
           uv run pytest -q
           uv run python scripts/fetch_model.py
           uv run pyinstaller --noconfirm --clean app-backend.spec
@@ -111,7 +123,7 @@ jobs:
           pnpm typecheck
 
       - name: Tauri build + firma + release (borrador)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -140,7 +152,7 @@ jobs:
           fi
           ls -la app-ui/src-tauri/target/release/bundle/nsis/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: seo-studio-windows
           path: |

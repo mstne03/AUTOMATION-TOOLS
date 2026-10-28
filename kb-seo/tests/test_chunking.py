@@ -1,5 +1,7 @@
 """Tests de troceado. No necesitan ni base de datos ni Ollama."""
 
+from itertools import pairwise
+
 from kb import chunking
 
 
@@ -84,7 +86,7 @@ def test_las_ventanas_se_solapan_en_tiempo():
         return parts[0] * 60 + parts[1] if len(parts) == 2 else parts[0] * 3600 + parts[1] * 60 + parts[2]
 
     rangos = [rango(c) for c in chunks]
-    for (_, fin_anterior), (inicio, _) in zip(rangos, rangos[1:]):
+    for (_, fin_anterior), (inicio, _) in pairwise(rangos):
         assert segundos(inicio) < segundos(fin_anterior), "las ventanas no se solapan"
 
 
