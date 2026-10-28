@@ -83,7 +83,9 @@ Este documento describe cómo se generaliza y se integra como módulo del produc
   write nueva expuesta al modelo cuenta.
 - Sin atribución a Claude en commits/PR; ramas `<tipo>/<slug>`, nunca `claude/…`.
 - Licencias: HyperFrames es Apache-2.0 (redistribuible con su aviso); ffmpeg debe ser build
-  **LGPL**, no GPL, para ir dentro de un .exe no libre.
+  **LGPL**, no GPL, para ir dentro de un .exe no libre. GSAP y el Chrome for Testing de Google
+  **no** se pueden redistribuir en este producto (puerta de licencias, D10 y
+  `video-mcp-server/LICENCIAS.md`).
 - Equipo de referencia del usuario final: portátil Windows con GPU modesta; el render debe
   funcionar sin WebGPU (footy ya tiene reserva CSS para los fondos de shader).
 
@@ -205,6 +207,26 @@ propio desde el principio. El paralaje (recorte del sujeto) llega en fase 2.
 - La pantalla usa solo componentes del catálogo `ds/*` y tokens; sus `data-testid` se añaden a
   `pantallas.md` en el mismo cambio.
 
+**Mecanismo de preview elegido (spike de fase 0, `video-mcp-server/spikes/INFORME-preview.md`):**
+
+- El backend sirve la carpeta de la composición como **URL de capacidad**
+  (`/…/{clave}/{ruta}` en `127.0.0.1`, clave aleatoria de 32 bytes que solo se entrega con el
+  Bearer; rutas resueltas y acotadas a la carpeta; respuesta con `CSP: sandbox allow-scripts`).
+  Al `index.html` se le inyecta el runtime de HyperFrames y un script de control.
+- La pantalla la carga en un `<iframe sandbox="allow-scripts">` **sin `allow-same-origin`**
+  (origen opaco: sin acceso al token, a `window.__TAURI__` ni al almacenamiento; comprobado).
+  WebGPU funciona dentro de ese iframe.
+- Control solo por `postMessage` con lista cerrada de órdenes (`seek`, `play`, `pause`), que el
+  script traduce a **`window.__player`** del runtime (no a `__timelines["main"]`: el player
+  mueve también timelines anidados, `<audio>`/`<video>` y el tiempo del shader). En la fase 1 se
+  validan forma e id de las respuestas.
+- Cifras: seek mediana 14 ms en WebView2, 59–135 fps según la GPU que elija Windows, deriva
+  audio/vídeo de pocos ms en 50 s (desfase instantáneo hasta ~50 ms, a escuchar con voz real).
+- **Criterio de salida NO cumplido:** tras reproducir el vídeo entero, un seek atrás deja el
+  fondo WebGPU `aurora` en otra fase (SSIM 0,60–0,86 frente al MP4). Pendiente de Marc antes de
+  la fase 1: diagnosticar la causa con un seek de calentamiento como red (recomendado), o fondo
+  CSS en la preview. Falta además la medición en WebView2 con la RTX (Windows eligió la iGPU).
+
 ### D6b. Ciclo de vida del proyecto *(decisión mía)*
 
 - Entrada nueva en la barra lateral: **Vídeo** (`/video`), con la lista de proyectos (título,
@@ -258,17 +280,36 @@ borrador.
 ### D10. Empaquetado
 
 - Node, `node_modules` del motor, Chrome headless y ffmpeg/ffprobe (build LGPL) van **dentro
-  del instalador** como recursos de Tauri, con su aviso de licencia. Coste: ~300 MB más de
-  instalador. Motivo: robustez (funciona sin red, sin descargas que puedan fallar o ser
+  del instalador** como recursos de Tauri, con su aviso de licencia. Coste estimado: ~300 MB más
+  de instalador. Motivo: robustez (funciona sin red, sin descargas que puedan fallar o ser
   manipuladas). *(Decisión mía.)*
+- **Real (fase 0):** `video-engine/` ocupa **783 MB sin comprimir** (navegador 270, ffmpeg +
+  ffprobe 209, `app/` con `node_modules` 220, Node 84). Piezas fijadas con versión y SHA-256 en
+  `app-ui/scripts/prepare-video-engine.sh`: Node v22.23.4 win-x64, chrome-headless-shell
+  152.0.7977.30 (la que fija hyperframes 0.8.206; SHA-256 calculado sobre la descarga, Google no
+  lo publica), ffmpeg `n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1` (BtbN), hyperframes 0.8.206 y el
+  resto por lockfile. Recortes posibles a decidir: Chrome fuera del instalador (ver puerta),
+  build mínima de ffmpeg, `three` + `three147` (73 MB), compresión LZMA en NSIS.
 - Telemetría de HyperFrames desactivada (footy ya fija `HYPERFRAMES_NO_TELEMETRY`,
   `DO_NOT_TRACK`); la composición no puede referenciar URLs externas (footy ya lo comprueba).
 - El smoke test del release comprueba que el motor arranca y responde desde el bundle.
 - **Puerta de licencias (cierre de fase 0):** confirmar que se puede redistribuir cada pieza del
-  instalador: binario de Chrome headless (o alternativa Chromium/Edge), licencia gratuita de
-  GSAP (posible restricción a herramientas que compitan con Webflow; sin comprobar), aviso de
-  HyperFrames (Apache-2.0) y build LGPL de ffmpeg. Si alguna no se puede, se sustituye esa
-  pieza antes de construir la fase 1. El código de footy es de Marc y no tiene restricciones.
+  instalador. Si alguna no se puede, se sustituye esa pieza antes de construir la fase 1. El
+  código de footy es de Marc y no tiene restricciones.
+- **Resultado (2026-10-28, detalle en `video-mcp-server/LICENCIAS.md`): dos bloqueantes.**
+  - **GSAP:** su licencia excluye las herramientas que permiten crear animaciones visuales sin
+    código (definición «Prohibited Uses» y restricción III.1 de https://gsap.com/standard-license),
+    que es lo que hace el producto. Alternativa recomendada: plantillas con Web Animations API
+    mediante el adaptador `waapi` del runtime de HyperFrames.
+  - **chrome-headless-shell (Chrome for Testing):** binario con marca de Google sujeto a sus
+    términos, que prohíben distribuir su software; ninguna fuente concede redistribución.
+    Alternativa recomendada: descarga en el primer uso desde Google con el SHA-256 fijado
+    (sacrifica funcionar sin red en el primer render); Chromium propio (BSD) o Edge del sistema
+    como alternativas.
+  - ffmpeg LGPL: redistribuible, pero falta publicar el código fuente correspondiente y los
+    avisos de sus bibliotecas estáticas antes de la primera versión pública.
+  - HyperFrames, Node, three, d3, topojson, atlas (atribución al IGN para el mapa de España),
+    fuentes OFL y shaders vendorizados: redistribuibles con el aviso que ya se incluye.
 
 ### D11. Codificación H.264: dos modos
 
@@ -293,6 +334,23 @@ con un codificador de GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`); sin ninguno la
 - Ambos modos pasan la misma verificación final con ffprobe (D6).
 - El spike de fase 0 valida: que HyperFrames renderiza al intermedio sin `libx264`, tiempos de
   ambos modos para 50 s, y calidad visual de `h264_mf` frente a GPU con el bitrate elegido.
+
+**Resultado del spike (fase 0, `video-mcp-server/spikes/INFORME-codificacion.md`):**
+
+- **Intermedio decidido: `mov` (ProRes 4444)**, impuesto por HyperFrames con alfa
+  (`yuva444p12le`, ~130 Mb/s): 785 MB de disco temporal por 50 s, que se borran al terminar.
+  `webm` (VP9) queda como alternativa si falta disco (6,3 MB, ~50 s más lento en total, calidad
+  sin medir de forma fiable); el motor comprueba el espacio libre antes de elegir.
+- Tiempos para 50 s en la máquina de Marc: Rápido 517 s; Compatible 782–836 s. Casi todo es la
+  captura de Chrome (8–14 min por 50 s, ~8–14× tiempo real), no la codificación (4–13 s).
+- **Bitrate: ABIERTO.** `h264_mf` **ignora el bitrate** (sale ~3,2 Mb/s, perfil Constrained
+  Baseline, con cualquier ajuste); NVENC lo respeta con `-rc`. Se fija en la fase 1 midiendo con
+  fotos reales (o se pasa a calidad constante en NVENC).
+- **Reintento obligatorio:** un render con `--gpu` falló a los 12 min por montar argumentos de
+  `libx264` (`x264-params`). Hipótesis sin confirmar: la sonda de NVENC de HyperFrames (timeout
+  de 2 s) no responde a tiempo bajo carga. Por eso el reintento en Compatible ante fallo del
+  codificador **no es opcional**, y el motor **sondea él mismo** los codificadores con el ffmpeg
+  del bundle (timeout generoso) antes de ofrecer Rápido, sin fiarse de la detección interna.
 
 ## Seguridad
 

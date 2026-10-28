@@ -156,6 +156,7 @@ for fuente in anton inter-tight jetbrains-mono; do
   cp "$M/@fontsource/$fuente/LICENSE" "$DEST/LICENSES/fuente-$fuente-OFL.txt"
 done
 cp "$MOTOR/catalogo/compositions/assets/fonts/Geist-OFL.txt" "$DEST/LICENSES/fuente-geist-OFL.txt"
+cp "$MOTOR/catalogo/compositions/assets/fonts/OFL.txt" "$DEST/LICENSES/fuente-recursive-OFL.txt"
 cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/shaders-THIRD-PARTY-LICENSES.txt"
 {
   echo "Motor de vídeo de SEO Studio — piezas de terceros"
@@ -168,6 +169,10 @@ cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/sh
   echo "  SHA-256 $CHROME_SHA256"
   echo "hyperframes $HYPERFRAMES_VERSION (Apache-2.0) y el resto de dependencias de npm: cada"
   echo "  paquete conserva su licencia en app/node_modules/<paquete>/."
+  echo
+  echo "Mapa de España (es-atlas): datos derivados del Instituto Geográfico Nacional (IGN),"
+  echo "  licencia CC BY 4.0 — © Instituto Geográfico Nacional. Mapa del mundo (world-atlas):"
+  echo "  Natural Earth, dominio público."
 } > "$DEST/LICENSES/LEEME.txt"
 
 echo "== Listo"
