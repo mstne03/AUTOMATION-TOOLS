@@ -12,8 +12,12 @@ import { log } from "./log.js";
  * cuelga para probar el timeout). Se lee una vez, al cargar el módulo, y el entorno del proceso lo fija
  * quien lanza el motor, con la misma confianza que el PATH; en producción no se define.
  */
-export const HYPERFRAMES_BIN =
-  process.env.VIDEO_HYPERFRAMES_BIN || path.join(SERVER_ROOT, "node_modules", "hyperframes", "bin", "hyperframes.mjs");
+export function resolverHyperframesBin(env: NodeJS.ProcessEnv = process.env): string {
+  // Integrado: el binario es siempre el empaquetado; la variable de pruebas se ignora.
+  const sustituto = env.VIDEO_ENGINE_EMBEDDED === "1" ? undefined : env.VIDEO_HYPERFRAMES_BIN;
+  return sustituto || path.join(SERVER_ROOT, "node_modules", "hyperframes", "bin", "hyperframes.mjs");
+}
+export const HYPERFRAMES_BIN = resolverHyperframesBin();
 export const EXTENSIONES_AUDIO = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"];
 
 /** Sonoridad objetivo de la voz (LUFS integrados). La música se normaliza igual y luego baja a su volumen. */

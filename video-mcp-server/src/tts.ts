@@ -64,7 +64,7 @@ export async function sintetizarConTimestamps(opts: {
     }
     const pista =
       res.status === 401
-        ? " Revisa ELEVENLABS_API_KEY en el .env del servidor."
+        ? process.env.VIDEO_ENGINE_EMBEDDED === "1" ? " Revisa tu clave de ElevenLabs en Ajustes de SEO Studio." : " Revisa ELEVENLABS_API_KEY en el .env del servidor."
         : res.status === 404
           ? " Revisa ELEVENLABS_VOICE_ID (la voz no existe en esta cuenta)."
           : res.status === 422

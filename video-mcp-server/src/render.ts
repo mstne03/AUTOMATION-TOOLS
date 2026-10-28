@@ -8,19 +8,21 @@ import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
-import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear, type Herramientas } from "./proceso.js";
+import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 
 export { HYPERFRAMES_BIN };
 
 export const TIMEOUT_CHECK_MS = 600_000;
+const MAX_SETTIMEOUT_MS = 2_147_483_647;
 export const TIMEOUT_RENDER_MS = 3_600_000;
 
 /** Timeout del render; VIDEO_TIMEOUT_RENDER_S (segundos) lo sustituye, pensado para tests. */
 export function timeoutRenderMs(): number {
   const s = Number(process.env.VIDEO_TIMEOUT_RENDER_S);
-  return Number.isFinite(s) && s > 0 ? s * 1000 : TIMEOUT_RENDER_MS;
+  // setTimeout dispara al instante por encima de 2^31-1 ms: se recorta a ese máximo.
+  return Number.isFinite(s) && s > 0 ? Math.min(s * 1000, MAX_SETTIMEOUT_MS) : TIMEOUT_RENDER_MS;
 }
 
 function duracionLegible(ms: number): string {
@@ -71,7 +73,7 @@ export interface OpcionesRender {
 export async function prepararRender(id: string, o: OpcionesRender): Promise<Preparado> {
   const rutas = archivosVideo(o.raiz, id);
   const herramientas = herramientasFfmpeg(o.ffmpegDir);
-  if (!herramientas) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
+  if (!herramientas) throw new ErrorVideo(mensajeSinFfmpeg());
   if (!fs.existsSync(rutas.dir)) throw new ErrorVideo(`No existe la carpeta ${rutas.dir}. Crea el guion primero con video_guardar_guion.`);
   if (!fs.existsSync(rutas.guion)) throw new ErrorVideo(`Falta ${rutas.guion}. Guárdalo con video_guardar_guion.`);
   const guion = parsearGuion(fs.readFileSync(rutas.guion, "utf8"));

@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { config, faltanParaVoz } from "./config.js";
 import { log } from "./log.js";
-import { herramientasFfmpeg } from "./proceso.js";
+import { esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
 
@@ -174,7 +174,13 @@ async function main() {
   log.info(`video-mcp-server arrancando. VIDEO_ROOT=${config.videoRoot}`);
   herramientasFfmpeg(config.ffmpegDir);
   const faltan = faltanParaVoz(config);
-  if (faltan.length) log.warn(`Faltan ${faltan.join(", ")} en .env: video_generar_voz no funcionará hasta rellenarlas.`);
+  if (faltan.length) {
+    log.warn(
+      esIntegrado()
+        ? "Falta la clave de ElevenLabs (Ajustes de SEO Studio): video_generar_voz no funcionará hasta añadirla."
+        : `Faltan ${faltan.join(", ")} en .env: video_generar_voz no funcionará hasta rellenarlas.`,
+    );
+  }
   await server.connect(new StdioServerTransport());
   log.info("video-mcp-server listo (stdio).");
 }

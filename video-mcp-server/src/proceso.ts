@@ -1,9 +1,14 @@
 // Lanzar procesos sin shell y localizar ffmpeg/ffprobe.
-import { spawn, type SpawnOptions } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { log } from "./log.js";
+
+const TIMEOUT_TASKKILL_MS = 10_000;
+
+/** true si el motor corre integrado como hijo del backend de SEO Studio (la configuración viene de la aplicación, no de un .env). */
+export const esIntegrado = (env: NodeJS.ProcessEnv = process.env): boolean => env.VIDEO_ENGINE_EMBEDDED === "1";
 
 export interface Resultado {
   code: number | null;
@@ -18,7 +23,8 @@ export interface Resultado {
  * mata a Node). Resuelve cuando el intento de matar ha terminado.
  * Windows: `taskkill /T /F`. Otros SO: el hijo es líder de su grupo (detached) y se señala al grupo entero.
  */
-function matarArbol(pid: number | undefined): Promise<void> {
+function matarArbol(hijo: ChildProcess): Promise<void> {
+  const pid = hijo.pid;
   if (!pid) return Promise.resolve();
   if (process.platform === "win32") {
     return new Promise((resolve) => {
@@ -27,7 +33,17 @@ function matarArbol(pid: number | undefined): Promise<void> {
         log.warn(`taskkill falló para el pid ${pid}: ${e.message}`);
         resolve();
       });
-      t.on("close", () => resolve());
+      // Un taskkill colgado no debe colgar el trabajo.
+      const corte = setTimeout(() => {
+        log.warn(`taskkill no terminó a tiempo para el pid ${pid}.`);
+        t.kill();
+      }, TIMEOUT_TASKKILL_MS);
+      t.on("close", (code) => {
+        clearTimeout(corte);
+        // 128 = "proceso no encontrado": ya estaba muerto. Cualquier otro fallo con el hijo vivo: matar al menos a Node.
+        if (code !== 0 && code !== 128 && hijo && hijo.exitCode === null) hijo.kill();
+        resolve();
+      });
     });
   }
   try {
@@ -79,7 +95,7 @@ export function ejecutar(
       temporizador = setTimeout(() => {
         vencido = true;
         // Se resuelve solo cuando el árbol ya está muerto: así el llamador no sigue con Chrome vivo.
-        void matarArbol(hijo.pid).then(() => {
+        void matarArbol(hijo).then(() => {
           if (terminado) return;
           terminado = true;
           if (onLinea && resto.trim()) onLinea(resto);
@@ -152,13 +168,16 @@ export function herramientasFfmpeg(ffmpegDir?: string): Herramientas | null {
   return cache;
 }
 
-export const MENSAJE_SIN_FFMPEG =
-  "No encuentro ffmpeg ni ffprobe. Instálalos con `winget install --id Gyan.FFmpeg -e` y reinicia Claude Desktop, " +
-  "o pon en .env FFMPEG_DIR=<carpeta bin de ffmpeg>.";
+export function mensajeSinFfmpeg(): string {
+  return esIntegrado()
+    ? "Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación."
+    : "No encuentro ffmpeg ni ffprobe. Instálalos con `winget install --id Gyan.FFmpeg -e` y reinicia Claude Desktop, " +
+        "o pon en .env FFMPEG_DIR=<carpeta bin de ffmpeg>.";
+}
 
 export function requerirFfmpeg(ffmpegDir?: string): Herramientas {
   const h = herramientasFfmpeg(ffmpegDir);
-  if (!h) throw new Error(MENSAJE_SIN_FFMPEG);
+  if (!h) throw new Error(mensajeSinFfmpeg());
   return h;
 }
 

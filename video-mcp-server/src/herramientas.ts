@@ -6,7 +6,7 @@ import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
-import { herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear } from "./proceso.js";
+import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
 import { extraerFotograma } from "./fotograma.js";
@@ -77,10 +77,12 @@ export function listar(cfg: Config): Respuesta {
     // Un enlace simbólico sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
     let imagenes: ReturnType<typeof imagenesValidadas>["imagenes"] = [];
     let ignoradas: string[] = [];
+    let aviso: string | undefined;
     try {
       ({ imagenes, ignoradas } = imagenesValidadas(r.dir));
     } catch (e) {
       if (!(e instanceof ErrorVideo)) throw e;
+      aviso = e.message;
     }
     const { guion } = leerGuion(r.guion);
     // Imágenes requeridas = bloques sin escena (sin guion válido, las 6).
@@ -91,6 +93,7 @@ export function listar(cfg: Config): Respuesta {
       imagenes: requeridas.filter((n) => imagenes[n - 1]).length,
       imagenesRequeridas: requeridas.length,
       fotosConOtroNombre: ignoradas,
+      aviso,
       voz: fs.existsSync(r.voz),
       mp4: fs.existsSync(r.mp4),
     };
@@ -98,7 +101,8 @@ export function listar(cfg: Config): Respuesta {
   const siguiente = siguienteId(cfg.videoRoot);
   const marca = (b: boolean) => (b ? "sí" : "no");
   const lineas = videos.map(
-    (v) => `- ${v.id}: guion ${marca(v.guion)} · imágenes requeridas ${v.imagenes}/${v.imagenesRequeridas}${v.fotosConOtroNombre.length ? ` (+${v.fotosConOtroNombre.length} foto(s) con otro nombre que no se usan; mira video_estado)` : ""} · voz ${marca(v.voz)} · mp4 ${marca(v.mp4)}`,
+    (v) => `- ${v.id}: guion ${marca(v.guion)} · imágenes requeridas ${v.imagenes}/${v.imagenesRequeridas}${v.fotosConOtroNombre.length ? ` (+${v.fotosConOtroNombre.length} foto(s) con otro nombre que no se usan; mira video_estado)` : ""} · voz ${marca(v.voz)} · mp4 ${marca(v.mp4)}${v.aviso ? `
+  AVISO: no he podido leer las imágenes de ${v.id}: ${v.aviso}` : ""}`,
   );
   const texto = [
     videos.length ? `${videos.length} vídeo(s) en ${cfg.videoRoot}:` : `No hay vídeos todavía en ${cfg.videoRoot}.`,
@@ -188,7 +192,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   if (fs.existsSync(r.mp4)) {
     mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4).catch(() => undefined))?.duracion : undefined };
   }
-  if (!h) avisos.push(MENSAJE_SIN_FFMPEG);
+  if (!h) avisos.push(mensajeSinFfmpeg());
   const jobs = listarJobs()
     .filter((j) => j.id === id)
     .map((j) => ({ job_id: j.job_id, estado: j.estado, creado: j.creado }));
@@ -321,7 +325,11 @@ export async function generarVoz(
 
   const faltan = faltanParaVoz(cfg);
   if (faltan.length) {
-    throw new ErrorVideo(`Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`);
+    throw new ErrorVideo(
+      esIntegrado()
+        ? "Añade tu clave de ElevenLabs en Ajustes de SEO Studio."
+        : `Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`,
+    );
   }
 
   log.info(`Generando voz de ${id} (${guion.caracteres} caracteres, modelo ${cfg.elevenModelId}).`);
@@ -404,7 +412,7 @@ export function estadoRender(args: { job_id: string }): Respuesta {
   const job = obtenerJob(args.job_id);
   if (!job) {
     throw new ErrorVideo(
-      `No existe el job ${args.job_id}. Los jobs viven en memoria: si Claude Desktop se reinició, vuelve a lanzar video_renderizar.`,
+      `No existe el job ${args.job_id}. Los jobs viven en memoria: si el motor se reinició, vuelve a lanzar video_renderizar.`,
     );
   }
   const datos: Record<string, unknown> = {
@@ -449,7 +457,7 @@ export async function fotograma(cfg: Config, args: { id: string; segundo: number
   const r = archivosVideo(cfg.videoRoot, id);
   if (!fs.existsSync(r.mp4)) throw new ErrorVideo(`No existe ${r.mp4}. Renderiza primero con video_renderizar("${id}").`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  if (!h) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
+  if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
   const info = await sondear(h.ffprobe, r.mp4);
   const dur = info.duracion ?? 0;
   if (!Number.isFinite(args.segundo) || args.segundo < 0 || args.segundo > dur) {
@@ -534,7 +542,7 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
 
 export async function musica(cfg: Config): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  if (!h) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
+  if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
   const carpeta = path.join(cfg.videoRoot, "_musica");
   const pistas = await listarMusica(h, carpeta);
   const texto = pistas.length
@@ -575,13 +583,16 @@ export const ADAPTADAS: Record<string, string> = {
   "mesh-gradient": "fondo-shader.html",
 };
 
+const TIMEOUT_CATALOGO_MS = 120_000;
+
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
     env: { ...entornoConFfmpeg(h), CI: "1" },
     cwd: PIEZAS_DIR,
-    timeoutMs: 120000,
+    timeoutMs: TIMEOUT_CATALOGO_MS,
   });
+  if (r.timeout) throw new ErrorVideo(`La CLI de HyperFrames no respondió al buscar en el catálogo (${TIMEOUT_CATALOGO_MS / 1000} s).`);
   let j: { total?: number; results?: { name: string; type?: string; title?: string; description?: string; tags?: string[] }[] };
   try {
     j = JSON.parse(r.stdout.slice(r.stdout.indexOf("{")));
