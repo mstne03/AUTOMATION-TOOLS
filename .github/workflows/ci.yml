@@ -150,12 +150,16 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # Windows y con ffmpeg, como en el producto: los tests validan rutas de Windows y el render
+  # comprueba ffmpeg antes que el guion. El ffmpeg es el del instalador (URL y SHA-256 salen de
+  # prepare-video-engine.sh, así hay una sola fuente de verdad).
   video:
     needs: changes
     if: needs.changes.outputs.video == 'true'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     defaults:
       run:
+        shell: bash
         working-directory: video-mcp-server
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -166,6 +170,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: video-mcp-server/package-lock.json
+      - name: ffmpeg LGPL del instalador
+        run: |
+          eval "$(grep -E '^FFMPEG_(ZIP|URL|SHA256)=' ../app-ui/scripts/prepare-video-engine.sh)"
+          curl -fsSL -o "$RUNNER_TEMP/$FFMPEG_ZIP" "$FFMPEG_URL"
+          echo "$FFMPEG_SHA256  $RUNNER_TEMP/$FFMPEG_ZIP" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/$FFMPEG_ZIP" > /dev/null
+          echo "FFMPEG_DIR=$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm test
 
