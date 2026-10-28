@@ -22,7 +22,7 @@ const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScre
 // Spike D6 (desechable): preview de la composición de vídeo en un iframe aislado. Solo en desarrollo.
 const PreviewSpike = import.meta.env.DEV ? lazy(() => import("./spikes/PreviewSpike").then((m) => ({ default: m.PreviewSpike }))) : null;
 
-const queryClient =new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([

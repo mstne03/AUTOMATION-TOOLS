@@ -28,7 +28,7 @@ async def cliente(carpeta):
 
 
 def test_resolver_rechaza_lo_que_sale(carpeta, tmp_path):
-    for ruta in ["../secreto.txt", "assets/../../secreto.txt", "/secreto.txt", str(tmp_path / "secreto.txt"), "C:/Windows/win.ini", "x" + chr(0) + "y"]:
+    for ruta in ["../secreto.txt", "assets/../../secreto.txt", "/secreto.txt", str(tmp_path / "secreto.txt"), "C:/Windows/win.ini", r"..\secreto.txt", r"assets\..\..\secreto.txt", "D:s.txt", "x" + chr(0) + "y"]:
         assert resolver(carpeta, ruta) is None, ruta
 
 
@@ -58,3 +58,22 @@ async def test_no_se_monta_sin_la_variable(monkeypatch, tmp_path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
         assert (await c.get("/spike/preview-info", headers={"Authorization": "Bearer t"})).status_code == 404
         assert (await c.get("/spike/preview/x/index.html")).status_code == 404
+
+
+async def test_clave_no_ascii_es_404_no_500(cliente):
+    r = await cliente.get("/spike/preview/cl%C3%A1ve/index.html")
+    assert r.status_code == 404
+
+
+async def test_inyeccion_en_head_con_atributos_y_sin_head(tmp_path):
+    comp = tmp_path / "c"
+    comp.mkdir()
+    (comp / "index.html").write_text('<!DOCTYPE html><HTML><HEAD lang="x"><title>t</title></HEAD></HTML>', encoding="utf-8")
+    app = FastAPI()
+    app.include_router(crear_router(comp, None, CLAVE))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        h = (await c.get(f"/spike/preview/{CLAVE}/")).text
+        assert h.index("<script") > h.index('<HEAD lang="x">') and h.startswith("<!DOCTYPE html>")
+        (comp / "index.html").write_text("<!doctype html><body>x</body>", encoding="utf-8")
+        h = (await c.get(f"/spike/preview/{CLAVE}/")).text
+        assert h.startswith("<!doctype html><script")

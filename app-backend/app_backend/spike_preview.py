@@ -11,6 +11,7 @@ Solo se monta con `APP_BACKEND_SPIKES=1` (ver `main.create_app`); nunca en produ
   `postMessage` desde la página padre (ver `CONTROL_JS`).
 """
 
+import re
 import secrets
 from pathlib import Path
 
@@ -118,7 +119,7 @@ def crear_router(carpeta: Path, runtime: Path | None, clave: str) -> APIRouter:
 
     @router.get("/spike/preview/{clave_url}/{ruta:path}")
     async def servir(clave_url: str, ruta: str):
-        if not secrets.compare_digest(clave_url, clave):
+        if not secrets.compare_digest(clave_url.encode(), clave.encode()):
             raise HTTPException(status_code=404)
         if ruta == "__spike/control.js":
             return Response(CONTROL_JS, media_type="text/javascript", headers=_CABECERAS)
@@ -131,8 +132,12 @@ def crear_router(carpeta: Path, runtime: Path | None, clave: str) -> APIRouter:
             raise HTTPException(status_code=404)
         if fichero.name == "index.html" and fichero.parent == carpeta.resolve():
             html = fichero.read_text(encoding="utf-8")
-            cabeza = html.lower().find("<head>")
-            i = cabeza + len("<head>") if cabeza >= 0 else 0
+            # Tras el `>` de <head ...> (sin distinguir mayúsculas, con atributos); nunca antes del doctype.
+            m = re.search(r"<head(?=[\s>/])[^>]*>", html, re.IGNORECASE)
+            i = m.end() if m else 0
+            if not m:
+                d = re.match(r"\s*<!doctype[^>]*>", html, re.IGNORECASE)
+                i = d.end() if d else 0
             return HTMLResponse(html[:i] + _INYECCION + html[i:], headers=_CABECERAS)
         return FileResponse(fichero, headers=_CABECERAS)  # FileResponse atiende Range (audio/vídeo)
 
