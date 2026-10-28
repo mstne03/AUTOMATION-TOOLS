@@ -1,0 +1,11 @@
+# Reglas por defecto de gitleaks más una excepción acotada.
+[extend]
+useDefault = true
+
+# En un .env.example con la clave vacía (`ELEVENLABS_API_KEY=`), generic-api-key salta de línea y
+# toma como "secreto" el nombre de la variable siguiente (`ELEVENLABS_VOICE_ID=`). Se ignoran solo
+# los "secretos" que son un nombre de variable en mayúsculas: una clave real nunca tiene esa forma.
+[[allowlists]]
+description = "Nombre de variable de entorno tomado como secreto"
+regexTarget = "secret"
+regexes = ['''^[A-Z][A-Z0-9_]*=?$''']
