@@ -17,6 +17,7 @@ por arranque.
 
 ```bash
 pnpm install
+mkdir -p src-tauri/binaries/video-engine   # recurso de tauri.conf.json: sin la carpeta, tauri dev no arranca en un clon limpio
 pnpm tauri dev
 ```
 
@@ -122,7 +123,7 @@ muestra el SHA-256 del `.exe`, para que ningún instalador arrastre un sidecar v
 `scripts/prepare-video-engine.sh` (Git Bash, desde `app-ui/`) compila `video-mcp-server`, instala sus
 dependencias de producción sin scripts y baja Node, `chrome-headless-shell` (Chrome for Testing) y un
 ffmpeg LGPL con versión y SHA-256 fijados; lo deja en `src-tauri/binaries/video-engine/` (layout en la
-cabecera del script) y Tauri lo copia a `<instalación>ideo-engine`. Aborta si un hash no coincide o
+cabecera del script) y Tauri lo copia a `<instalación>\video-engine`. Aborta si un hash no coincide o
 si el ffmpeg es GPL.
 
 **Apagado por defecto.** El workflow de release solo empaqueta el motor con la variable de repositorio

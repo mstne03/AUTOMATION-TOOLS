@@ -192,9 +192,10 @@ export function requerirFfmpeg(ffmpegDir?: string): Herramientas {
   return h;
 }
 
-/** Entorno para procesos hijos con ffmpeg al principio del PATH. */
+/** Entorno para procesos hijos con ffmpeg al principio del PATH. Sin la clave de ElevenLabs: solo la usa este proceso. */
 export function entornoConFfmpeg(h: Herramientas | null, extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  delete env.ELEVENLABS_API_KEY;
   if (h) {
     const clave = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
     env[clave] = `${h.dir}${path.delimiter}${env[clave] ?? ""}`;

@@ -26,7 +26,7 @@ from anthropic import (
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
@@ -484,6 +484,9 @@ def create_app(
     # --------------------------------------------------------------- settings
 
     class SettingsIn(BaseModel):
+        # Una clave pegada con salto de línea se guardaría tal cual y fallaría al validar.
+        model_config = ConfigDict(str_strip_whitespace=True)
+
         model: str | None = None
         allowed_dirs: list[dict] | None = None
         profile: str | None = None
@@ -552,6 +555,8 @@ def create_app(
         return settings_out()
 
     class ValidarClaveIn(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True)
+
         api_key: str | None = None  # sin ella, se valida la clave guardada
 
     @app.post("/settings/validate-key", dependencies=protegido)

@@ -295,6 +295,17 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
 
 // ---------- video_generar_voz ----------
 
+/** Qué falta para generar la voz, dicho según quién configura el motor (SEO Studio o el .env). */
+export function mensajeFaltanParaVoz(faltan: string[]): string {
+  if (!esIntegrado()) return `Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`;
+  return [
+    faltan.includes("ELEVENLABS_API_KEY") ? "Añade tu clave de ElevenLabs en Ajustes de SEO Studio." : "",
+    faltan.includes("ELEVENLABS_VOICE_ID") ? "Elige la voz de ElevenLabs en Ajustes de SEO Studio." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export async function generarVoz(
   cfg: Config,
   args: { id: string; forzar?: boolean },
@@ -324,18 +335,7 @@ export async function generarVoz(
   }
 
   const faltan = faltanParaVoz(cfg);
-  if (faltan.length) {
-    throw new ErrorVideo(
-      esIntegrado()
-        ? [
-            faltan.includes("ELEVENLABS_API_KEY") ? "Añade tu clave de ElevenLabs en Ajustes de SEO Studio." : "",
-            faltan.includes("ELEVENLABS_VOICE_ID") ? "Elige la voz de ElevenLabs en Ajustes de SEO Studio." : "",
-          ]
-            .filter(Boolean)
-            .join(" ")
-        : `Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`,
-    );
-  }
+  if (faltan.length) throw new ErrorVideo(mensajeFaltanParaVoz(faltan));
 
   log.info(`Generando voz de ${id} (${guion.caracteres} caracteres, modelo ${cfg.elevenModelId}).`);
   const tts = await sintetizarConTimestamps({

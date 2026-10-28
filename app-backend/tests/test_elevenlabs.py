@@ -76,6 +76,18 @@ async def test_validar_clave_elevenlabs_guardada(client):
     await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
 
 
+async def test_clave_pegada_con_espacios_se_recorta(client):
+    # Al copiar la clave del panel de ElevenLabs suele venir un salto de línea detrás.
+    r = await client.post("/settings/validate-elevenlabs-key", json={"api_key": " xi-buena\n"}, headers=AUTH)
+    assert r.json()["valida"] is True
+    try:
+        await client.put("/settings", json={"elevenlabs_api_key": "xi-buena\r\n"}, headers=AUTH)
+        r = await client.post("/settings/validate-elevenlabs-key", json={}, headers=AUTH)
+        assert r.json()["valida"] is True
+    finally:
+        await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
+
+
 async def test_validar_clave_elevenlabs_mala(client):
     r = await client.post("/settings/validate-elevenlabs-key", json={"api_key": "xi-mala"}, headers=AUTH)
     assert r.json() == {"valida": False, "detalle": "ElevenLabs no reconoce esta clave."}
