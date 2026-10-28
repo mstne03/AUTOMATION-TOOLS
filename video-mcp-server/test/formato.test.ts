@@ -35,8 +35,8 @@ describe("formato v2", () => {
 
   it("el ejemplo de la ayuda es válido", () => {
     const g = parsearGuion(EJEMPLO);
-    expect(g.opciones.golpe?.palabra).toBe("kicks");
-    expect(g.opciones.escenas[3]).toMatchObject({ tipo: "mapa", destacar: ["United Kingdom", "Colombia"] });
+    expect(g.opciones.golpe?.palabra).toBe("setenta");
+    expect(g.opciones.escenas[3]).toMatchObject({ tipo: "mapa", destacar: ["Brazil", "Canada"] });
     expect(textoAyuda()).toContain("### barras");
     expect(resumenCampos()).toContain("cortes_al_ritmo");
   });

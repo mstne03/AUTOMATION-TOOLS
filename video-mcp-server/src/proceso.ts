@@ -95,7 +95,7 @@ export function herramientasFfmpeg(ffmpegDir?: string): Herramientas | null {
   const dir = localizarFfmpegDir(ffmpegDir);
   cache = dir ? { dir, ffmpeg: path.join(dir, `ffmpeg${EXE}`), ffprobe: path.join(dir, `ffprobe${EXE}`) } : null;
   if (cache) log.info(`ffmpeg encontrado en ${dir}`);
-  else log.warn("No encuentro ffmpeg/ffprobe (ni en FFMPEG_DIR, ni en el PATH, ni en winget). El render y footy_fotograma no funcionarán.");
+  else log.warn("No encuentro ffmpeg/ffprobe (ni en FFMPEG_DIR, ni en el PATH, ni en winget). El render y video_fotograma no funcionarán.");
   return cache;
 }
 

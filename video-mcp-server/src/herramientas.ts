@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { archivosVideo, buscarImagenes, ErrorFooty, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { archivosVideo, buscarImagenes, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -68,12 +68,12 @@ export function resumenOpciones(g: Guion): string {
   return partes.join(" · ");
 }
 
-// ---------- footy_listar ----------
+// ---------- video_listar ----------
 
 export function listar(cfg: Config): Respuesta {
-  const ids = listarIds(cfg.footyRoot);
+  const ids = listarIds(cfg.videoRoot);
   const videos = ids.map((id) => {
-    const r = archivosVideo(cfg.footyRoot, id);
+    const r = archivosVideo(cfg.videoRoot, id);
     const { imagenes, ignoradas } = buscarImagenes(r.dir);
     const { guion } = leerGuion(r.guion);
     // Imágenes requeridas = bloques sin escena (sin guion válido, las 6).
@@ -88,35 +88,35 @@ export function listar(cfg: Config): Respuesta {
       mp4: fs.existsSync(r.mp4),
     };
   });
-  const siguiente = siguienteId(cfg.footyRoot);
+  const siguiente = siguienteId(cfg.videoRoot);
   const marca = (b: boolean) => (b ? "sí" : "no");
   const lineas = videos.map(
-    (v) => `- ${v.id}: guion ${marca(v.guion)} · imágenes requeridas ${v.imagenes}/${v.imagenesRequeridas}${v.fotosConOtroNombre.length ? ` (+${v.fotosConOtroNombre.length} foto(s) con otro nombre que no se usan; mira footy_estado)` : ""} · voz ${marca(v.voz)} · mp4 ${marca(v.mp4)}`,
+    (v) => `- ${v.id}: guion ${marca(v.guion)} · imágenes requeridas ${v.imagenes}/${v.imagenesRequeridas}${v.fotosConOtroNombre.length ? ` (+${v.fotosConOtroNombre.length} foto(s) con otro nombre que no se usan; mira video_estado)` : ""} · voz ${marca(v.voz)} · mp4 ${marca(v.mp4)}`,
   );
   const texto = [
-    videos.length ? `${videos.length} vídeo(s) en ${cfg.footyRoot}:` : `No hay vídeos todavía en ${cfg.footyRoot}.`,
+    videos.length ? `${videos.length} vídeo(s) en ${cfg.videoRoot}:` : `No hay vídeos todavía en ${cfg.videoRoot}.`,
     ...lineas,
     `Siguiente id libre: ${siguiente}.`,
   ].join("\n");
-  return { texto, datos: { raiz: cfg.footyRoot, videos, siguienteId: siguiente } };
+  return { texto, datos: { raiz: cfg.videoRoot, videos, siguienteId: siguiente } };
 }
 
-// ---------- footy_guardar_guion ----------
+// ---------- video_guardar_guion ----------
 
 export function guardarGuion(cfg: Config, args: { id?: string; contenido: string; sobrescribir?: boolean }): Respuesta {
   const guion = parsearGuion(args.contenido); // valida antes de escribir nada
-  fs.mkdirSync(cfg.footyRoot, { recursive: true });
-  const id = args.id ? validarId(args.id) : siguienteId(cfg.footyRoot);
-  const r = archivosVideo(cfg.footyRoot, id);
+  fs.mkdirSync(cfg.videoRoot, { recursive: true });
+  const id = args.id ? validarId(args.id) : siguienteId(cfg.videoRoot);
+  const r = archivosVideo(cfg.videoRoot, id);
   const existia = fs.existsSync(r.guion);
   if (existia && !args.sobrescribir) {
-    throw new ErrorFooty(`${id} ya tiene guion.md. Para reemplazarlo, llama otra vez con sobrescribir=true.`);
+    throw new ErrorVideo(`${id} ya tiene guion.md. Para reemplazarlo, llama otra vez con sobrescribir=true.`);
   }
   const avisos: string[] = [];
   if (fs.existsSync(r.voz)) {
     const p = leerPalabras(r.palabras);
     if (!p || p.hashNarracion !== guion.hash) {
-      avisos.push("Ya existe voz.mp3 y el texto narrado ha cambiado: hay que regenerar la voz con footy_generar_voz(forzar=true).");
+      avisos.push("Ya existe voz.mp3 y el texto narrado ha cambiado: hay que regenerar la voz con video_generar_voz(forzar=true).");
     }
   }
   avisos.push(...guion.avisos);
@@ -129,7 +129,7 @@ export function guardarGuion(cfg: Config, args: { id?: string; contenido: string
     `"${guion.titulo}" · ${guion.caracteres}/650 caracteres de narración.`,
     `Opciones: ${resumenOpciones(guion)}.`,
     ...avisos.map((a) => `Aviso: ${a}`),
-    `Siguiente paso: deja ${requeridas.map((n) => `img${n}`).join(", ")} en ${r.dir} y genera la voz con footy_generar_voz("${id}").`,
+    `Siguiente paso: deja ${requeridas.map((n) => `img${n}`).join(", ")} en ${r.dir} y genera la voz con video_generar_voz("${id}").`,
   ].join("\n");
   return {
     texto,
@@ -137,12 +137,12 @@ export function guardarGuion(cfg: Config, args: { id?: string; contenido: string
   };
 }
 
-// ---------- footy_estado ----------
+// ---------- video_estado ----------
 
 export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   const id = validarId(idArg);
-  const r = archivosVideo(cfg.footyRoot, id);
-  if (!fs.existsSync(r.dir)) throw new ErrorFooty(`No existe ${r.dir}. Usa footy_listar para ver los ids.`);
+  const r = archivosVideo(cfg.videoRoot, id);
+  if (!fs.existsSync(r.dir)) throw new ErrorVideo(`No existe ${r.dir}. Usa video_listar para ver los ids.`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const avisos: string[] = [];
   const { guion, problemas } = leerGuion(r.guion);
@@ -204,22 +204,22 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
         ? "degradado CSS"
         : "sin escenas que lo usen"
       : gpuForzadaApagada()
-        ? "degradado de reserva (FOOTY_FORZAR_SIN_GPU=1)"
+        ? "degradado de reserva (VIDEO_FORZAR_SIN_GPU=1)"
         : !prueba
-          ? "WebGPU sin comprobar todavía (la prueba se hace en el primer render o con footy_capacidades)"
+          ? "WebGPU sin comprobar todavía (la prueba se hace en el primer render o con video_capacidades)"
           : prueba.webgpu
             ? "WebGPU con la GPU"
             : "degradado de reserva (no hay WebGPU)";
     fondo = { tipo: guion.opciones.fondo, modo };
   }
-  // Música: pista, desde, volumen y BPM si ya se analizó con footy_musica.
+  // Música: pista, desde, volumen y BPM si ya se analizó con video_musica.
   let musica: Record<string, unknown> | null = null;
   if (guion?.musica) {
     let ruta: string | undefined;
     try {
-      ruta = resolverDentro(cfg.footyRoot, guion.musica);
+      ruta = resolverDentro(cfg.videoRoot, guion.musica);
     } catch {
-      avisos.push(`La música "${guion.musica}" está fuera de FOOTY_ROOT.`);
+      avisos.push(`La música "${guion.musica}" está fuera de VIDEO_ROOT.`);
     }
     const existe = !!ruta && fs.existsSync(ruta);
     if (ruta && !existe) avisos.push(`No encuentro la música ${ruta}.`);
@@ -282,7 +282,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   };
 }
 
-// ---------- footy_generar_voz ----------
+// ---------- video_generar_voz ----------
 
 export async function generarVoz(
   cfg: Config,
@@ -290,8 +290,8 @@ export async function generarVoz(
   fetchImpl?: typeof fetch,
 ): Promise<Respuesta> {
   const id = validarId(args.id);
-  const r = archivosVideo(cfg.footyRoot, id);
-  if (!fs.existsSync(r.guion)) throw new ErrorFooty(`${id} no tiene guion.md. Guárdalo primero con footy_guardar_guion.`);
+  const r = archivosVideo(cfg.videoRoot, id);
+  if (!fs.existsSync(r.guion)) throw new ErrorVideo(`${id} no tiene guion.md. Guárdalo primero con video_guardar_guion.`);
   const guion = parsearGuion(fs.readFileSync(r.guion, "utf8"));
   const h = herramientasFfmpeg(cfg.ffmpegDir);
 
@@ -304,7 +304,7 @@ export async function generarVoz(
       texto: [
         `${id} ya tiene voz.mp3 (${s2(duracion)}). No he llamado a ElevenLabs para no gastar créditos.`,
         ...avisos.map((a) => `Aviso: ${a}`),
-        coherente ? `Siguiente paso: footy_renderizar("${id}").` : "",
+        coherente ? `Siguiente paso: video_renderizar("${id}").` : "",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -314,7 +314,7 @@ export async function generarVoz(
 
   const faltan = faltanParaVoz(cfg);
   if (faltan.length) {
-    throw new ErrorFooty(`Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`);
+    throw new ErrorVideo(`Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`);
   }
 
   log.info(`Generando voz de ${id} (${guion.caracteres} caracteres, modelo ${cfg.elevenModelId}).`);
@@ -356,7 +356,7 @@ export async function generarVoz(
       `Voz generada para ${id}: ${palabras.duracionAudio.toFixed(1)} s, ${palabras.palabras.length} palabras, ${palabras.frases.length} frases de subtítulo.`,
       `Caracteres facturados: ${facturados}${tts.caracteresFacturados === undefined ? " (estimado: la API no devolvió la cabecera)" : ""}.`,
       ...avisos.map((a) => `Aviso: ${a}`),
-      `Siguiente paso: footy_renderizar("${id}").`,
+      `Siguiente paso: video_renderizar("${id}").`,
     ].join("\n"),
     datos: {
       id,
@@ -371,12 +371,12 @@ export async function generarVoz(
   };
 }
 
-// ---------- footy_renderizar / footy_estado_render ----------
+// ---------- video_renderizar / video_estado_render ----------
 
 export async function renderizar(cfg: Config, args: { id: string; musica?: boolean }): Promise<Respuesta> {
   const id = validarId(args.id);
   const job = await encolarRender(id, {
-    raiz: cfg.footyRoot,
+    raiz: cfg.videoRoot,
     musica: args.musica ?? true,
     musicaVolumen: cfg.musicaVolumen,
     ffmpegDir: cfg.ffmpegDir,
@@ -386,7 +386,7 @@ export async function renderizar(cfg: Config, args: { id: string; musica?: boole
   return {
     texto: [
       `Render de ${id} ${pos > 0 ? `en cola (posición ${pos})` : "en marcha"}. job_id: ${job.job_id}`,
-      `Consulta el avance con footy_estado_render("${job.job_id}"). Suele tardar menos de un minuto por cada 20 s de vídeo.`,
+      `Consulta el avance con video_estado_render("${job.job_id}"). Suele tardar menos de un minuto por cada 20 s de vídeo.`,
       ...job.avisos.map((a) => `Aviso: ${a}`),
     ].join("\n"),
     datos: { job_id: job.job_id, id, estado: job.estado, mp4: job.mp4, avisos: job.avisos },
@@ -396,8 +396,8 @@ export async function renderizar(cfg: Config, args: { id: string; musica?: boole
 export function estadoRender(args: { job_id: string }): Respuesta {
   const job = obtenerJob(args.job_id);
   if (!job) {
-    throw new ErrorFooty(
-      `No existe el job ${args.job_id}. Los jobs viven en memoria: si Claude Desktop se reinició, vuelve a lanzar footy_renderizar.`,
+    throw new ErrorVideo(
+      `No existe el job ${args.job_id}. Los jobs viven en memoria: si Claude Desktop se reinició, vuelve a lanzar video_renderizar.`,
     );
   }
   const datos: Record<string, unknown> = {
@@ -421,7 +421,7 @@ export function estadoRender(args: { job_id: string }): Respuesta {
     case "terminado":
       texto = [
         `${job.job_id}: terminado. ${job.mp4} (${s2(job.duracion)}).`,
-        `Revísalo con footy_fotograma("${job.id}", segundo) y, con el OK del usuario, súbelo con youtube_upload_video desde ${job.mp4}.`,
+        `Revísalo con video_fotograma("${job.id}", segundo) y, con el OK del usuario, súbelo con youtube_upload_video desde ${job.mp4}.`,
         ...job.avisos.map((a) => `Aviso: ${a}`),
       ].join("\n");
       break;
@@ -435,18 +435,18 @@ export function estadoRender(args: { job_id: string }): Respuesta {
   return { texto, datos };
 }
 
-// ---------- footy_fotograma ----------
+// ---------- video_fotograma ----------
 
 export async function fotograma(cfg: Config, args: { id: string; segundo: number }): Promise<Respuesta> {
   const id = validarId(args.id);
-  const r = archivosVideo(cfg.footyRoot, id);
-  if (!fs.existsSync(r.mp4)) throw new ErrorFooty(`No existe ${r.mp4}. Renderiza primero con footy_renderizar("${id}").`);
+  const r = archivosVideo(cfg.videoRoot, id);
+  if (!fs.existsSync(r.mp4)) throw new ErrorVideo(`No existe ${r.mp4}. Renderiza primero con video_renderizar("${id}").`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  if (!h) throw new ErrorFooty(MENSAJE_SIN_FFMPEG);
+  if (!h) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
   const info = await sondear(h.ffprobe, r.mp4);
   const dur = info.duracion ?? 0;
   if (!Number.isFinite(args.segundo) || args.segundo < 0 || args.segundo > dur) {
-    throw new ErrorFooty(`El segundo tiene que estar entre 0 y ${dur.toFixed(2)} (duración del mp4).`);
+    throw new ErrorVideo(`El segundo tiene que estar entre 0 y ${dur.toFixed(2)} (duración del mp4).`);
   }
   const segundo = Math.min(args.segundo, Math.max(0, dur - 0.05));
   const png = await extraerFotograma(h, r.mp4, segundo);
@@ -457,13 +457,13 @@ export async function fotograma(cfg: Config, args: { id: string; segundo: number
   };
 }
 
-// ---------- footy_ayuda ----------
+// ---------- video_ayuda ----------
 
 export function ayuda(): Respuesta {
   return { texto: textoAyuda(), datos: {} };
 }
 
-// ---------- footy_capacidades ----------
+// ---------- video_capacidades ----------
 
 export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boolean }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
@@ -472,7 +472,7 @@ export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boo
     ? `${c.gpu.webgpu ? "sí" : "no"} (prueba del ${c.gpu.fecha.slice(0, 16).replace("T", " ")}: ${c.gpu.detalle})`
     : "sin comprobar (falta ffmpeg)";
   const texto = [
-    `WebGPU: ${c.gpuForzadaApagada ? "desactivado a la fuerza (FOOTY_FORZAR_SIN_GPU=1)" : gpu}`,
+    `WebGPU: ${c.gpuForzadaApagada ? "desactivado a la fuerza (VIDEO_FORZAR_SIN_GPU=1)" : gpu}`,
     `HyperFrames ${c.hyperframes} · ${c.ffmpeg ?? "ffmpeg NO encontrado"}`,
     `Chrome: ${c.chrome ?? "no encontrado (npx hyperframes browser ensure)"}`,
     `Telemetría: ${c.telemetria ?? "desconocida"}`,
@@ -481,15 +481,15 @@ export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boo
   return { texto, datos: c as unknown as Record<string, unknown> };
 }
 
-// ---------- footy_vista_previa ----------
+// ---------- video_vista_previa ----------
 
 const MAX_FOTOGRAMAS = 8;
 
 export async function vistaPrevia(cfg: Config, args: { id: string; segundos: number[] }): Promise<Respuesta> {
   const id = validarId(args.id);
-  if (!args.segundos.length) throw new ErrorFooty("Pasa al menos un segundo en `segundos`, por ejemplo [0.5, 3, 8].");
-  if (args.segundos.length > MAX_FOTOGRAMAS) throw new ErrorFooty(`Como mucho ${MAX_FOTOGRAMAS} fotogramas por vista previa.`);
-  const o = { raiz: cfg.footyRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir, browserPath: cfg.browserPath };
+  if (!args.segundos.length) throw new ErrorVideo("Pasa al menos un segundo en `segundos`, por ejemplo [0.5, 3, 8].");
+  if (args.segundos.length > MAX_FOTOGRAMAS) throw new ErrorVideo(`Como mucho ${MAX_FOTOGRAMAS} fotogramas por vista previa.`);
+  const o = { raiz: cfg.videoRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir, browserPath: cfg.browserPath };
   const prep = await prepararRender(id, o);
   const h = prep.herramientas;
   const dir = path.join(prep.rutas.dir, "_vista_previa");
@@ -523,12 +523,12 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
   }
 }
 
-// ---------- footy_musica ----------
+// ---------- video_musica ----------
 
 export async function musica(cfg: Config): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  if (!h) throw new ErrorFooty(MENSAJE_SIN_FFMPEG);
-  const carpeta = path.join(cfg.footyRoot, "_musica");
+  if (!h) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
+  const carpeta = path.join(cfg.videoRoot, "_musica");
   const pistas = await listarMusica(h, carpeta);
   const texto = pistas.length
     ? [
@@ -543,7 +543,7 @@ export async function musica(cfg: Config): Promise<Respuesta> {
   return { texto, datos: { carpeta, pistas: pistas.map((p) => ({ ...p, rutaGuion: `_musica/${p.archivo}` })) } };
 }
 
-// ---------- footy_catalogo ----------
+// ---------- video_catalogo ----------
 
 /** Piezas del catálogo que ya están adaptadas en plantilla/piezas/. */
 export const ADAPTADAS: Record<string, string> = {

@@ -1,10 +1,20 @@
-// Carga .env desde la carpeta del servidor (no desde el cwd: Claude Desktop lanza el proceso con otro cwd).
+// Carga .env desde la carpeta del servidor (no desde el cwd) salvo en modo integrado.
+import os from "node:os";
 import path from "node:path";
 import dotenv from "dotenv";
 import { SERVER_ROOT } from "./raiz.js";
 import { log } from "./log.js";
 
-dotenv.config({ path: path.join(SERVER_ROOT, ".env"), quiet: true });
+/**
+ * Modo integrado (VIDEO_ENGINE_EMBEDDED=1): el anfitrión pasa toda la configuración por el entorno
+ * y el motor no lee ningún .env (la clave de ElevenLabs no puede venir de un fichero suelto).
+ */
+export function cargarDotenv(env: NodeJS.ProcessEnv = process.env, raiz: string = SERVER_ROOT): void {
+  if (env.VIDEO_ENGINE_EMBEDDED === "1") return;
+  dotenv.config({ path: path.join(raiz, ".env"), processEnv: env, quiet: true });
+}
+
+cargarDotenv();
 
 // La CLI de HyperFrames envía telemetría anónima; su forma oficial de desactivarla es esta variable.
 if (process.env.HYPERFRAMES_NO_TELEMETRY === undefined) process.env.HYPERFRAMES_NO_TELEMETRY = "1";
@@ -16,7 +26,7 @@ export interface Config {
   elevenApiKey: string | undefined;
   elevenVoiceId: string | undefined;
   elevenModelId: string;
-  footyRoot: string;
+  videoRoot: string;
   browserPath: string | undefined;
   musicaVolumen: number;
   ffmpegDir: string | undefined;
@@ -28,18 +38,18 @@ function vacioAUndefined(v: string | undefined): string | undefined {
 }
 
 export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const volumenTexto = vacioAUndefined(env.FOOTY_MUSICA_VOLUMEN);
+  const volumenTexto = vacioAUndefined(env.VIDEO_MUSICA_VOLUMEN);
   let musicaVolumen = 0.12;
   if (volumenTexto !== undefined) {
     const v = Number(volumenTexto.replace(",", "."));
     if (Number.isFinite(v) && v >= 0 && v <= 1) musicaVolumen = v;
-    else log.warn(`FOOTY_MUSICA_VOLUMEN="${volumenTexto}" no es un número entre 0 y 1; uso 0.12.`);
+    else log.warn(`VIDEO_MUSICA_VOLUMEN="${volumenTexto}" no es un número entre 0 y 1; uso 0.12.`);
   }
   return {
     elevenApiKey: vacioAUndefined(env.ELEVENLABS_API_KEY),
     elevenVoiceId: vacioAUndefined(env.ELEVENLABS_VOICE_ID),
     elevenModelId: vacioAUndefined(env.ELEVENLABS_MODEL_ID) ?? "eleven_multilingual_v2",
-    footyRoot: path.resolve(vacioAUndefined(env.FOOTY_ROOT) ?? "C:\\Footy"),
+    videoRoot: path.resolve(vacioAUndefined(env.VIDEO_ROOT) ?? path.join(os.homedir(), "Videos", "SEO Studio")),
     browserPath: vacioAUndefined(env.HYPERFRAMES_BROWSER_PATH),
     musicaVolumen,
     ffmpegDir: vacioAUndefined(env.FFMPEG_DIR),

@@ -1,10 +1,10 @@
-// Logs solo por stderr y a logs/footy.log: en un servidor stdio, stdout es del protocolo MCP.
+// Logs solo por stderr y a STATE_DIR/video.log: en un servidor stdio, stdout es del protocolo MCP.
 import fs from "node:fs";
 import path from "node:path";
-import { SERVER_ROOT } from "./raiz.js";
+import { STATE_DIR } from "./estado.js";
 
-const LOG_DIR = path.join(SERVER_ROOT, "logs");
-const LOG_FILE = path.join(LOG_DIR, "footy.log");
+const LOG_DIR = STATE_DIR;
+const LOG_FILE = path.join(LOG_DIR, "video.log");
 let ficheroOk = true;
 
 function escribir(nivel: string, partes: unknown[]): void {

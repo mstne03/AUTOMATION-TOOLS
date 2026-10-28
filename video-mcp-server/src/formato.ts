@@ -1,5 +1,5 @@
 // Formato del guion v2: única fuente de verdad. De aquí salen el validador, la descripción de
-// footy_guardar_guion y el texto de footy_ayuda.
+// video_guardar_guion y el texto de video_ayuda.
 import { tokenizarPalabras } from "./alineacion.js";
 import { nombresRegion, parecidos, REGIONES, resolverZona, type Region } from "./mapas.js";
 
@@ -95,9 +95,9 @@ export const CAMPOS: Campo[] = [
   { nombre: "fecha", valor: "AAAA-MM-DD HH:MM", descripcion: "Fecha y hora del HUD. Obligatoria con look videocamara." },
   { nombre: "subtitulos", valor: ESTILOS_SUBTITULOS.join(" | "), descripcion: "Estilo de subtítulos. impacto = una palabra a pantalla completa, solo en vídeos de menos de 30 s.", porDefecto: "karaoke" },
   { nombre: "fondo", valor: FONDOS.join(" | "), descripcion: "Fondo animado de las escenas sin foto (mapa, barras, cifra, cartel): aurora (cortinas de luz), plasma (tela ondulante), nebula (nubes de ruido fractal), mesh (degradado de manchas), gradiente (degradado CSS). Los cuatro primeros usan WebGPU; si no hay, se usa un degradado.", porDefecto: "ninguno" },
-  { nombre: "musica", valor: "ruta", descripcion: "Pista relativa a FOOTY_ROOT, por ejemplo _musica/tension-01.mp3." },
+  { nombre: "musica", valor: "ruta", descripcion: "Pista relativa a VIDEO_ROOT, por ejemplo _musica/tension-01.mp3." },
   { nombre: "musica_desde", valor: "segundos", descripcion: "Segundo de la pista donde empieza la música.", porDefecto: "0" },
-  { nombre: "musica_volumen", valor: "0-1", descripcion: "Volumen de la música bajo la voz solo para este vídeo.", porDefecto: "FOOTY_MUSICA_VOLUMEN" },
+  { nombre: "musica_volumen", valor: "0-1", descripcion: "Volumen de la música bajo la voz solo para este vídeo.", porDefecto: "VIDEO_MUSICA_VOLUMEN" },
   { nombre: "cortes_al_ritmo", valor: "true | false", descripcion: "Mueve cada cambio de imagen al beat más cercano (±0,2 s) sin pisar la voz.", porDefecto: "false" },
   { nombre: "escenas", valor: "mapa por bloque", descripcion: `Escenas especiales que sustituyen la foto de un bloque: ${TIPOS_ESCENA.join(", ")}. El bloque con escena no necesita imagen.` },
 ];
@@ -114,26 +114,26 @@ export const TIPOS: DescTipo[] = [
     tipo: "mapa",
     campos: `region (${REGIONES.join(", ")}), destacar (lista de nombres del atlas; acepta nombres en español habituales), etiqueta, titulo`,
     queSeVe: "Mapa vertical; las zonas destacadas se encienden en el color de acento una a una y aparece la etiqueta.",
-    ejemplo: "  3:\n    tipo: mapa\n    region: mundo\n    destacar: [England, Colombia]\n    etiqueta: England vs Colombia",
+    ejemplo: "  3:\n    tipo: mapa\n    region: mundo\n    destacar: [Brazil, Canada]\n    etiqueta: Dos países con mucha agua dulce",
   },
   {
     tipo: "barras",
     campos: "titulo, periodos (2-8), series (2-6 series, una cifra por periodo), prefijo, sufijo, fuente",
     queSeVe: "Carrera de barras vertical; cada periodo dura lo que el bloque entre el número de periodos.",
     ejemplo:
-      "  4:\n    tipo: barras\n    titulo: Copas de Europa por club\n    periodos: [1960, 1980, 2000, 2025]\n    series:\n      Real Madrid: [5, 6, 8, 15]\n      AC Milan: [0, 2, 5, 7]\n      Liverpool: [0, 2, 4, 6]\n    fuente: UEFA",
+      "  4:\n    tipo: barras\n    titulo: Ventas por producto\n    periodos: [2020, 2022, 2024, 2025]\n    series:\n      Producto A: [5, 6, 8, 15]\n      Producto B: [0, 2, 5, 7]\n      Producto C: [0, 2, 4, 6]\n    fuente: Informe interno",
   },
   {
     tipo: "cifra",
     campos: "valor (número, obligatorio), prefijo, sufijo, etiqueta, decimales",
     queSeVe: "Número enorme que cuenta desde 0 y aterriza con un golpe.",
-    ejemplo: '  6:\n    tipo: cifra\n    valor: 15\n    sufijo: " Copas"\n    etiqueta: Real Madrid, récord absoluto',
+    ejemplo: '  6:\n    tipo: cifra\n    valor: 15\n    sufijo: " %"\n    etiqueta: Crecimiento en un año',
   },
   {
     tipo: "titulo3d",
     campos: "texto (máx. 12 caracteres, solo letras y signos básicos sin acentos)",
     queSeVe: "Letras 3D metálicas que se levantan una a una.",
-    ejemplo: "  5:\n    tipo: titulo3d\n    texto: HIGUITA",
+    ejemplo: "  5:\n    tipo: titulo3d\n    texto: AGUA",
   },
   {
     tipo: "tunel",
@@ -145,13 +145,13 @@ export const TIPOS: DescTipo[] = [
     tipo: "cartel",
     campos: "texto (máx. 40 caracteres, obligatorio), subtexto",
     queSeVe: "Frase clave en grande sobre el fondo, palabra a palabra.",
-    ejemplo: "  6:\n    tipo: cartel\n    texto: The scorpion was born\n    subtexto: Wembley, 1995",
+    ejemplo: "  6:\n    tipo: cartel\n    texto: Todo cambió en 2025\n    subtexto: Informe anual",
   },
 ];
 
 export const CAMPOS_VALIDOS = CAMPOS.map((c) => c.nombre);
 
-/** Una línea por campo: para la descripción de footy_guardar_guion. */
+/** Una línea por campo: para la descripción de video_guardar_guion. */
 export function resumenCampos(): string {
   return CAMPOS.map((c) => `${c.nombre}: ${c.valor}`).join("; ");
 }
@@ -180,11 +180,11 @@ export function textoAyuda(): string {
 }
 
 export const EJEMPLO = `---
-titulo: Higuita's scorpion kick
-gancho: He saved it with his heels.
-etiqueta: Wembley · 6 Sep 1995
-golpe: kicks
-enfasis: [scorpion, kick]
+titulo: El agua del planeta en cifras
+gancho: Casi todo es océano.
+etiqueta: Datos · Planeta Tierra
+golpe: setenta
+enfasis: [océanos, dulce]
 destellos: [1, 5]
 look: normal
 subtitulos: karaoke
@@ -196,19 +196,19 @@ escenas:
   3:
     tipo: mapa
     region: mundo
-    destacar: [England, Colombia]
-    etiqueta: England vs Colombia
+    destacar: [Brazil, Canada]
+    etiqueta: Dos países con mucha agua dulce
   6:
     tipo: cartel
-    texto: The scorpion was born
+    texto: Cuidarla es cosa de todos
 ---
 
-[1] Wembley, 1995. England against Colombia.
-[2] Jamie Redknapp floats a lazy shot towards goal.
-[3] Any keeper just catches it.
-[4] René Higuita doesn't.
-[5] He dives forward and kicks it away with his heels.
-[6] The scorpion kick was born.`;
+[1] El agua cubre casi todo el planeta.
+[2] Más de setenta por ciento de la superficie son océanos.
+[3] Pero la mayor parte es agua salada.
+[4] El agua dulce es una fracción muy pequeña.
+[5] Y la mayoría está congelada o bajo tierra.
+[6] Por eso cada gota cuenta.`;
 
 // ---------- Validación ----------
 
@@ -362,7 +362,7 @@ export function validarOpciones(datos: Record<string, unknown>, ctx: ContextoVal
   let musica: string | undefined;
   if (datos.musica !== undefined && datos.musica !== null && datos.musica !== "") {
     musica = texto(datos.musica);
-    if (!musica) problemas.push("`musica` tiene que ser una ruta relativa a FOOTY_ROOT, por ejemplo _musica/tension-01.mp3.");
+    if (!musica) problemas.push("`musica` tiene que ser una ruta relativa a VIDEO_ROOT, por ejemplo _musica/tension-01.mp3.");
   }
   let musicaDesde = 0;
   if (datos.musica_desde !== undefined && datos.musica_desde !== null) {

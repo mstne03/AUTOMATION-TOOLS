@@ -1,6 +1,6 @@
-// npm run render:matriz — renderiza footy990-996 (y una copia de C:\Footy\footy001 si existe) sin ElevenLabs:
+// npm run render:matriz — renderiza video990-996 (y una copia de la carpeta real de vídeos si existe) sin ElevenLabs:
 // fotos, voz y música generadas con ffmpeg y un palabras.json sintético con palabras reales.
-// Deja una hoja de contacto por vídeo en test/salidas/footyNNN.jpg.
+// Deja una hoja de contacto por vídeo en test/salidas/videoNNN.jpg.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,17 +13,17 @@ import { urlsDeRed } from "../src/composicion.js";
 import { leerPruebaGpu } from "../src/capacidades.js";
 import { config } from "../src/config.js";
 
-const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "footy matriz "));
+const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video matriz "));
 const SALIDAS = path.join(import.meta.dirname, "salidas");
-const SOLO = (process.env.FOOTY_MATRIZ ?? "").split(",").filter(Boolean);
+const SOLO = (process.env.VIDEO_MATRIZ ?? "").split(",").filter(Boolean);
 fs.mkdirSync(SALIDAS, { recursive: true });
 
 afterAll(() => {
-  if (process.env.FOOTY_MOCK_CONSERVAR === "1") {
+  if (process.env.VIDEO_MOCK_CONSERVAR === "1") {
     process.stderr.write(`render:matriz conservado en ${RAIZ}\n`);
     return;
   }
-  if (RAIZ.startsWith(os.tmpdir()) && path.basename(RAIZ).startsWith("footy matriz ")) fs.rmSync(RAIZ, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (RAIZ.startsWith(os.tmpdir()) && path.basename(RAIZ).startsWith("video matriz ")) fs.rmSync(RAIZ, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
 const BLOQUES = `
@@ -36,19 +36,19 @@ const BLOQUES = `
 `;
 
 const CASOS: { id: string; fm: string; descripcion: string; sinGpu?: boolean; musica?: boolean }[] = [
-  { id: "footy990", descripcion: "guion v1 puro", fm: "titulo: V1 puro\ngancho: He saved it with his heels." },
+  { id: "video990", descripcion: "guion v1 puro", fm: "titulo: V1 puro\ngancho: He saved it with his heels." },
   {
-    id: "footy991",
+    id: "video991",
     descripcion: "etiqueta, golpe, énfasis, destellos y píldora",
     fm: "titulo: Efectos\ngancho: He saved it with his heels.\netiqueta: Wembley · 6 Sep 1995\ngolpe: kicks\nenfasis: [scorpion, kick]\ndestellos: [1, 5]\nsubtitulos: pildora",
   },
   {
-    id: "footy992",
+    id: "video992",
     descripcion: "videocámara con fecha y neón",
     fm: "titulo: Videocamara\ngancho: He saved it with his heels.\nlook: videocamara\nfecha: 1995-09-06 20:15\nsubtitulos: neon\nenfasis: [scorpion]",
   },
   {
-    id: "footy993",
+    id: "video993",
     descripcion: "mapa de España en el 2, barras en el 4 y subtítulos impacto",
     fm: [
       "titulo: Datos",
@@ -75,7 +75,7 @@ const CASOS: { id: string; fm: string; descripcion: string; sinGpu?: boolean; mu
     ].join("\n"),
   },
   {
-    id: "footy994",
+    id: "video994",
     descripcion: "cifra, título 3D y cartel con fondo aurora",
     fm: [
       "titulo: Escenas",
@@ -98,7 +98,7 @@ const CASOS: { id: string; fm: string; descripcion: string; sinGpu?: boolean; mu
     ].join("\n"),
   },
   {
-    id: "footy995",
+    id: "video995",
     descripcion: "túnel en el 1, película y música con musica_desde, ducking y cortes al ritmo",
     musica: true,
     fm: [
@@ -115,9 +115,9 @@ const CASOS: { id: string; fm: string; descripcion: string; sinGpu?: boolean; mu
     ].join("\n"),
   },
 ];
-CASOS.push({ ...CASOS[4], id: "footy996", descripcion: "como 994 forzando el fondo sin GPU", sinGpu: true });
+CASOS.push({ ...CASOS[4], id: "video996", descripcion: "como 994 forzando el fondo sin GPU", sinGpu: true });
 CASOS.push({
-  id: "footy997",
+  id: "video997",
   descripcion: "mapas de Europa y del mundo, nebula, golpe en la cifra y etiqueta con escena en el bloque 2",
   fm: [
     "titulo: Mapas",
@@ -241,38 +241,38 @@ describe("render:matriz", () => {
       `${c.id}: ${c.descripcion}`,
       async () => {
         const palabras = JSON.parse(fs.readFileSync(path.join(RAIZ, c.id, "palabras.json"), "utf8")) as ResultadoAlineacion;
-        const antes = process.env.FOOTY_FORZAR_SIN_GPU;
-        if (c.sinGpu) process.env.FOOTY_FORZAR_SIN_GPU = "1";
+        const antes = process.env.VIDEO_FORZAR_SIN_GPU;
+        if (c.sinGpu) process.env.VIDEO_FORZAR_SIN_GPU = "1";
         try {
           const fin = await renderizar(c.id, palabras, !!c.musica);
           const fondo = path.join(RAIZ, c.id, "_composicion", "compositions", "fondo.html");
           if (c.sinGpu) {
             expect(fin.avisos.join(" ")).toMatch(/No hay WebGPU/);
             expect(fs.readFileSync(fondo, "utf8")).not.toMatch(/data-requires-webgpu/);
-          } else if (c.id === "footy994" && leerPruebaGpu()?.webgpu) {
+          } else if (c.id === "video994" && leerPruebaGpu()?.webgpu) {
             expect(fs.readFileSync(fondo, "utf8")).toMatch(/data-shader="Aurora"/);
           }
           if (c.musica) expect(fin.avisos.join(" ")).toMatch(/Cortes al ritmo/);
         } finally {
-          if (antes === undefined) delete process.env.FOOTY_FORZAR_SIN_GPU;
-          else process.env.FOOTY_FORZAR_SIN_GPU = antes;
+          if (antes === undefined) delete process.env.VIDEO_FORZAR_SIN_GPU;
+          else process.env.VIDEO_FORZAR_SIN_GPU = antes;
         }
       },
       15 * 60 * 1000,
     );
   }
 
-  const real = "C:\\Footy\\footy001";
-  it.skipIf(!fs.existsSync(path.join(real, "palabras.json")) || (SOLO.length > 0 && !SOLO.includes("footy001")))(
-    "footy001 real (copia): un guion v1 existente se renderiza sin tocarlo",
+  const real = path.join(os.homedir(), "Videos", "SEO Studio", "video001");
+  it.skipIf(!fs.existsSync(path.join(real, "palabras.json")) || (SOLO.length > 0 && !SOLO.includes("video001")))(
+    "video001 real (copia): un guion v1 existente se renderiza sin tocarlo",
     async () => {
-      const dir = path.join(RAIZ, "footy001");
+      const dir = path.join(RAIZ, "video001");
       fs.mkdirSync(dir, { recursive: true });
       for (const n of fs.readdirSync(real)) {
         if (/^(guion\.md|voz\.mp3|palabras\.json|img\d.*)$/i.test(n)) fs.copyFileSync(path.join(real, n), path.join(dir, n));
       }
       const palabras = JSON.parse(fs.readFileSync(path.join(dir, "palabras.json"), "utf8")) as ResultadoAlineacion;
-      await renderizar("footy001", palabras, true);
+      await renderizar("video001", palabras, true);
     },
     15 * 60 * 1000,
   );

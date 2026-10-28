@@ -11,8 +11,8 @@ import { config } from "../src/config.js";
 
 const DURACION_VOZ = 20;
 // Carpeta temporal con espacios en la ruta, a propósito.
-const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "footy e2e "));
-const ID = "footy999";
+const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video e2e "));
+const ID = "video999";
 const COLORES = ["0x1f5c3a", "0x8a1c1c", "0x1c3f8a", "0x7a5a12", "0x4b1c7a", "0x116b6b"];
 
 const GUION = `---
@@ -30,12 +30,12 @@ musica: _musica/mock tone.mp3
 `;
 
 afterAll(() => {
-  // Solo borra la carpeta temporal que ha creado esta prueba (FOOTY_MOCK_CONSERVAR=1 la deja para revisarla).
-  if (process.env.FOOTY_MOCK_CONSERVAR === "1") {
+  // Solo borra la carpeta temporal que ha creado esta prueba (VIDEO_MOCK_CONSERVAR=1 la deja para revisarla).
+  if (process.env.VIDEO_MOCK_CONSERVAR === "1") {
     process.stderr.write(`render:mock conservado en ${RAIZ}\n`);
     return;
   }
-  if (RAIZ.startsWith(os.tmpdir()) && path.basename(RAIZ).startsWith("footy e2e ")) {
+  if (RAIZ.startsWith(os.tmpdir()) && path.basename(RAIZ).startsWith("video e2e ")) {
     fs.rmSync(RAIZ, { recursive: true, force: true });
   }
 });

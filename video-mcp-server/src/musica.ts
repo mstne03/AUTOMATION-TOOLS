@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
+import { STATE_DIR } from "./estado.js";
 import type { Palabra, Segmento } from "./alineacion.js";
 import { ejecutar, entornoConFfmpeg, sondear, type Herramientas } from "./proceso.js";
 import { log } from "./log.js";
@@ -107,7 +108,7 @@ export function ajustarCortes(segmentos: Segmento[], palabras: Palabra[], beats:
   return { desde, movidos };
 }
 
-// ---------- Biblioteca de música (footy_musica) ----------
+// ---------- Biblioteca de música (video_musica) ----------
 
 export interface Pista {
   archivo: string;
@@ -118,7 +119,7 @@ export interface Pista {
   error?: string;
 }
 
-const CACHE = path.join(SERVER_ROOT, "logs", "musica-cache.json");
+const CACHE = path.join(STATE_DIR, "musica-cache.json");
 
 function leerCache(): Record<string, Pista & { clave: string }> {
   try {

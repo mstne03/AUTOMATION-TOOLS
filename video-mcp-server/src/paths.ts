@@ -1,15 +1,15 @@
-// Resolución y validación de rutas e ids: nada sale de FOOTY_ROOT.
+// Resolución y validación de rutas e ids: nada sale de VIDEO_ROOT.
 import fs from "node:fs";
 import path from "node:path";
 
-export const ID_RE = /^footy\d{3}$/;
+export const ID_RE = /^video\d{3}$/;
 export const EXTENSIONES_IMAGEN = [".jpg", ".jpeg", ".png", ".webp"];
 
-export class ErrorFooty extends Error {}
+export class ErrorVideo extends Error {}
 
 export function validarId(id: unknown): string {
   if (typeof id !== "string" || !ID_RE.test(id)) {
-    throw new ErrorFooty(`Id no válido: ${JSON.stringify(id)}. Tiene que ser "footy" más tres cifras, por ejemplo footy001.`);
+    throw new ErrorVideo(`Id no válido: ${JSON.stringify(id)}. Tiene que ser "video" más tres cifras, por ejemplo video001.`);
   }
   return id;
 }
@@ -24,14 +24,14 @@ export function estaDentro(raiz: string, destino: string): boolean {
 export function resolverDentro(raiz: string, ...segmentos: string[]): string {
   const destino = path.resolve(raiz, ...segmentos);
   if (!estaDentro(raiz, destino)) {
-    throw new ErrorFooty(`La ruta ${destino} está fuera de FOOTY_ROOT (${raiz}).`);
+    throw new ErrorVideo(`La ruta ${destino} está fuera de VIDEO_ROOT (${raiz}).`);
   }
   try {
     const real = fs.realpathSync.native(destino);
     const raizReal = fs.realpathSync.native(raiz);
-    if (!estaDentro(raizReal, real)) throw new ErrorFooty(`La ruta ${destino} apunta fuera de FOOTY_ROOT (${raiz}).`);
+    if (!estaDentro(raizReal, real)) throw new ErrorVideo(`La ruta ${destino} apunta fuera de VIDEO_ROOT (${raiz}).`);
   } catch (e) {
-    if (e instanceof ErrorFooty) throw e;
+    if (e instanceof ErrorVideo) throw e;
     // No existe todavía: basta con la comprobación léxica.
   }
   return destino;
@@ -80,11 +80,11 @@ export function siguienteId(raiz: string): string {
     /* raíz vacía */
   }
   for (const nombre of entradas) {
-    const m = /^footy(\d{3})(\.mp4)?$/i.exec(nombre);
+    const m = /^video(\d{3})(\.mp4)?$/i.exec(nombre);
     if (m) max = Math.max(max, Number(m[1]));
   }
-  if (max >= 999) throw new ErrorFooty("No quedan ids libres (footy999 ya existe).");
-  return `footy${String(max + 1).padStart(3, "0")}`;
+  if (max >= 999) throw new ErrorVideo("No quedan ids libres (video999 ya existe).");
+  return `video${String(max + 1).padStart(3, "0")}`;
 }
 
 export interface ImagenEncontrada {

@@ -7,7 +7,7 @@ import { parsearGuion, type Guion } from "./guion.js";
 import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
-import { archivosVideo, buscarImagenes, ErrorFooty, resolverDentro, type ImagenEncontrada } from "./paths.js";
+import { archivosVideo, buscarImagenes, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear, type Herramientas } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
@@ -53,13 +53,13 @@ export interface OpcionesRender {
   tema?: Tema;
 }
 
-/** Valida todo antes de crear el job. Lanza ErrorFooty con un mensaje accionable si falta algo. */
+/** Valida todo antes de crear el job. Lanza ErrorVideo con un mensaje accionable si falta algo. */
 export async function prepararRender(id: string, o: OpcionesRender): Promise<Preparado> {
   const rutas = archivosVideo(o.raiz, id);
   const herramientas = herramientasFfmpeg(o.ffmpegDir);
-  if (!herramientas) throw new ErrorFooty(MENSAJE_SIN_FFMPEG);
-  if (!fs.existsSync(rutas.dir)) throw new ErrorFooty(`No existe la carpeta ${rutas.dir}. Crea el guion primero con footy_guardar_guion.`);
-  if (!fs.existsSync(rutas.guion)) throw new ErrorFooty(`Falta ${rutas.guion}. Guárdalo con footy_guardar_guion.`);
+  if (!herramientas) throw new ErrorVideo(MENSAJE_SIN_FFMPEG);
+  if (!fs.existsSync(rutas.dir)) throw new ErrorVideo(`No existe la carpeta ${rutas.dir}. Crea el guion primero con video_guardar_guion.`);
+  if (!fs.existsSync(rutas.guion)) throw new ErrorVideo(`Falta ${rutas.guion}. Guárdalo con video_guardar_guion.`);
   const guion = parsearGuion(fs.readFileSync(rutas.guion, "utf8"));
   const avisos = [...guion.avisos];
 
@@ -69,7 +69,7 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
   const faltan = requeridas.filter((n) => !imagenes[n - 1]).map((n) => `img${n}`);
   if (faltan.length) {
     const conEscena = [1, 2, 3, 4, 5, 6].filter((n) => !requeridas.includes(n));
-    throw new ErrorFooty(
+    throw new ErrorVideo(
       `Faltan imágenes en ${rutas.dir}: ${faltan.join(", ")}. Hacen falta ${requeridas.length} (img${requeridas.join(", img")})` +
         (conEscena.length ? `; los bloques ${conEscena.join(", ")} llevan escena y no necesitan foto.` : ", jpg, png o webp.") +
         (ignoradas.length ? ` En la carpeta hay fotos con otro nombre que no se usan: ${ignoradas.join(", ")}. Renómbralas a imgN.` : ""),
@@ -78,24 +78,24 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
   const hayTunel = Object.values(guion.opciones.escenas).some((e) => e?.tipo === "tunel");
   const fotos = imagenes.filter(Boolean).length;
   if (hayTunel && fotos < 3) {
-    throw new ErrorFooty(`La escena tunel usa las fotos del vídeo y necesita al menos 3; ahora hay ${fotos}. Añade más imgN a ${rutas.dir}.`);
+    throw new ErrorVideo(`La escena tunel usa las fotos del vídeo y necesita al menos 3; ahora hay ${fotos}. Añade más imgN a ${rutas.dir}.`);
   }
   if (!fs.existsSync(rutas.voz) || !fs.existsSync(rutas.palabras)) {
-    throw new ErrorFooty(`Falta voz.mp3 o palabras.json en ${rutas.dir}. Genera la voz con footy_generar_voz.`);
+    throw new ErrorVideo(`Falta voz.mp3 o palabras.json en ${rutas.dir}. Genera la voz con video_generar_voz.`);
   }
   let palabras: ResultadoAlineacion;
   try {
     palabras = JSON.parse(fs.readFileSync(rutas.palabras, "utf8")) as ResultadoAlineacion;
   } catch {
-    throw new ErrorFooty(`palabras.json está dañado. Regenera la voz con footy_generar_voz(forzar=true).`);
+    throw new ErrorVideo(`palabras.json está dañado. Regenera la voz con video_generar_voz(forzar=true).`);
   }
   if (palabras.hashNarracion !== guion.hash) {
-    throw new ErrorFooty(
-      "El guion ha cambiado desde que se generó la voz (el hash de la narración no coincide). Regenera la voz con footy_generar_voz(forzar=true).",
+    throw new ErrorVideo(
+      "El guion ha cambiado desde que se generó la voz (el hash de la narración no coincide). Regenera la voz con video_generar_voz(forzar=true).",
     );
   }
   if (palabras.segmentos?.length !== 6 || !palabras.frases?.length) {
-    throw new ErrorFooty("palabras.json no tiene 6 segmentos y frases. Regenera la voz con footy_generar_voz(forzar=true).");
+    throw new ErrorVideo("palabras.json no tiene 6 segmentos y frases. Regenera la voz con video_generar_voz(forzar=true).");
   }
 
   let musica: Preparado["musica"];
@@ -104,16 +104,16 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
     try {
       ruta = resolverDentro(o.raiz, guion.musica);
     } catch {
-      throw new ErrorFooty(`La música "${guion.musica}" está fuera de FOOTY_ROOT. Ponla en ${path.join(o.raiz, "_musica")}.`);
+      throw new ErrorVideo(`La música "${guion.musica}" está fuera de VIDEO_ROOT. Ponla en ${path.join(o.raiz, "_musica")}.`);
     }
     if (!fs.existsSync(ruta)) {
-      throw new ErrorFooty(`No encuentro la música ${ruta}. Cópiala ahí, corrige \`musica\` en el guion o renderiza con musica=false.`);
+      throw new ErrorVideo(`No encuentro la música ${ruta}. Cópiala ahí, corrige \`musica\` en el guion o renderiza con musica=false.`);
     }
     const desde = guion.opciones.musicaDesde;
     if (desde > 0) {
       const dur = (await sondear(herramientas.ffprobe, ruta)).duracion;
       if (dur !== undefined && desde >= dur) {
-        throw new ErrorFooty(`\`musica_desde: ${desde}\` es mayor que la duración de la pista (${dur.toFixed(1)} s). Pon un valor menor.`);
+        throw new ErrorVideo(`\`musica_desde: ${desde}\` es mayor que la duración de la pista (${dur.toFixed(1)} s). Pon un valor menor.`);
       }
     }
     musica = { ruta, volumen: guion.opciones.musicaVolumen ?? o.musicaVolumen, desde };

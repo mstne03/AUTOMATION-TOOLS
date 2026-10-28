@@ -1,14 +1,15 @@
-// Prueba de GPU/WebGPU (cacheada en logs/capacidades.json) y versiones de las herramientas.
+// Prueba de GPU/WebGPU (cacheada en STATE_DIR/capacidades.json) y versiones de las herramientas.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
+import { STATE_DIR } from "./estado.js";
 import { log } from "./log.js";
 import { ejecutar, entornoConFfmpeg, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
-const CACHE = path.join(SERVER_ROOT, "logs", "capacidades.json");
+const CACHE = path.join(STATE_DIR, "capacidades.json");
 const SHADERS_JS = path.join(SERVER_ROOT, "plantilla", "vendor", "shaders.iife.js");
 const GSAP_JS = path.join(SERVER_ROOT, "node_modules", "gsap", "dist", "gsap.min.js");
 
@@ -20,7 +21,7 @@ export interface PruebaGpu {
 }
 
 export function gpuForzadaApagada(): boolean {
-  return process.env.FOOTY_FORZAR_SIN_GPU === "1";
+  return process.env.VIDEO_FORZAR_SIN_GPU === "1";
 }
 
 export function leerPruebaGpu(): PruebaGpu | undefined {
@@ -43,7 +44,7 @@ export async function hayWebgpu(h: Herramientas, browserPath?: string): Promise<
  * hay WebGPU si el render termina y la imagen no es negra (luminancia media > 8).
  */
 export async function probarGpu(h: Herramientas, browserPath?: string): Promise<PruebaGpu> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "footy-gpu-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video-gpu-"));
   const fecha = new Date().toISOString();
   let resultado: PruebaGpu;
   try {
