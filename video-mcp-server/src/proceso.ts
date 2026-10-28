@@ -9,6 +9,33 @@ export interface Resultado {
   code: number | null;
   stdout: string;
   stderr: string;
+  /** true si el proceso se mató (con todo su árbol) por superar `timeoutMs`; entonces `code` es null. */
+  timeout?: boolean;
+}
+
+/**
+ * Mata el proceso y todos sus descendientes (el CLI de HyperFrames lanza Chrome, y `hijo.kill()` solo
+ * mata a Node). Resuelve cuando el intento de matar ha terminado.
+ * Windows: `taskkill /T /F`. Otros SO: el hijo es líder de su grupo (detached) y se señala al grupo entero.
+ */
+function matarArbol(pid: number | undefined): Promise<void> {
+  if (!pid) return Promise.resolve();
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const t = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, windowsHide: true, stdio: "ignore" });
+      t.on("error", (e) => {
+        log.warn(`taskkill falló para el pid ${pid}: ${e.message}`);
+        resolve();
+      });
+      t.on("close", () => resolve());
+    });
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (e) {
+    log.warn(`No pude matar el grupo de procesos ${pid}: ${(e as Error).message}`);
+  }
+  return Promise.resolve();
 }
 
 export function ejecutar(
@@ -18,7 +45,16 @@ export function ejecutar(
 ): Promise<Resultado> {
   const { onLinea, timeoutMs, ...spawnOpts } = opciones;
   return new Promise((resolve, reject) => {
-    const hijo = spawn(comando, args, { ...spawnOpts, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
+    const hijo = spawn(comando, args, {
+      ...spawnOpts,
+      shell: false,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let terminado = false;
+    let vencido = false;
     let stdout = "";
     let stderr = "";
     let resto = "";
@@ -39,13 +75,30 @@ export function ejecutar(
       trocear(t);
     });
     let temporizador: NodeJS.Timeout | undefined;
-    if (timeoutMs) temporizador = setTimeout(() => hijo.kill(), timeoutMs);
+    if (timeoutMs) {
+      temporizador = setTimeout(() => {
+        vencido = true;
+        // Se resuelve solo cuando el árbol ya está muerto: así el llamador no sigue con Chrome vivo.
+        void matarArbol(hijo.pid).then(() => {
+          if (terminado) return;
+          terminado = true;
+          if (onLinea && resto.trim()) onLinea(resto);
+          resolve({ code: null, stdout, stderr, timeout: true });
+        });
+      }, timeoutMs);
+    }
     hijo.on("error", (e) => {
       if (temporizador) clearTimeout(temporizador);
+      if (terminado) return;
+      terminado = true;
       reject(e);
     });
     hijo.on("close", (code) => {
+      // Si venció el timeout, resuelve el temporizador cuando taskkill/kill haya terminado (el código de salida sería el de la muerte forzada).
+      if (vencido) return;
       if (temporizador) clearTimeout(temporizador);
+      if (terminado) return;
+      terminado = true;
       if (onLinea && resto.trim()) onLinea(resto);
       resolve({ code, stdout, stderr });
     });

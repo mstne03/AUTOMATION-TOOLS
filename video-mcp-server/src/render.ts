@@ -7,12 +7,26 @@ import { parsearGuion, type Guion } from "./guion.js";
 import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
-import { archivosVideo, buscarImagenes, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
+import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear, type Herramientas } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 
 export { HYPERFRAMES_BIN };
+
+export const TIMEOUT_CHECK_MS = 600_000;
+export const TIMEOUT_RENDER_MS = 3_600_000;
+
+/** Timeout del render; VIDEO_TIMEOUT_RENDER_S (segundos) lo sustituye, pensado para tests. */
+export function timeoutRenderMs(): number {
+  const s = Number(process.env.VIDEO_TIMEOUT_RENDER_S);
+  return Number.isFinite(s) && s > 0 ? s * 1000 : TIMEOUT_RENDER_MS;
+}
+
+function duracionLegible(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 120 ? `${s} s` : `${Math.round(s / 60)} min`;
+}
 
 export type EstadoJob = "en_cola" | "renderizando" | "terminado" | "error";
 
@@ -63,7 +77,7 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
   const guion = parsearGuion(fs.readFileSync(rutas.guion, "utf8"));
   const avisos = [...guion.avisos];
 
-  const { imagenes, avisos: avisosImg, ignoradas } = buscarImagenes(rutas.dir);
+  const { imagenes, avisos: avisosImg, ignoradas } = imagenesValidadas(rutas.dir);
   avisos.push(...avisosImg);
   const requeridas = bloquesConFoto(guion.opciones.escenas);
   const faltan = requeridas.filter((n) => !imagenes[n - 1]).map((n) => `img${n}`);
@@ -281,7 +295,10 @@ export async function comprobarComposicion(dir: string, env: NodeJS.ProcessEnv, 
   if (gpu) args.push("--browser-gpu");
   // CI=1: sin esto `check` deja un proceso "caliente" 5 minutos con la carpeta abierta, y en Windows eso
   // impide regenerar _composicion\ en el siguiente render. El cwd va fuera de la composición por lo mismo.
-  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env: { ...env, CI: "1" }, timeoutMs: 600000 });
+  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env: { ...env, CI: "1" }, timeoutMs: TIMEOUT_CHECK_MS });
+  if (r.timeout) {
+    return { errores: [`La CLI de HyperFrames superó el tiempo máximo de comprobación (${duracionLegible(TIMEOUT_CHECK_MS)}).`], avisos: [] };
+  }
   const errores: string[] = [];
   const porCodigo = new Map<string, { n: number; ejemplo: string }>();
   try {
@@ -333,7 +350,11 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
   fs.rmSync(temporal, { force: true });
   const args = [HYPERFRAMES_BIN, "render", prep.rutas.composicion, "-o", temporal, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
   if (montaje.usaWebgpu) args.push("--browser-gpu");
-  const r = await ejecutar(process.execPath, args, { cwd: prep.rutas.composicion, env, onLinea: (l) => anotar(job, l) });
+  const r = await ejecutar(process.execPath, args, { cwd: prep.rutas.composicion, env, onLinea: (l) => anotar(job, l), timeoutMs: timeoutRenderMs() });
+  if (r.timeout) {
+    fs.rmSync(temporal, { force: true });
+    throw new Error(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(timeoutRenderMs())}).`);
+  }
   if (r.code !== 0 || !fs.existsSync(temporal)) {
     fs.rmSync(temporal, { force: true });
     throw new Error(`La CLI de HyperFrames terminó con código ${r.code}.`);

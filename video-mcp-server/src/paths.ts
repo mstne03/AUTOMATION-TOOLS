@@ -128,3 +128,24 @@ export function buscarImagenes(dir: string): { imagenes: (ImagenEncontrada | und
   }
   return { imagenes, avisos, ignoradas };
 }
+
+/**
+ * Como `buscarImagenes`, pero cada imagen pasa por `resolverDentro` (realpath): un `img1.jpg` que sea un
+ * enlace simbólico a un fichero fuera de la carpeta del vídeo se rechaza con ErrorVideo en vez de copiarse
+ * a la composición.
+ */
+export function imagenesValidadas(dir: string): ReturnType<typeof buscarImagenes> {
+  const r = buscarImagenes(dir);
+  for (const img of r.imagenes) {
+    if (!img) continue;
+    try {
+      resolverDentro(dir, img.nombre);
+    } catch (e) {
+      if (e instanceof ErrorVideo) {
+        throw new ErrorVideo(`La imagen ${img.nombre} es un enlace que apunta fuera de la carpeta del vídeo (${dir}). Copia el fichero real en esa carpeta.`);
+      }
+      throw e;
+    }
+  }
+  return r;
+}

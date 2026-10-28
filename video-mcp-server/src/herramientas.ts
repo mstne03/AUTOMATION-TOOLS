@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { archivosVideo, buscarImagenes, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { archivosVideo, imagenesValidadas, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { herramientasFfmpeg, MENSAJE_SIN_FFMPEG, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -74,7 +74,14 @@ export function listar(cfg: Config): Respuesta {
   const ids = listarIds(cfg.videoRoot);
   const videos = ids.map((id) => {
     const r = archivosVideo(cfg.videoRoot, id);
-    const { imagenes, ignoradas } = buscarImagenes(r.dir);
+    // Un enlace simbólico sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
+    let imagenes: ReturnType<typeof imagenesValidadas>["imagenes"] = [];
+    let ignoradas: string[] = [];
+    try {
+      ({ imagenes, ignoradas } = imagenesValidadas(r.dir));
+    } catch (e) {
+      if (!(e instanceof ErrorVideo)) throw e;
+    }
     const { guion } = leerGuion(r.guion);
     // Imágenes requeridas = bloques sin escena (sin guion válido, las 6).
     const requeridas = guion ? bloquesConFoto(guion.opciones.escenas) : [1, 2, 3, 4, 5, 6];
@@ -147,7 +154,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   const avisos: string[] = [];
   const { guion, problemas } = leerGuion(r.guion);
 
-  const { imagenes, avisos: avisosImg } = buscarImagenes(r.dir);
+  const { imagenes, avisos: avisosImg } = imagenesValidadas(r.dir);
   avisos.push(...avisosImg);
   const infoImagenes: { n: number; encontrada: boolean; nombre?: string; ancho?: number; alto?: number; avisoResolucion?: boolean }[] = [];
   for (const [i, img] of imagenes.entries()) {
@@ -570,7 +577,7 @@ export const ADAPTADAS: Record<string, string> = {
 
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", "--query", args.consulta, "--json"], {
+  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
     env: { ...entornoConFfmpeg(h), CI: "1" },
     cwd: PIEZAS_DIR,
     timeoutMs: 120000,

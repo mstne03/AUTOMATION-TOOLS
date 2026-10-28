@@ -7,7 +7,13 @@ import type { Palabra, Segmento } from "./alineacion.js";
 import { ejecutar, entornoConFfmpeg, sondear, type Herramientas } from "./proceso.js";
 import { log } from "./log.js";
 
-export const HYPERFRAMES_BIN = path.join(SERVER_ROOT, "node_modules", "hyperframes", "bin", "hyperframes.mjs");
+/**
+ * CLI de HyperFrames. VIDEO_HYPERFRAMES_BIN la sustituye (solo para tests: p. ej. un script que se
+ * cuelga para probar el timeout). Se lee una vez, al cargar el módulo, y el entorno del proceso lo fija
+ * quien lanza el motor, con la misma confianza que el PATH; en producción no se define.
+ */
+export const HYPERFRAMES_BIN =
+  process.env.VIDEO_HYPERFRAMES_BIN || path.join(SERVER_ROOT, "node_modules", "hyperframes", "bin", "hyperframes.mjs");
 export const EXTENSIONES_AUDIO = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"];
 
 /** Sonoridad objetivo de la voz (LUFS integrados). La música se normaliza igual y luego baja a su volumen. */
