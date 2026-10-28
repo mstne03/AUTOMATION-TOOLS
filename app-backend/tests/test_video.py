@@ -11,9 +11,10 @@ import anyio
 import httpx
 import pytest
 
-from app_backend import config
+from app_backend import config, video
 from app_backend.main import create_app
 from app_backend.video import (
+    MENSAJE_NO_INSTALADO,
     MotorError,
     MotorNoDisponible,
     MotorVideo,
@@ -197,6 +198,113 @@ def test_entorno_motor():
     assert "ELEVENLABS_API_KEY" not in entorno_motor(StoreFalso({config.ELEVENLABS_KEY: ""}))
 
 
+def _bundle(d: Path, *, node=True, ffmpeg=True, navegador=True) -> Path:
+    """Esqueleto de `video-engine/` con ficheros vacíos (solo cuenta que existan)."""
+    piezas = []
+    if node:
+        piezas.append("node/node.exe")
+    if ffmpeg:
+        piezas += ["ffmpeg/ffmpeg.exe", "ffmpeg/ffprobe.exe"]
+    if navegador:
+        piezas.append("browser/chrome-headless-shell-win64/chrome-headless-shell.exe")
+    d.mkdir(parents=True, exist_ok=True)
+    for p in piezas:
+        (d / p).parent.mkdir(parents=True, exist_ok=True)
+        (d / p).write_bytes(b"")
+    return d
+
+
+def test_entorno_congelado_siempre_con_las_piezas_del_bundle(tmp_path, monkeypatch):
+    d = _bundle(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    env = entorno_motor(StoreFalso())
+    assert env["FFMPEG_DIR"] == str(d / "ffmpeg")
+    assert env["HYPERFRAMES_BROWSER_PATH"] == str(
+        d / "browser" / "chrome-headless-shell-win64" / "chrome-headless-shell.exe"
+    )
+
+
+def test_entorno_congelado_sin_motor_es_modulo_no_instalado(tmp_path, monkeypatch):
+    d = tmp_path / "video-engine"
+    d.mkdir()
+    (d / ".vacio").write_text("marcador", encoding="utf-8")  # lo que deja el release sin VIDEO_ENGINE
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    with pytest.raises(MotorNoDisponible, match="no está instalado"):
+        entorno_motor(StoreFalso())
+
+
+@pytest.mark.parametrize(
+    ("falta", "texto"), [({"ffmpeg": False}, "ffmpeg"), ({"navegador": False}, "navegador")]
+)
+def test_entorno_congelado_sin_una_pieza_pide_reinstalar(tmp_path, monkeypatch, falta, texto):
+    d = _bundle(tmp_path / "video-engine", **falta)
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    with pytest.raises(MotorNoDisponible, match=f"{texto}.*reinstala SEO Studio"):
+        entorno_motor(StoreFalso())
+
+
+async def test_ruta_capacidades_503_si_el_modulo_no_esta_instalado(tmp_path, fake_anthropic, monkeypatch):
+    d = tmp_path / "video-engine"
+    d.mkdir()
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    app = create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+    )
+    transporte = httpx.ASGITransport(app=app)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
+        r = await c.get("/video/capacidades", headers=AUTH)
+    assert r.status_code == 503
+    assert r.json()["detail"] == MENSAJE_NO_INSTALADO
+
+
+async def test_cambiar_o_borrar_la_clave_reinicia_el_motor(tmp_path, fake_anthropic, monkeypatch):
+    """El motor lee la clave de su entorno al arrancar: al cambiarla se para y relanza con la nueva."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("APP_BACKEND_VIDEO_CMD", raising=False)
+    app = create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+    )
+    transporte = httpx.ASGITransport(app=app)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
+        from app_backend.main import yt_auth
+
+        await app.state.motor.cerrar()
+        app.state.motor = _motor_falso(yt_auth.store)
+        motor = app.state.motor
+        try:
+            await c.put("/settings", json={"elevenlabs_api_key": "xi-vieja"}, headers=AUTH)
+            # La respuesta sale ocultada con la clave de esa sesión: prueba que el hijo la tiene.
+            assert (await motor.llamar("entorno", {"nombre": "ELEVENLABS_API_KEY"})).texto == "***"
+            assert motor._sesion.clave == "xi-vieja"
+            pid = motor.pid
+            await c.put("/settings", json={"elevenlabs_api_key": "xi-nueva"}, headers=AUTH)
+            assert motor.pid is None and not psutil_pid_vivo(pid)
+            assert (await motor.llamar("entorno", {"nombre": "ELEVENLABS_API_KEY"})).texto == "***"
+            assert motor._sesion.clave == "xi-nueva"
+            await c.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
+            assert motor.pid is None
+            assert (await motor.llamar("entorno", {"nombre": "ELEVENLABS_API_KEY"})).texto == "<ausente>"
+            assert motor._sesion.clave is None
+            # Un PUT sin la clave no toca el motor.
+            pid = motor.pid
+            await c.put("/settings", json={}, headers=AUTH)
+            assert motor.pid == pid
+        finally:
+            await motor.cerrar()
+
+
 def test_comando_motor_desarrollo(monkeypatch):
     monkeypatch.delenv("APP_BACKEND_VIDEO_CMD", raising=False)
     argv, cwd = comando_motor()
@@ -330,4 +438,5 @@ async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anth
         r = await c.get("/video/capacidades", headers=AUTH)
     assert r.status_code == 200 and r.json() == {"hyperframes": "0.8.206"}
     assert [(t, a) for t, a, _ in llamadas] == [("video_capacidades", {"reprobar": False})]
-    assert llamadas[0][2] is not None and llamadas[0][2] >= 300
+    # Peor caso del motor: 240 s de render + 30 s de fotograma + 60 s de sondas en paralelo.
+    assert llamadas[0][2] == video.TIMEOUT_CAPACIDADES and video.TIMEOUT_CAPACIDADES > 330

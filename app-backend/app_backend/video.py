@@ -41,11 +41,16 @@ log = logging.getLogger("app_backend.video")
 MENSAJE_DETENIDO = "El motor de vídeo se ha detenido; se relanzará en la siguiente acción."
 TIMEOUT_ARRANQUE = 60.0  # spawn + initialize; Node con node_modules en frío tarda unos segundos
 TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, kill del árbol)
-# video_capacidades sin prueba de GPU guardada hace un render corto (el motor le da hasta 240 s).
-# Con el timeout por defecto vencería en máquinas lentas, el motor se reiniciaría sin guardar la
-# prueba y la ruta fallaría siempre.
-TIMEOUT_CAPACIDADES = 300.0
+# video_capacidades sin prueba de GPU guardada hace un render corto: en el peor caso, 240 s de
+# render + 30 s de lectura del fotograma, y después las tres sondas de versión en paralelo (60 s
+# como mucho) = 330 s. Se deja margen sobre eso: con un timeout menor el motor se reiniciaría sin
+# guardar la prueba y la ruta fallaría siempre en máquinas lentas.
+TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
+MENSAJE_NO_INSTALADO = (
+    "El módulo de vídeo no está instalado en esta versión de SEO Studio "
+    "(llegará con una actualización)."
+)
 
 
 class MotorError(Exception):
@@ -339,11 +344,32 @@ def entorno_motor(store) -> dict[str, str]:
         "DO_NOT_TRACK": "1",
     }
     d = config.VIDEO_ENGINE_DIR
-    if (d / "ffmpeg" / "ffmpeg.exe").exists():
-        env["FFMPEG_DIR"] = str(d / "ffmpeg")
+    ffmpeg = d / "ffmpeg"
     navegador = _navegador_bundle(d)
-    if navegador is not None:
+    if config.FROZEN:
+        # Instalado: solo las piezas del bundle, siempre. Sin ellas el motor caería en un ffmpeg del
+        # PATH (quizá GPL, con libx264) o en un Chrome de ~/.cache (escribible, no verificado).
+        if not (d / "node" / "node.exe").is_file():
+            raise MotorNoDisponible(MENSAJE_NO_INSTALADO)
+        faltan = [
+            nombre
+            for nombre, ok in (
+                ("ffmpeg", (ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()),
+                ("navegador", navegador is not None),
+            )
+            if not ok
+        ]
+        if faltan:
+            raise MotorNoDisponible(
+                f"A la instalación del motor de vídeo le falta {' y '.join(faltan)}: reinstala SEO Studio."
+            )
+        env["FFMPEG_DIR"] = str(ffmpeg)
         env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
+    else:
+        if (ffmpeg / "ffmpeg.exe").exists():
+            env["FFMPEG_DIR"] = str(ffmpeg)
+        if navegador is not None:
+            env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
     clave = config.elevenlabs_api_key(store)
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave

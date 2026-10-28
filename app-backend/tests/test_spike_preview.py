@@ -60,6 +60,18 @@ async def test_no_se_monta_sin_la_variable(monkeypatch, tmp_path):
         assert (await c.get("/spike/preview/x/index.html")).status_code == 404
 
 
+async def test_congelado_no_se_monta_aunque_este_la_variable(monkeypatch, tmp_path, carpeta):
+    from app_backend import config
+    from app_backend.main import create_app
+
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setenv("APP_BACKEND_SPIKES", "1")
+    monkeypatch.setenv("APP_BACKEND_SPIKE_COMPOSICION", str(carpeta))
+    app = create_app("t", jobs_path=tmp_path / "j.sqlite", kb_auto_update=False, conversaciones_dir=tmp_path / "c")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        assert (await c.get("/spike/preview-info", headers={"Authorization": "Bearer t"})).status_code == 404
+
+
 async def test_clave_no_ascii_es_404_no_500(cliente):
     r = await cliente.get("/spike/preview/cl%C3%A1ve/index.html")
     assert r.status_code == 404

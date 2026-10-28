@@ -544,6 +544,9 @@ def create_app(
                 yt_auth.store.set(config.ELEVENLABS_KEY, body.elevenlabs_api_key)
             else:
                 yt_auth.store.delete(config.ELEVENLABS_KEY)
+            # El motor recibe la clave por su entorno al arrancar: se para y la siguiente llamada lo
+            # relanza con la nueva (o sin ninguna). Si no, seguiría usando y ocultando la revocada.
+            await app.state.motor.cerrar()
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
@@ -606,8 +609,13 @@ def create_app(
         desautorizados = yt_auth.remove_client_secret()
         return {**settings_out(), "desautorizados": desautorizados}
 
-    # Spike D6 (desechable): solo con APP_BACKEND_SPIKES=1 y una composición indicada; nunca en producción.
-    if os.environ.get("APP_BACKEND_SPIKES") == "1" and os.environ.get("APP_BACKEND_SPIKE_COMPOSICION"):
+    # Spike D6 (desechable): solo con APP_BACKEND_SPIKES=1 y una composición indicada, y nunca en el
+    # binario congelado (la variable podría llegar del entorno del usuario); sí en `tauri dev`.
+    if (
+        not config.FROZEN
+        and os.environ.get("APP_BACKEND_SPIKES") == "1"
+        and os.environ.get("APP_BACKEND_SPIKE_COMPOSICION")
+    ):
         from app_backend import spike_preview
 
         runtime = os.environ.get("APP_BACKEND_SPIKE_RUNTIME")
