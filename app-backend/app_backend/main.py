@@ -33,7 +33,7 @@ from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, registry
+from app_backend import config, registry, video
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -119,12 +119,16 @@ def create_app(
         app.state.kb_updater = kb_updater or KBUpdater(
             config.KB_UPDATE_URL, config.KB_MINISIGN_PUBKEY, config.KB_PUBLIC_PATH
         )
+        # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
+        argv, cwd = video.comando_motor()
+        app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
         tareas = []
         if kb_auto_update:
             tareas.append(asyncio.create_task(_arranque_kb(app.state.kb_updater)))
         yield
         for t in tareas:
             t.cancel()
+        await app.state.motor.cerrar()
         await app.state.jobs.stop()
 
     async def _arranque_kb(updater: KBUpdater) -> None:
@@ -410,6 +414,20 @@ def create_app(
         # El patrón del ID evita meter texto arbitrario en el filtro de Analytics (video==...).
         fn = tools["youtube_retention_moments"].fn
         return await asyncio.to_thread(fn, video_id, format, language)
+
+    # ------------------------------------------------------------------ vídeo
+
+    @app.get("/video/capacidades", dependencies=protegido)
+    async def video_capacidades():
+        try:
+            r = await app.state.motor.llamar("video_capacidades", {"reprobar": False})
+        except video.MotorNoDisponible as e:
+            raise HTTPException(status_code=503, detail=str(e)) from None
+        except video.MotorError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        if not isinstance(r.datos, dict):
+            raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
+        return r.datos
 
     # ---------------------------------------------------------------- youtube
 

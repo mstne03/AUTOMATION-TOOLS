@@ -15,6 +15,8 @@ Variables propias:
   de secretos via PUT /settings y esta variable no se usa.
 - KB_UPDATE_URL: base HTTPS desde la que se descargan `manifest.json`,
   `manifest.json.minisig` y el snapshot. Solo para desarrollo se admite http://127.0.0.1.
+- APP_BACKEND_VIDEO_CMD: lista JSON con el comando del motor de vídeo (tests y desarrollo);
+  el binario congelado la ignora y lanza siempre el motor del bundle (ver `video.py`).
 
 Variables de `kb-seo` que este modulo fija ANTES de que se importe `kb.config`
 (que las lee al importarse): KB_BACKEND=sqlite, KB_SQLITE_PATH y
@@ -76,6 +78,15 @@ def anthropic_api_key(store) -> str | None:
     """Clave de Anthropic: el almacen de secretos manda; ANTHROPIC_API_KEY es el respaldo."""
     return store.get(ANTHROPIC_KEY) or os.environ.get("ANTHROPIC_API_KEY") or None
 
+
+# Motor de vídeo (video-mcp-server, Node): en el instalador va junto al ejecutable, en
+# `video-engine/` (node/node.exe, app/dist/index.js, browser/, ffmpeg/); en desarrollo es la
+# carpeta del paquete en el repo.
+VIDEO_ENGINE_DIR = (
+    Path(sys.executable).parent / "video-engine"
+    if FROZEN
+    else Path(__file__).resolve().parent.parent.parent / "video-mcp-server"
+)
 
 ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
 
