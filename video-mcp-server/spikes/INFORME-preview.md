@@ -14,13 +14,32 @@ escenario reproducible: el **fondo WebGPU `aurora` muestra una fase distinta tra
 
 | Criterio | Resultado | Estado |
 |---|---|---|
-| ≥ 30 fps con fondo WebGPU | 59–60 fps (RTX 4060) y 133–135 fps (Radeon 780M); WebView2 real: **135 fps** | cumple |
+| ≥ 30 fps con fondo WebGPU | 59–60 fps (Chrome/RTX 4060) y 133–135 fps (Radeon 780M, incl. WebView2). **Solo hay medición de WebView2 en la Radeon; en la RTX no** (ver nota) | cumple en lo medido; sin WebView2/RTX |
 | Seek < 200 ms | mediana 14 ms (WebView2), máx. 21 ms; hasta 43 ms en la ruta NVIDIA | cumple |
-| Deriva < 1 fotograma (33 ms) en 50 s | deriva (pendiente) −6…+8 ms en 50 s; **desfase instantáneo** timeline−`audio.currentTime` hasta 46–53 ms (media 20–31 ms) | cumple como deriva; ver matiz |
+| Deriva < 1 fotograma (33 ms) en 50 s | deriva (pendiente) −6…+8 ms en 50 s; **desfase instantáneo** timeline−`audio.currentTime` hasta 46–53 ms (media 20–31 ms) | deriva pequeña, pero el desfase instantáneo supera 33 ms: **no concluyente** (ver matiz) |
 | Fotogramas visualmente iguales al MP4 | iguales con la página recién cargada o tras reproducir 4 s (SSIM 0,93–0,98); **fallan tras reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s) | **no cumple** |
 
 Se midió en el WebView2 **real** (Microsoft Edge WebView2 Runtime 155.0.4283.62, dentro de `pnpm tauri dev`) y en
 Chrome 155.0.8059.85 (misma versión mayor de Chromium), ambos con ventana visible (headed).
+
+**Nota sobre el fps:** el método cuenta *callbacks de `requestAnimationFrame`* dentro del iframe, no fotogramas
+realmente presentados ni tiempo de GPU. El WebView2 corrió en la Radeon 780M (elección de Windows) y **no existe
+medición del WebView2 en la RTX 4060**: «≥ 30 fps» no está demostrado para el hardware de Marc con la RTX en WebView2;
+hay que repetirlo con la preferencia gráfica fijada.
+
+## Decisión para Marc: el fallo de fase del shader (fase 1)
+
+1. **Diagnosticar la causa raíz primero** (shader `Aurora` de `shaders.iife.js` / runtime: estado acumulado tras `play`
+   que el seek hacia atrás no reinicia). Lo robusto; coste: investigar código de terceros, quizá un parche local.
+2. **Seek de calentamiento** (tras pausar, ir a otro instante y luego al pedido). Barato y probado a mano (basta 10,5 s o
+   25 s antes), pero es un parche: cada scrub paga un seek extra (~14–33 ms medidos) y no sé si cubre todos los instantes
+   ni si se repite con la RTX.
+3. **Fondo CSS por defecto en la preview** y shader solo en el render final. Elimina el fallo y la dependencia de GPU,
+   pero rompe «lo que se ve es lo que se renderiza» justo en el fondo.
+
+**Recomendación:** (1) acotada en tiempo, con (2) de red de seguridad; (3) solo si (1) no da resultado. Falta medir:
+el fallo con la RTX en WebView2, si (2) lo cubre en un barrido de instantes (cada 1 s) y tras varias reproducciones, y si
+`plasma`/`nebula`/`mesh` lo comparten. **Decide Marc.**
 
 ## Cómo se sirve la composición al iframe (decisión)
 
