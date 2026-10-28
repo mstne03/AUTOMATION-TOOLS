@@ -5,7 +5,8 @@
 #   video-engine/node/node.exe                Node 22 LTS win-x64 (versión y SHA-256 fijados)
 #   video-engine/app/                         dist/, plantilla/, catalogo/, package.json y
 #                                             node_modules de producción (npm ci --omit=dev)
-#   video-engine/browser/chrome-headless-shell-win64/   Chrome de HyperFrames (SHA-256 del .exe fijado)
+#   video-engine/browser/chrome-headless-shell-win64/   Chrome for Testing de Google, la versión que
+#                                             fija hyperframes (zip con SHA-256 fijado)
 #   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         build LGPL de la tarea 2 (SHA-256 fijado)
 #   video-engine/LICENSES/                    avisos de cada pieza
 #
@@ -28,24 +29,31 @@ FFMPEG_ZIP=ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1.zip
 FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/$FFMPEG_ZIP
 FFMPEG_SHA256=b7c1c846dacca68ee4ebf5c390742c973b3d5d14a6d44b061f500d8e4ac74fc0
 
-# chrome-headless-shell que fija hyperframes 0.8.206 (CHROME_VERSION de su CLI); lo descarga la
-# propia CLI, así que se fija el SHA-256 del ejecutable resultante.
+# chrome-headless-shell que fija hyperframes 0.8.206 (CHROME_VERSION de su CLI), bajado del
+# almacén oficial de Chrome for Testing. Google no publica SHA-256: el fijado se calculó sobre la
+# descarga, cuyo MD5 coincidía con el x-goog-hash del objeto y cuyo .exe era idéntico al que
+# descarga la propia CLI de HyperFrames. No se copia la caché de usuario (~/.cache/hyperframes):
+# es escribible y sus DLL/paks no estarían verificados.
 HYPERFRAMES_VERSION=0.8.206
 CHROME_VERSION=152.0.7977.30
-CHROME_EXE_SHA256=909fa4a0d2866f5b5b6cabd0a3b3545edeaf84db361148dbc8e992e25e61e7e6
+CHROME_ZIP=chrome-headless-shell-win64.zip
+CHROME_URL=https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/win64/$CHROME_ZIP
+CHROME_SHA256=5d7df999a6e4a65a1b16b25b61064f7337b8aa8ee2ed1b4e07bfdd24f6e4275e
 
 MOTOR=../video-mcp-server
 DEST=src-tauri/binaries/video-engine
 LICENCIAS=scripts/licencias
 
 if [ -n "${CI:-}" ]; then
-  DESCARGAS="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/seo-studio-descargas"
+  DESCARGAS="$(cygpath -u "${RUNNER_TEMP:-${TMPDIR:-/tmp}}")/seo-studio-descargas"
 else
   [ -n "${LOCALAPPDATA:-}" ] || { echo "LOCALAPPDATA no está definida (ejecuta desde Git Bash en Windows)." >&2; exit 1; }
   DESCARGAS="$(cygpath -u "$LOCALAPPDATA")/seo-studio-dev/descargas"
 fi
 TRABAJO=$(mktemp -d)
-trap 'rm -rf "$TRABAJO"' EXIT
+LISTO=0
+# Si el script falla a medias, no queda un DEST parcial que tauri build pudiera empaquetar.
+trap 'rm -rf "$TRABAJO"; [ "$LISTO" = 1 ] || rm -rf "$DEST"' EXIT
 
 falla() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -82,10 +90,14 @@ rm -rf "$DEST" src-tauri/target/release/video-engine
 mkdir -p "$DEST"/{node,app,browser,ffmpeg,LICENSES}
 
 echo "== Motor: build"
-# dist se borra antes: tsc no elimina los .js de fuentes que ya no existen.
+# dist se borra antes: tsc no elimina los .js de fuentes que ya no existen. Este npm ci (de
+# desarrollo, no se empaqueta) sí ejecuta scripts de instalación: esbuild, que usan tsx/vitest, los
+# necesita para validar su binario; el lockfile fija versión e integridad de cada paquete.
 (cd "$MOTOR" && rm -rf dist && npm ci --no-audit --no-fund && npm run build)
 [ "$(cd "$MOTOR" && node -p 'require("./node_modules/hyperframes/package.json").version')" = "$HYPERFRAMES_VERSION" ] \
   || falla "video-mcp-server no usa hyperframes $HYPERFRAMES_VERSION"
+grep -rqF "CHROME_VERSION = \"$CHROME_VERSION\"" "$MOTOR/node_modules/hyperframes/dist" \
+  || falla "hyperframes $HYPERFRAMES_VERSION ya no fija chrome-headless-shell $CHROME_VERSION: actualiza CHROME_*"
 
 echo "== Motor: copia y dependencias de producción"
 cp -r "$MOTOR/dist" "$DEST/app/dist"
@@ -104,18 +116,12 @@ cp "$x/node-v$NODE_VERSION-win-x64/node.exe" "$DEST/node/node.exe"
 cp "$x/node-v$NODE_VERSION-win-x64/LICENSE" "$DEST/LICENSES/node-LICENSE.txt"
 [ "$("$DEST/node/node.exe" --version | tr -d '\r')" = "v$NODE_VERSION" ] || falla "node.exe no es v$NODE_VERSION"
 
-echo "== Navegador (chrome-headless-shell $CHROME_VERSION vía HyperFrames)"
-# Sin HYPERFRAMES_BROWSER_PATH: que la CLI dé su Chrome gestionado, no uno arbitrario.
-hf() { (cd "$MOTOR" && env -u HYPERFRAMES_BROWSER_PATH HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 NO_COLOR=1 npx --no-install hyperframes "$@"); }
-hf browser ensure
-chrome=$(hf browser path | tr -d '\r' | tail -n 1)
-chrome=$(cygpath -u "$chrome")
-[ "$(basename "$chrome")" = "chrome-headless-shell.exe" ] || falla "HyperFrames no devolvió chrome-headless-shell: $chrome"
-case "$chrome" in */win64-$CHROME_VERSION/*) ;; *) falla "Chrome inesperado (se esperaba $CHROME_VERSION): $chrome" ;; esac
-comprobar_sha "$chrome" "$CHROME_EXE_SHA256"
-origen=$(dirname "$chrome")
+echo "== Navegador (chrome-headless-shell $CHROME_VERSION, Chrome for Testing)"
+zip=$(descargar "chrome-headless-shell-$CHROME_VERSION" "$CHROME_URL" "$CHROME_ZIP" "$CHROME_SHA256")
+x=$(extraer "$zip")
+origen="$x/chrome-headless-shell-win64"
+[ -f "$origen/chrome-headless-shell.exe" ] || falla "el zip de Chrome no trae chrome-headless-shell-win64/chrome-headless-shell.exe"
 cp -r "$origen" "$DEST/browser/chrome-headless-shell-win64"
-rm -f "$DEST/browser/chrome-headless-shell-win64/debug.log"  # lo escribe Chrome al usarse
 cp "$origen/LICENSE.headless_shell" "$DEST/LICENSES/chrome-headless-shell-LICENSE.txt"
 cp "$origen/ABOUT" "$DEST/LICENSES/chrome-headless-shell-ABOUT.txt"
 
@@ -158,12 +164,13 @@ cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/sh
   echo "  SHA-256 $NODE_SHA256"
   echo "ffmpeg $FFMPEG_ZIP (LGPL, sin libx264)   $FFMPEG_URL"
   echo "  SHA-256 $FFMPEG_SHA256"
-  echo "chrome-headless-shell $CHROME_VERSION win64 (obtenido con hyperframes browser ensure)"
-  echo "  SHA-256 de chrome-headless-shell.exe $CHROME_EXE_SHA256"
+  echo "chrome-headless-shell $CHROME_VERSION win64 (Chrome for Testing)   $CHROME_URL"
+  echo "  SHA-256 $CHROME_SHA256"
   echo "hyperframes $HYPERFRAMES_VERSION (Apache-2.0) y el resto de dependencias de npm: cada"
   echo "  paquete conserva su licencia en app/node_modules/<paquete>/."
 } > "$DEST/LICENSES/LEEME.txt"
 
 echo "== Listo"
 du -sh "$DEST"/*
+LISTO=1
 echo "Motor de vídeo listo en $DEST ($(du -sh "$DEST" | cut -f1))"

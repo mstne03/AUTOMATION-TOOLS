@@ -41,6 +41,10 @@ log = logging.getLogger("app_backend.video")
 MENSAJE_DETENIDO = "El motor de vídeo se ha detenido; se relanzará en la siguiente acción."
 TIMEOUT_ARRANQUE = 60.0  # spawn + initialize; Node con node_modules en frío tarda unos segundos
 TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, kill del árbol)
+# video_capacidades sin prueba de GPU guardada hace un render corto (el motor le da hasta 240 s).
+# Con el timeout por defecto vencería en máquinas lentas, el motor se reiniciaría sin guardar la
+# prueba y la ruta fallaría siempre.
+TIMEOUT_CAPACIDADES = 300.0
 OCULTO = "***"
 
 

@@ -17,7 +17,7 @@ desactivada, ffmpeg LGPL (sin libx264) y Chrome, ambos del propio bundle. El bin
 no acepta ninguna ruta alternativa para el motor (seguridad): con `--video-engine` se crea una
 unión de directorios (junction) `<exe>.parent/video-engine` -> RUTA solo durante la prueba y se
 borra al acabar (solo la unión, nunca el contenido de RUTA). Si ya hay una carpeta real con ese
-nombre, se usa tal cual.
+nombre, `--video-engine` falla en vez de ignorarse: se probaría otro motor sin saberlo.
 """
 
 import argparse
@@ -45,17 +45,21 @@ def get(base: str, ruta: str, token: str = TOKEN, timeout: float = 120) -> tuple
         return e.code, e.read().decode()
 
 
-def preparar_motor(motor: Path, ruta: str | None) -> tuple[bool, str | None]:
-    """Deja el motor en `motor` si se pidió con --video-engine. Devuelve (hay_motor, qué_borrar)."""
+def preparar_motor(motor: Path, ruta: str | None, creado: list[str]) -> bool:
+    """Deja el motor en `motor` si se pidió con --video-engine; anota en `creado` qué hay que retirar.
+
+    Se anota antes de crear nada, para que `retirar_motor` limpie también una copia a medias.
+    """
     if ruta is None:
-        return motor.is_dir(), None
+        return motor.is_dir()
     origen = Path(ruta).resolve()
     assert (origen / "node" / "node.exe").is_file(), f"--video-engine {origen} no es un motor empaquetado"
     if motor.is_junction():
         os.rmdir(motor)  # unión de una ejecución anterior interrumpida: se rehace
-    elif motor.is_dir():
-        print(f"Uso el motor que ya hay en {motor} (carpeta real; ignoro --video-engine)")
-        return True, None
+    assert not motor.exists(), (
+        f"Ya hay una carpeta real {motor}: quítala o no pases --video-engine (se usaría esa, no {origen})"
+    )
+    creado.append("union")
     # mklink /J no pide permisos de administrador (a diferencia de un symlink).
     r = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(motor), str(origen)],
@@ -65,17 +69,22 @@ def preparar_motor(motor: Path, ruta: str | None) -> tuple[bool, str | None]:
         errors="replace",
     )
     if r.returncode == 0 and motor.is_junction():
-        return True, "union"
+        return True
     print(f"No pude crear la unión ({r.stdout.strip()} {r.stderr.strip()}); copio el motor", file=sys.stderr)
+    creado[-1] = "copia"
     shutil.copytree(origen, motor)
-    return True, "copia"
+    return True
 
 
-def retirar_motor(motor: Path, que: str | None) -> None:
-    if que == "union":
-        assert motor.is_junction(), f"{motor} ya no es una unión: no lo toco"
-        os.rmdir(motor)  # borra la unión, no el destino
-    elif que == "copia":
+def retirar_motor(motor: Path, creado: list[str]) -> None:
+    if not creado:
+        return
+    if creado[-1] == "union":
+        if motor.is_junction():
+            os.rmdir(motor)  # borra la unión, no el destino
+        else:
+            assert not motor.exists(), f"{motor} ya no es una unión: no lo toco"
+    elif motor.exists():  # copia (quizá a medias): es nuestra
         shutil.rmtree(motor)
 
 
@@ -107,11 +116,12 @@ def main() -> int:
     exe = Path(args.exe).resolve()
     assert exe.is_file(), f"No existe {exe}"
     motor = exe.parent / "video-engine"
-    hay_motor, retirar = preparar_motor(motor, args.video_engine)
+    creado: list[str] = []
     try:
+        hay_motor = preparar_motor(motor, args.video_engine, creado)
         return arrancar_y_comprobar(exe, motor if hay_motor else None)
     finally:
-        retirar_motor(motor, retirar)
+        retirar_motor(motor, creado)
 
 
 def arrancar_y_comprobar(exe: Path, motor: Path | None) -> int:

@@ -420,7 +420,9 @@ def create_app(
     @app.get("/video/capacidades", dependencies=protegido)
     async def video_capacidades():
         try:
-            r = await app.state.motor.llamar("video_capacidades", {"reprobar": False})
+            r = await app.state.motor.llamar(
+                "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
+            )
         except video.MotorNoDisponible as e:
             raise HTTPException(status_code=503, detail=str(e)) from None
         except video.MotorError as e:

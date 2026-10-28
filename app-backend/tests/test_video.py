@@ -299,3 +299,35 @@ async def test_motor_real_lista_las_12_tools(motor_real):
     assert caps.texto
     nombres = await motor_real.herramientas()
     assert len(nombres) == 12 and all(n.startswith("video_") for n in nombres)
+
+
+async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):
+    """La prueba de GPU del motor puede tardar hasta 240 s: la ruta no puede usar los 120 s por defecto."""
+    llamadas = []
+
+    class MotorQueAnota:
+        async def llamar(self, tool, args=None, timeout=None):
+            llamadas.append((tool, args, timeout))
+            return RespuestaMotor(texto="ok", datos={"hyperframes": "0.8.206"}, imagen=None)
+
+        async def cerrar(self):
+            pass
+
+    app = create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+    )
+    transporte = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transporte, base_url="http://test") as c,
+    ):
+        await app.state.motor.cerrar()
+        app.state.motor = MotorQueAnota()
+        r = await c.get("/video/capacidades", headers=AUTH)
+    assert r.status_code == 200 and r.json() == {"hyperframes": "0.8.206"}
+    assert [(t, a) for t, a, _ in llamadas] == [("video_capacidades", {"reprobar": False})]
+    assert llamadas[0][2] is not None and llamadas[0][2] >= 300
