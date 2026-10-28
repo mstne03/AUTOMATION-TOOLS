@@ -11,7 +11,8 @@ Pega este documento entero como primer mensaje de la sesión que planifique la f
 
 La fase 0 (integración técnica) está construida y revisada: el motor footy vive en el repo como
 `video-mcp-server/`, sin temática ni marca; el backend lo lanza como proceso hijo MCP por stdio; la
-clave de ElevenLabs va al almacén de secretos; y el instalador lleva Node, navegador y ffmpeg LGPL.
+clave de ElevenLabs va al almacén de secretos; y el instalador **puede** llevar Node, navegador y
+ffmpeg LGPL, pero solo con la variable de repositorio `VIDEO_ENGINE=1` (apagada: ver abajo).
 **La fase 1 no puede empezar todavía:** la puerta de licencias tiene **dos bloqueantes** (GSAP y
 Chrome for Testing) y el spike de preview no cumplió su criterio de salida. Todo eso lo decide Marc.
 
@@ -56,6 +57,20 @@ hasta ~50 ms. Fotogramas iguales al MP4 con la página recién cargada (SSIM 0,9
 reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 
 **Bundle:** `video-engine/` 783 MB sin comprimir (navegador 270, `app/` 220, ffmpeg 209, Node 84).
+
+## Interruptor del empaquetado: `VIDEO_ENGINE` (apagado)
+
+Tras la revisión final de la rama, el motor **no se empaqueta por defecto**: `release.yml` solo ejecuta
+`prepare-video-engine.sh` con la variable de Actions `VIDEO_ENGINE=1`. Sin ella el instalador lleva
+`video-engine/` con un marcador `.vacio` y el backend congelado responde **503 «El módulo de vídeo no
+está instalado…»**; el smoke test lo comprueba. Motivos: los bloqueantes de licencia (Chrome for
+Testing sin permiso de redistribución, uso prohibido de GSAP, obligaciones LGPL de ffmpeg sin cumplir)
+y que el updater bajaría ~783 MB a cada usuario para un módulo sin UI. **Se queda apagado hasta
+resolver los puntos 1–3 de abajo.** Detalle en `app-ui/README.md` («Motor de vídeo (opt-in)»).
+
+Además, congelado el backend **siempre** pasa al motor `FFMPEG_DIR` y `HYPERFRAMES_BROWSER_PATH` del
+bundle (y si faltan, 503 «reinstala SEO Studio»), y el motor integrado solo acepta el ffmpeg de
+`FFMPEG_DIR`: nunca cae en un ffmpeg del usuario (quizá GPL) ni en un Chrome de `~/.cache`.
 
 ## Decisiones pendientes de Marc (con mi recomendación)
 
@@ -147,7 +162,8 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
 ## Pasos manuales pendientes de Marc
 
 1. **Instalar la app y comprobar el motor desde la instalación.** Construir el instalador
-   (`bash scripts/prepare-video-engine.sh` y `pnpm tauri build` desde `app-ui/` en Git Bash), instalarlo y,
+   (`bash scripts/prepare-video-engine.sh` y `pnpm tauri build` desde `app-ui/` en Git Bash; en local no
+   depende de `VIDEO_ENGINE`, que solo gobierna CI), instalarlo y,
    desde `app-backend/` en PowerShell, lanzar el smoke test contra el binario instalado (encuentra solo
    `video-engine` junto al exe):
 
@@ -156,7 +172,7 @@ reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s): fase del shader `aurora`.
    ```
 
    Debe imprimir `GET /video/capacidades OK` (HyperFrames 0.8.206, telemetría desactivada, ffmpeg LGPL y
-   Chrome del bundle). Si la carpeta de instalación es otra, usa esa ruta. Tarda hasta ~5 min la primera
+   Chrome del bundle). Si la carpeta de instalación es otra, usa esa ruta. Tarda hasta ~7 min la primera
    vez (prueba de GPU). *Nota:* este paso valida el empaquetado actual, que todavía lleva Chrome y GSAP;
    no es una aprobación de licencias.
 2. **Medición de la preview en WebView2 con la RTX.** Procedimiento completo en

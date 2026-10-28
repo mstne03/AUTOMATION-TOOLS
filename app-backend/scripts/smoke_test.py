@@ -11,7 +11,8 @@ estuviera, faster-whisper no podria bajar su modelo en la primera transcripcion 
 la Fase 5). Estado en un directorio temporal con secretos en fichero: no toca
 el Credential Manager ni LOCALAPPDATA/seo-studio.
 
-Motor de vídeo: si existe `<exe>.parent/video-engine` (o se pasa `--video-engine RUTA`),
+Motor de vídeo: sin `<exe>.parent/video-engine/node/node.exe`, comprueba que GET /video/capacidades da 503
+(«módulo de vídeo no instalado»). Si existe (o se pasa `--video-engine RUTA`),
 comprueba GET /video/capacidades contra el motor del bundle: HyperFrames 0.8.206, telemetría
 desactivada, ffmpeg LGPL (sin libx264) y Chrome, ambos del propio bundle. El binario congelado
 no acepta ninguna ruta alternativa para el motor (seguridad): con `--video-engine` se crea una
@@ -51,7 +52,8 @@ def preparar_motor(motor: Path, ruta: str | None, creado: list[str]) -> bool:
     Se anota antes de crear nada, para que `retirar_motor` limpie también una copia a medias.
     """
     if ruta is None:
-        return motor.is_dir()
+        # Sin VIDEO_ENGINE el release deja video-engine/ con solo un marcador (.vacio): no es un motor.
+        return (motor / "node" / "node.exe").is_file()
     origen = Path(ruta).resolve()
     assert (origen / "node" / "node.exe").is_file(), f"--video-engine {origen} no es un motor empaquetado"
     if motor.is_junction():
@@ -91,8 +93,10 @@ def retirar_motor(motor: Path, creado: list[str]) -> None:
 def comprobar_video(base: str, motor: Path, t0: float) -> None:
     st, cuerpo = get(base, "/video/capacidades", token="malo")
     assert st == 401, f"GET /video/capacidades sin token valido deberia dar 401, dio {st}"
-    # Con el estado vacío el motor hace su prueba de GPU (un render corto): puede tardar un minuto.
-    st, cuerpo = get(base, "/video/capacidades", timeout=300)
+    # Con el estado vacío el motor hace su prueba de GPU (un render corto): puede tardar minutos. El
+    # cliente espera más que el servidor (TIMEOUT_CAPACIDADES, 420 s): si el motor se cuelga, se ve
+    # el 502 del backend con su mensaje y no un timeout mudo del cliente.
+    st, cuerpo = get(base, "/video/capacidades", timeout=480)
     assert st == 200, f"GET /video/capacidades -> {st}: {cuerpo}"
     c = json.loads(cuerpo)
     assert c.get("hyperframes") == HYPERFRAMES, f"hyperframes={c.get('hyperframes')!r}, esperado {HYPERFRAMES}"
@@ -160,7 +164,12 @@ def arrancar_y_comprobar(exe: Path, motor: Path | None) -> int:
         print(f"GET /kb/buscar OK en {time.time() - t0:.1f} s (modelo de embeddings cargado sin red)")
 
         if motor is None:
-            print("Sin video-engine junto al binario: no compruebo el motor de vídeo")
+            # Release sin VIDEO_ENGINE: el módulo no instalado es un 503 legible, no un 500.
+            st, cuerpo = get(base, "/video/capacidades")
+            assert st == 503 and "no está instalado" in json.loads(cuerpo)["detail"], (
+                f"GET /video/capacidades sin motor -> {st}: {cuerpo}"
+            )
+            print("Sin video-engine junto al binario: GET /video/capacidades da 503 (módulo no instalado)")
         else:
             comprobar_video(base, motor, t0)
         return 0
