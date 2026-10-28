@@ -29,19 +29,27 @@ function matarArbol(hijo: ChildProcess): Promise<void> {
   if (process.platform === "win32") {
     return new Promise((resolve) => {
       const t = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, windowsHide: true, stdio: "ignore" });
-      t.on("error", (e) => {
-        log.warn(`taskkill falló para el pid ${pid}: ${e.message}`);
-        resolve();
-      });
+      // Si taskkill falla, no se puede dejar vivo ni a Node (y con él a Chrome): se mata al menos al hijo directo.
+      const respaldo = () => {
+        if (hijo.exitCode === null) hijo.kill();
+      };
       // Un taskkill colgado no debe colgar el trabajo.
       const corte = setTimeout(() => {
         log.warn(`taskkill no terminó a tiempo para el pid ${pid}.`);
         t.kill();
+        respaldo();
+        resolve();
       }, TIMEOUT_TASKKILL_MS);
+      t.on("error", (e) => {
+        clearTimeout(corte);
+        log.warn(`taskkill falló para el pid ${pid}: ${e.message}`);
+        respaldo();
+        resolve();
+      });
       t.on("close", (code) => {
         clearTimeout(corte);
-        // 128 = "proceso no encontrado": ya estaba muerto. Cualquier otro fallo con el hijo vivo: matar al menos a Node.
-        if (code !== 0 && code !== 128 && hijo && hijo.exitCode === null) hijo.kill();
+        // 128 = "proceso no encontrado": ya estaba muerto.
+        if (code !== 0 && code !== 128) respaldo();
         resolve();
       });
     });

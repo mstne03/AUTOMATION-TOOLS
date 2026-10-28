@@ -1,6 +1,7 @@
 // Cliente de ElevenLabs: text-to-speech con timestamps por carácter. Nunca registra la API key.
 import type { AlineacionCaracteres } from "./alineacion.js";
 import { log } from "./log.js";
+import { esIntegrado } from "./proceso.js";
 
 export const URL_BASE_ELEVENLABS = "https://api.elevenlabs.io";
 
@@ -62,16 +63,16 @@ export async function sintetizarConTimestamps(opts: {
     } catch {
       /* cuerpo no JSON */
     }
-    const pista =
-      res.status === 401
-        ? process.env.VIDEO_ENGINE_EMBEDDED === "1" ? " Revisa tu clave de ElevenLabs en Ajustes de SEO Studio." : " Revisa ELEVENLABS_API_KEY en el .env del servidor."
-        : res.status === 404
-          ? " Revisa ELEVENLABS_VOICE_ID (la voz no existe en esta cuenta)."
-          : res.status === 422
-            ? " Revisa ELEVENLABS_MODEL_ID y el texto enviado."
-            : res.status === 429
-              ? " Límite de uso o de concurrencia alcanzado; espera y vuelve a intentarlo."
-              : "";
+    const integrado = esIntegrado();
+    const pistas: Record<number, string> = {
+      401: integrado ? " Revisa tu clave de ElevenLabs en Ajustes de SEO Studio." : " Revisa ELEVENLABS_API_KEY en el .env del servidor.",
+      404: integrado
+        ? " La voz elegida no existe en esta cuenta; cámbiala en Ajustes de SEO Studio."
+        : " Revisa ELEVENLABS_VOICE_ID (la voz no existe en esta cuenta).",
+      422: integrado ? " Revisa el modelo de voz en Ajustes de SEO Studio y el texto enviado." : " Revisa ELEVENLABS_MODEL_ID y el texto enviado.",
+      429: " Límite de uso o de concurrencia alcanzado; espera y vuelve a intentarlo.",
+    };
+    const pista = pistas[res.status] ?? "";
     throw new ErrorElevenLabs(`ElevenLabs respondió ${res.status}: ${ocultarClave(detalle, opts.apiKey)}.${pista}`);
   }
 

@@ -327,7 +327,12 @@ export async function generarVoz(
   if (faltan.length) {
     throw new ErrorVideo(
       esIntegrado()
-        ? "Añade tu clave de ElevenLabs en Ajustes de SEO Studio."
+        ? [
+            faltan.includes("ELEVENLABS_API_KEY") ? "Añade tu clave de ElevenLabs en Ajustes de SEO Studio." : "",
+            faltan.includes("ELEVENLABS_VOICE_ID") ? "Elige la voz de ElevenLabs en Ajustes de SEO Studio." : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
         : `Faltan ${faltan.join(" y ")} en el .env del servidor. Rellénalas y reinicia Claude Desktop.`,
     );
   }

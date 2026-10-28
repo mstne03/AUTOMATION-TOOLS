@@ -114,7 +114,7 @@ describe("taskkill", () => {
     (globalThis as any).__fake = true;
     const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
     const p = real.ejecutar("x", [], { timeoutMs: 10 });
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true));
     const tk = estado.spawns.find((s) => s.cmd === "taskkill")!;
     tk.hijo.emit("close", codigoTaskkill);
     const res = await p;
@@ -125,6 +125,39 @@ describe("taskkill", () => {
     const { res, hijo } = await vencer(1);
     expect(res.timeout).toBe(true);
     expect(hijo.kill).toHaveBeenCalled();
+  });
+  it("si taskkill no se puede lanzar (error), mata al hijo y limpia el temporizador", async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      (globalThis as any).__fake = true;
+      const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
+      const p = real.ejecutar("x", [], { timeoutMs: 10 });
+      await vi.advanceTimersByTimeAsync(10);
+      estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.emit("error", new Error("ENOENT"));
+      expect((await p).timeout).toBe(true);
+      expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("si taskkill se cuelga más de 10 s, mata al hijo y resuelve", async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      (globalThis as any).__fake = true;
+      const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
+      const p = real.ejecutar("x", [], { timeoutMs: 10 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await p).timeout).toBe(true);
+      expect(estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.kill).toHaveBeenCalled();
+      expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("con código 128 (proceso inexistente) no hace nada más", async () => {
     const { hijo } = await vencer(128);
