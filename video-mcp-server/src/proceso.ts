@@ -139,12 +139,15 @@ function existe(p: string): boolean {
   }
 }
 
-/** Busca la carpeta que contiene ffmpeg y ffprobe: FFMPEG_DIR, PATH y, en Windows, la instalación de winget. */
+/**
+ * Busca la carpeta que contiene ffmpeg y ffprobe: FFMPEG_DIR, PATH y, en Windows, la instalación de winget.
+ * Integrado, solo FFMPEG_DIR (el ffmpeg LGPL del bundle): uno del usuario podría ser GPL (libx264).
+ */
 export function localizarFfmpegDir(ffmpegDir?: string): string | undefined {
   const candidatos: string[] = [];
   if (ffmpegDir) candidatos.push(ffmpegDir);
-  for (const p of (process.env.PATH ?? "").split(path.delimiter)) if (p) candidatos.push(p);
-  if (process.platform === "win32") {
+  if (!esIntegrado()) for (const p of (process.env.PATH ?? "").split(path.delimiter)) if (p) candidatos.push(p);
+  if (process.platform === "win32" && !esIntegrado()) {
     const paquetes = path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "Microsoft", "WinGet", "Packages");
     try {
       for (const d of fs.readdirSync(paquetes)) {

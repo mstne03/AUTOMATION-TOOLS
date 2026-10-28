@@ -32,10 +32,14 @@ export function leerPruebaGpu(): PruebaGpu | undefined {
   }
 }
 
+// Última prueba fallida de este proceso (no se guarda en disco): evita que cada render repita los
+// 240 s de una prueba que falla siempre; el siguiente arranque del motor (o reprobar) la reintenta.
+let fallidaEnEsteProceso: PruebaGpu | undefined;
+
 /** ¿Se pueden usar fondos WebGPU? Usa la prueba cacheada; si no hay, la hace. */
 export async function hayWebgpu(h: Herramientas, browserPath?: string): Promise<boolean> {
   if (gpuForzadaApagada()) return false;
-  const p = leerPruebaGpu() ?? (await probarGpu(h, browserPath));
+  const p = leerPruebaGpu() ?? fallidaEnEsteProceso ?? (await probarGpu(h, browserPath));
   return p.webgpu;
 }
 
@@ -76,13 +80,17 @@ export async function probarGpu(h: Herramientas, browserPath?: string): Promise<
       const f = await ejecutar(h.ffmpeg, ["-v", "error", "-ss", "0.5", "-i", salida, "-frames:v", "1", "-vf", "scale=1:1,format=gray", "-f", "rawvideo", "pipe:1"], {
         timeoutMs: 30000,
       });
-      const lum = f.stdout.length ? f.stdout.charCodeAt(0) : 0;
-      resultado = {
-        webgpu: lum > 8,
-        fecha,
-        luminancia: lum,
-        detalle: lum > 8 ? "El shader de prueba (aurora) se pintó con la GPU." : "El render de prueba salió negro: WebGPU no pinta en esta máquina.",
-      };
+      if (f.code !== 0 || !f.stdout.length) {
+        resultado = { webgpu: false, fecha, detalle: `No se pudo leer el fotograma del render de prueba. ${f.stderr.trim().slice(0, 200)}`.trim() };
+      } else {
+        const lum = f.stdout.charCodeAt(0);
+        resultado = {
+          webgpu: lum > 8,
+          fecha,
+          luminancia: lum,
+          detalle: lum > 8 ? "El shader de prueba (aurora) se pintó con la GPU." : "El render de prueba salió negro: WebGPU no pinta en esta máquina.",
+        };
+      }
     }
   } catch (e) {
     resultado = { webgpu: false, fecha, detalle: `No se pudo hacer la prueba: ${(e as Error).message}` };
@@ -90,6 +98,13 @@ export async function probarGpu(h: Herramientas, browserPath?: string): Promise<
     fs.rmSync(dir, { recursive: true, force: true });
   }
   log.info(`Prueba de GPU: webgpu=${resultado.webgpu} (${resultado.detalle})`);
+  // Solo se guarda un resultado medido (con luminancia). Un fallo (render roto, timeout, fotograma
+  // ilegible) puede ser pasajero: guardar webgpu=false apagaría los fondos WebGPU para siempre.
+  if (resultado.luminancia === undefined) {
+    fallidaEnEsteProceso = resultado;
+    return resultado;
+  }
+  fallidaEnEsteProceso = undefined;
   try {
     fs.mkdirSync(path.dirname(CACHE), { recursive: true });
     fs.writeFileSync(CACHE, JSON.stringify(resultado, null, 2));
@@ -123,12 +138,15 @@ export async function capacidades(h: Herramientas | null, reprobar: boolean, bro
   if (h && (reprobar || !gpu)) gpu = await probarGpu(h, browserPath);
   const env = entornoConFfmpeg(h);
   const pkg = JSON.parse(fs.readFileSync(path.join(SERVER_ROOT, "node_modules", "hyperframes", "package.json"), "utf8")) as { version: string };
-  const chromeRuta = await primeraLinea(process.execPath, [HYPERFRAMES_BIN, "browser", "path"], env);
+  // Las tres sondas de versión van en paralelo: su peor caso es 60 s y no 180 s (lo cubre
+  // TIMEOUT_CAPACIDADES del backend junto con los 270 s de probarGpu).
   // `telemetry status` imprime "Status: disabled" y "Source: config|HYPERFRAMES_NO_TELEMETRY|…".
-  const salidaTel = (await ejecutar(process.execPath, [HYPERFRAMES_BIN, "telemetry", "status"], { env, timeoutMs: 60000 }).catch(() => undefined))?.stdout.replace(
-    /\x1b\[[0-9;]*m/g,
-    "",
-  );
+  const [chromeRuta, tel, ffmpeg] = await Promise.all([
+    primeraLinea(process.execPath, [HYPERFRAMES_BIN, "browser", "path"], env),
+    ejecutar(process.execPath, [HYPERFRAMES_BIN, "telemetry", "status"], { env, timeoutMs: 60000 }).catch(() => undefined),
+    h ? primeraLinea(h.ffmpeg, ["-version"]) : Promise.resolve(undefined),
+  ]);
+  const salidaTel = tel?.stdout.replace(/\x1b\[[0-9;]*m/g, "");
   const estadoTel = /Status:\s*(\S+)/.exec(salidaTel ?? "")?.[1];
   const origenTel = /Source:\s*(\S+)/.exec(salidaTel ?? "")?.[1];
   const telemetria = estadoTel ? `${estadoTel === "disabled" ? "desactivada" : estadoTel}${origenTel ? ` (${origenTel})` : ""}` : undefined;
@@ -137,7 +155,7 @@ export async function capacidades(h: Herramientas | null, reprobar: boolean, bro
     gpu,
     gpuForzadaApagada: gpuForzadaApagada(),
     hyperframes: pkg.version,
-    ffmpeg: h ? await primeraLinea(h.ffmpeg, ["-version"]) : undefined,
+    ffmpeg,
     chrome: chromeRuta,
     telemetria: telemetria ? `${telemetria}${process.env.HYPERFRAMES_NO_TELEMETRY === "1" ? " · y HYPERFRAMES_NO_TELEMETRY=1 en el servidor" : ""}` : undefined,
     fondos: {

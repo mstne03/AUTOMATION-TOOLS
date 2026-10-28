@@ -1,6 +1,6 @@
 // Cliente de ElevenLabs: text-to-speech con timestamps por carácter. Nunca registra la API key.
 import type { AlineacionCaracteres } from "./alineacion.js";
-import { log } from "./log.js";
+import { log, ocultarClave } from "./log.js";
 import { esIntegrado } from "./proceso.js";
 
 export const URL_BASE_ELEVENLABS = "https://api.elevenlabs.io";
@@ -16,10 +16,6 @@ export interface RespuestaTts {
 }
 
 export class ErrorElevenLabs extends Error {}
-
-function ocultarClave(texto: string, clave: string): string {
-  return clave ? texto.split(clave).join("***") : texto;
-}
 
 function esAlineacion(v: unknown): v is AlineacionCaracteres {
   const a = v as AlineacionCaracteres | null;

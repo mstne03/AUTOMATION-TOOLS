@@ -97,4 +97,46 @@ describe("motor genérico (G1)", () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
+
+  it("video.log rota a video.log.1 pasados 5 MB y oculta la clave de ElevenLabs", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video log "));
+    try {
+      vi.stubEnv("VIDEO_STATE_DIR", dir);
+      vi.stubEnv("ELEVENLABS_API_KEY", "sk-clave-que-no-debe-salir");
+      const fichero = path.join(dir, "video.log");
+      fs.writeFileSync(path.join(dir, "video.log.1"), "copia anterior");
+      fs.writeFileSync(fichero, "x".repeat(5 * 1024 * 1024 + 1));
+      const { log } = await import("../src/log.js");
+      log.warn("fallo con sk-clave-que-no-debe-salir dentro");
+      expect(fs.statSync(path.join(dir, "video.log.1")).size).toBe(5 * 1024 * 1024 + 1); // la anterior se pisa
+      const nuevo = fs.readFileSync(fichero, "utf8");
+      expect(nuevo).toMatch(/^\S+ \[warn\] fallo con \*\*\* dentro\n$/);
+      log.info("otra");
+      expect(fs.existsSync(fichero) && fs.readFileSync(fichero, "utf8").split("\n").length).toBe(3); // no rota por debajo
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("integrado solo usa el ffmpeg de FFMPEG_DIR, nunca uno del PATH o de winget", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "video ffmpeg "));
+    const exe = process.platform === "win32" ? ".exe" : "";
+    const delUsuario = path.join(base, "usuario");
+    const bundle = path.join(base, "bundle");
+    for (const d of [delUsuario, bundle]) {
+      fs.mkdirSync(d);
+      for (const n of ["ffmpeg", "ffprobe"]) fs.writeFileSync(path.join(d, n + exe), "");
+    }
+    try {
+      vi.stubEnv("PATH", delUsuario);
+      const { localizarFfmpegDir } = await import("../src/proceso.js");
+      vi.stubEnv("VIDEO_ENGINE_EMBEDDED", "");
+      expect(localizarFfmpegDir(undefined)).toBe(delUsuario);
+      vi.stubEnv("VIDEO_ENGINE_EMBEDDED", "1");
+      expect(localizarFfmpegDir(undefined)).toBeUndefined();
+      expect(localizarFfmpegDir(bundle)).toBe(bundle);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
 });
