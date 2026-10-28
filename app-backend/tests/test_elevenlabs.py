@@ -45,9 +45,11 @@ def make_client(tmp_path, fake_anthropic):
 
 
 async def _con(app):
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
-            yield c
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c,
+    ):
+        yield c
 
 
 @pytest.fixture
