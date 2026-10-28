@@ -314,12 +314,15 @@ Use `youtube_auth_status` to check current usage per bucket.
 ## Development
 
 ```bash
-git clone https://github.com/pauling-ai/youtube-studio-mcp.git
-cd youtube-studio-mcp
+git clone https://github.com/mstne03/AUTOMATION-TOOLS.git
+cd AUTOMATION-TOOLS/youtube-mcp-server
 uv sync --extra dev      # reproduces uv.lock exactly
 uv run pytest -q
 ```
 
 ## License
 
-MIT
+Based on [pauling-ai/youtube-studio-mcp](https://github.com/pauling-ai/youtube-studio-mcp),
+MIT, Copyright (c) 2026 Pauling Inc. (its notice is kept in [`LICENSE`](LICENSE)). The changes
+made in this repository are licensed under PolyForm Shield 1.0.0, see the root
+[`LICENSE`](../LICENSE).
