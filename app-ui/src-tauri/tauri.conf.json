@@ -34,7 +34,8 @@
       "binaries/app-backend"
     ],
     "resources": {
-      "binaries/_internal/": "_internal/"
+      "binaries/_internal/": "_internal/",
+      "binaries/video-engine/": "video-engine/"
     },
     "icon": [
       "icons/32x32.png",

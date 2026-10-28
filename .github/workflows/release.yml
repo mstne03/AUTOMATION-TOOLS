@@ -64,9 +64,16 @@ jobs:
           uv run python scripts/fetch_model.py
           uv run pyinstaller --noconfirm --clean app-backend.spec
 
+      # Motor de vídeo (D10): Node, navegador y ffmpeg LGPL con versión y SHA-256 fijados en el
+      # script; las descargas van a RUNNER_TEMP. Antes del smoke test, que lo comprueba.
+      - name: Motor de vídeo - tests y empaquetado
+        run: |
+          (cd video-mcp-server && npm ci && npm test)
+          (cd app-ui && bash scripts/prepare-video-engine.sh)
+
       - name: Sidecar - test de arranque del binario (sin red)
         working-directory: app-backend
-        run: uv run python scripts/smoke_test.py
+        run: uv run python scripts/smoke_test.py --video-engine ../app-ui/src-tauri/binaries/video-engine
 
       - name: Copiar el sidecar a src-tauri/binaries
         working-directory: app-ui
@@ -100,6 +107,7 @@ jobs:
           b=$(sha256sum app-ui/src-tauri/target/release/app-backend.exe | cut -d' ' -f1)
           echo "dist:   $a"; echo "bundle: $b"
           [ "$a" = "$b" ] || { echo "El sidecar empaquetado no es el recién compilado" >&2; exit 1; }
+          [ -f app-ui/src-tauri/target/release/video-engine/node/node.exe ] || { echo "El bundle no lleva el motor de vídeo" >&2; exit 1; }
           ls -la app-ui/src-tauri/target/release/bundle/nsis/
 
       - uses: actions/upload-artifact@v4
