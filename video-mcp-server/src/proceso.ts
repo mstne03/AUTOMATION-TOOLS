@@ -615,29 +615,54 @@ export interface InfoMedio {
   alto?: number;
   codecVideo?: string;
   tieneAudio: boolean;
+  /** r_frame_rate del vídeo. */
   fps?: number;
+  /** avg_frame_rate del vídeo. */
+  fpsMedio?: number;
+  /** Etiqueta `encoder` del vídeo tal cual (p. ej. "Lavc61.19.101 h264_amf"). */
+  codificador?: string;
+  duracionVideo?: number;
+  duracionAudio?: number;
+  nbFrames?: number;
 }
+
+const numero = (v?: string): number | undefined => {
+  const n = v === undefined ? NaN : Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+const fraccion = (v?: string): number | undefined => {
+  const [a, b] = (v ?? "").split("/").map(Number);
+  return a && b ? a / b : undefined;
+};
 
 export async function sondear(ffprobe: string, archivo: string): Promise<InfoMedio> {
   const r = await ejecutar(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
   if (r.code !== 0) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
-  const j = JSON.parse(r.stdout) as {
-    format?: { duration?: string };
-    streams?: { codec_type?: string; codec_name?: string; width?: number; height?: number; r_frame_rate?: string }[];
+  type Pista = {
+    codec_type?: string;
+    codec_name?: string;
+    width?: number;
+    height?: number;
+    r_frame_rate?: string;
+    avg_frame_rate?: string;
+    duration?: string;
+    nb_frames?: string;
+    tags?: { encoder?: string };
   };
+  const j = JSON.parse(r.stdout) as { format?: { duration?: string }; streams?: Pista[] };
   const video = j.streams?.find((s) => s.codec_type === "video");
-  let fps: number | undefined;
-  if (video?.r_frame_rate) {
-    const [a, b] = video.r_frame_rate.split("/").map(Number);
-    if (a && b) fps = a / b;
-  }
-  const dur = j.format?.duration ? Number(j.format.duration) : undefined;
+  const audio = j.streams?.find((s) => s.codec_type === "audio");
   return {
-    duracion: dur !== undefined && Number.isFinite(dur) ? dur : undefined,
+    duracion: numero(j.format?.duration),
     ancho: video?.width,
     alto: video?.height,
     codecVideo: video?.codec_name,
-    tieneAudio: !!j.streams?.some((s) => s.codec_type === "audio"),
-    fps,
+    tieneAudio: !!audio,
+    fps: fraccion(video?.r_frame_rate),
+    fpsMedio: fraccion(video?.avg_frame_rate),
+    codificador: video?.tags?.encoder,
+    duracionVideo: numero(video?.duration),
+    duracionAudio: numero(audio?.duration),
+    nbFrames: numero(video?.nb_frames),
   };
 }

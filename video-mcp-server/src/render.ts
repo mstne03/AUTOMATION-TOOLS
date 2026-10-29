@@ -8,7 +8,7 @@ import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
-import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas } from "./proceso.js";
+import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 
@@ -23,6 +23,52 @@ export function timeoutRenderMs(): number {
   const s = Number(process.env.VIDEO_TIMEOUT_RENDER_S);
   // setTimeout dispara al instante por encima de 2^31-1 ms: se recorta a ese máximo.
   return Number.isFinite(s) && s > 0 ? Math.min(s * 1000, MAX_SETTIMEOUT_MS) : TIMEOUT_RENDER_MS;
+}
+
+// ---------- Verificación del MP4 (I11) ----------
+
+/** Codificadores H.264 que el motor admite en el MP4 final (todos LGPL; nunca libx264 ni libopenh264). */
+export type CodificadorH264 = "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_mf";
+export const CODIFICADORES: readonly CodificadorH264[] = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"];
+
+const FPS = 30;
+const TOLERANCIA_DURACION_S = 0.1;
+const TOLERANCIA_FPS = 0.01;
+const TOLERANCIA_FOTOGRAMAS = 3;
+
+/** Último token de la etiqueta `encoder` que nombra un codificador ("Lavc61.19.101 h264_amf" → "h264_amf"). */
+export function codificadorDeEtiqueta(etiqueta?: string): string | undefined {
+  return etiqueta
+    ?.trim()
+    .split(/\s+/)
+    .reverse()
+    .find((t) => t.startsWith("h264_") || t.startsWith("lib"));
+}
+
+/**
+ * El MP4 tiene que ser exactamente lo pedido; si no, el job falla (nada de dar por bueno un MP4 sin
+ * audio). `codificador`, si se pasa, es el que el motor usó en la segunda pasada.
+ */
+export function verificarMp4(info: InfoMedio, duracionEsperada: number, codificador?: CodificadorH264): void {
+  if (info.ancho !== 1080 || info.alto !== 1920) throw new Error(`El mp4 salió de ${info.ancho}×${info.alto} y tenía que ser 1080×1920.`);
+  if (info.codecVideo !== "h264") throw new Error(`El mp4 salió en ${info.codecVideo ?? "un códec desconocido"} y tenía que ser h264.`);
+  const cod = codificadorDeEtiqueta(info.codificador);
+  if (!cod || !(CODIFICADORES as readonly string[]).includes(cod) || (codificador && cod !== codificador)) {
+    throw new Error(`El mp4 salió con el codificador ${cod ?? "desconocido"} y tenía que ser ${codificador ?? CODIFICADORES.join(", ")}.`);
+  }
+  for (const [nombre, v] of [["r_frame_rate", info.fps], ["avg_frame_rate", info.fpsMedio]] as const) {
+    if (v === undefined || Math.abs(v - FPS) > TOLERANCIA_FPS) throw new Error(`El mp4 salió a ${v?.toFixed(2) ?? "?"} fps (${nombre}) y tenía que ser ${FPS}.`);
+  }
+  if (!info.tieneAudio) throw new Error("El mp4 salió sin pista de audio.");
+  for (const [nombre, v] of [["vídeo", info.duracionVideo], ["audio", info.duracionAudio]] as const) {
+    if (v === undefined || Math.abs(v - duracionEsperada) > TOLERANCIA_DURACION_S) {
+      throw new Error(`La duración del ${nombre} del mp4 es ${v?.toFixed(2) ?? "desconocida"} s y tenía que ser ${duracionEsperada.toFixed(2)} s.`);
+    }
+  }
+  const fotogramas = Math.round(duracionEsperada * FPS);
+  if (info.nbFrames !== undefined && Math.abs(info.nbFrames - fotogramas) > TOLERANCIA_FOTOGRAMAS) {
+    throw new Error(`El mp4 tiene ${info.nbFrames} fotogramas y tenía que tener ${fotogramas}.`);
+  }
 }
 
 function duracionLegible(ms: number): string {
@@ -364,10 +410,12 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
 
   job.fase = "verificacion";
   const info = await sondear(h.ffprobe, temporal);
-  if (info.ancho !== 1080 || info.alto !== 1920) {
-    throw new Error(`El mp4 salió de ${info.ancho}×${info.alto} y tenía que ser 1080×1920.`);
+  try {
+    verificarMp4(info, montaje.duracion);
+  } catch (e) {
+    fs.rmSync(temporal, { force: true });
+    throw e;
   }
-  if (!info.tieneAudio) job.avisos.push("El mp4 no tiene pista de audio.");
   fs.rmSync(prep.rutas.mp4, { force: true });
   fs.renameSync(temporal, prep.rutas.mp4);
   job.duracion = info.duracion;
