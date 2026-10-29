@@ -3,6 +3,7 @@
 # lanza con --network none, raíz de solo lectura y /tmp como único sitio de trabajo).
 #   compilar.sh [--fuentes DIR] [--salida DIR]   (por defecto /build/fuentes y /build/out)
 #   compilar.sh --imprimir-configure             opciones de ./configure (las usa la puerta)
+#   compilar.sh --comprobar-fuentes DIR [LOCK]   SHA-256 de cada fuente de DIR contra el lock
 # Salida: ffmpeg.exe, ffprobe.exe, configuracion.txt, avisos-toolchain/, SHA256SUMS.
 # Nada se desactiva en silencio (I11): si configure no activa algo de componentes.conf, falla.
 set -euo pipefail
@@ -25,16 +26,10 @@ opciones_configure() {
     --prefix="$PREFIX" --arch=x86_64 --target-os=mingw32 --cross-prefix="$CROSS-"
     --enable-cross-compile --pkg-config=pkg-config --pkg-config-flags=--static
     "${FF_CONFIGURE_ENABLE[@]}"
-    --enable-protocol="$(unir "${FF_PROTOCOLS[@]}")"
-    --enable-demuxer="$(unir "${FF_DEMUXERS[@]}")"
-    --enable-muxer="$(unir "${FF_MUXERS[@]}")"
-    --enable-decoder="$(unir "${FF_DECODERS[@]}")"
-    --enable-encoder="$(unir "${FF_ENCODERS[@]}")"
-    --enable-parser="$(unir "${FF_PARSERS[@]}")"
-    --enable-bsf="$(unir "${FF_BSFS[@]}")"
-    --enable-filter="$(unir "${FF_FILTERS[@]}")"
-    --enable-indev="$(unir "${FF_INDEVS[@]}")"
   )
+  local t
+  # shellcheck disable=SC2086 # las listas son palabras sueltas a propósito
+  for t in "${FF_TIPOS[@]}"; do OPC+=("--enable-$t=$(unir ${FF_LISTAS[$t]})"); done
 }
 
 # columna <fichero-lock> <nombre> <nº de columna>
@@ -46,47 +41,62 @@ leer_epoch() { # SOURCE_DATE_EPOCH = fecha de la release de ffmpeg, fijada en fu
   echo "$e"
 }
 
-# NVENC y AMF cargan su DLL en tiempo de ejecución: debe ser por win32_dlopen, que solo busca en
-# System32 y junto al .exe (nunca en el cwd ni en el PATH). Patrones de ffmpeg 7.1 (R0 M3).
-comprobar_carga_dll() { # <árbol de fuentes de ffmpeg>
-  local s=$1 f
+# NVENC, AMF y Media Foundation cargan DLL en tiempo de ejecución: debe ser por win32_dlopen
+# (LOAD_LIBRARY_SEARCH_APPLICATION_DIR | SYSTEM32: nunca el cwd ni el PATH; la carpeta del .exe sí
+# y antes que System32, ver LEEME). Patrones de ffmpeg 7.1 y nv-codec-headers 12.1 (R0 M3, LOW-6).
+comprobar_carga_dll() { # <árbol de ffmpeg> <árbol de nv-codec-headers>
+  local s=$1 nv=$2 f amf=0 directas
   grep -q 'win32_dlopen' "$s/compat/w32dlfcn.h" && grep -q 'LOAD_LIBRARY_SEARCH_SYSTEM32' "$s/compat/w32dlfcn.h" \
     && grep -qE '#define dlopen\(name, *flags\) *win32_dlopen\(name\)' "$s/compat/w32dlfcn.h" \
     || error "compat/w32dlfcn.h no restringe la búsqueda de DLL como se espera"
   grep -q 'compat/w32dlfcn.h' "$s/compat/cuda/dynlink_loader.h" \
     && grep -qE 'define FFNV_LOAD_FUNC\(path\) *dlopen\(' "$s/compat/cuda/dynlink_loader.h" \
     || error "compat/cuda/dynlink_loader.h no carga NVENC por win32_dlopen"
+  cat "$s/libavcodec/nvenc.h" "$s/libavcodec/nvenc.c" 2>/dev/null | grep -qE '#include +"compat/cuda/dynlink_loader.h"' \
+    || error "nvenc no incluye compat/cuda/dynlink_loader.h"
+  # La cabecera de NVIDIA solo puede definir FFNV_LOAD_FUNC dentro de un #ifndef/#if !defined de
+  # FFNV_LOAD_FUNC: así manda la definición de ffmpeg (win32_dlopen).
+  awk '/^[ \t]*#[ \t]*if/ { cond[++d] = $0 } /^[ \t]*#[ \t]*endif/ { d-- }
+       /^[ \t]*#[ \t]*define[ \t]+FFNV_LOAD_FUNC/ { n++; bien = 0
+         for (i = 1; i <= d; i++) if (cond[i] ~ /ifndef[ \t]+FFNV_LOAD_FUNC|!defined\(FFNV_LOAD_FUNC\)/) bien = 1
+         if (!bien) mal = 1 }
+       END { exit (mal || !n) }' "$nv/include/ffnvcodec/dynlink_loader.h" \
+    || error "nv-codec-headers define FFNV_LOAD_FUNC sin guarda: pisaría la carga por win32_dlopen"
   while IFS= read -r f; do
+    amf=$((amf + 1))
     grep -q 'w32dlfcn.h' "$f" || error "$f carga AMF sin compat/w32dlfcn.h"
   done < <(grep -rlE 'AMF_DLL_NAME' "$s/libavcodec" "$s/libavutil" 2>/dev/null || true)
+  [ "$amf" -ge 1 ] || error "ningún fichero carga AMF_DLL_NAME: el patrón de ffmpeg cambió, revisar"
   # Por la salida y no por el código: una ruta que no exista en esta versión hace que grep salga
   # con 2 aunque haya coincidencias en las demás.
-  local directas
   directas=$(grep -snE '\bLoadLibrary(Ex)?[AW]?[[:space:]]*\(' "$s/libavcodec/nvenc.c" "$s/libavcodec"/amfenc*.c \
-    "$s/libavutil"/hwcontext_amf*.c "$s/compat/cuda/dynlink_loader.h" || true)
-  [ -z "$directas" ] || error "NVENC/AMF llaman a LoadLibrary directamente: $directas"
+    "$s/libavutil"/hwcontext_amf*.c "$s/libavcodec/mfenc.c" "$s/libavcodec/mf_utils.c" \
+    "$s/compat/cuda/dynlink_loader.h" || true)
+  [ -z "$directas" ] || error "NVENC/AMF/MF llaman a LoadLibrary directamente: $directas"
+}
+
+# I11: configure no puede desactivar ni ignorar nada en silencio.
+comprobar_log_configure() { # <configure.log>
+  if grep -nE 'did not match anything|WARNING:' "$1" >&2; then error "configure avisó: no se acepta (I11)"; fi
 }
 
 # Cada componente declarado está activo en config_components.h; nada GPL, hwaccel ni prohibido.
 comprobar_config_h() { # <directorio con config.h y config_components.h>
-  local d=$1 n c sufijo errores=0 macro valor
+  local d=$1 n c t errores=0 macro valor
   if grep -qE '#define CONFIG_(GPL|NONFREE|VERSION3) 1' "$d/config.h"; then error "config.h: gpl/nonfree/version3 activo"; fi
   local -A activo=()
   while read -r _ macro valor; do [ "$valor" = 1 ] && activo[$macro]=1; done < <(grep '^#define CONFIG_' "$d/config_components.h")
-  local -A lista=([PROTOCOL]="${FF_PROTOCOLS[*]}" [DEMUXER]="${FF_DEMUXERS[*]}" [MUXER]="${FF_MUXERS[*]}"
-    [DECODER]="${FF_DECODERS[*]}" [ENCODER]="${FF_ENCODERS[*]}" [PARSER]="${FF_PARSERS[*]}"
-    [BSF]="${FF_BSFS[*]}" [FILTER]="${FF_FILTERS[*]}" [INDEV]="${FF_INDEVS[*]}")
-  for sufijo in "${!lista[@]}"; do
-    for n in ${lista[$sufijo]}; do
-      [ -n "${activo[CONFIG_${n^^}_${sufijo}]+x}" ] || { echo "ERROR: configure no activó $n ($sufijo)" >&2; errores=1; }
+  for t in "${FF_TIPOS[@]}"; do
+    for n in ${FF_LISTAS[$t]}; do
+      [ -n "${activo[CONFIG_${n^^}_${t^^}]+x}" ] || { echo "ERROR: configure no activó $n ($t)" >&2; errores=1; }
     done
   done
   for c in "${!activo[@]}"; do
-    case "$c" in *_HWACCEL) echo "ERROR: hwaccel activo: $c" >&2; errores=1 ;; esac
+    case "$c" in *_HWACCEL | *_OUTDEV) echo "ERROR: activo y no permitido: $c" >&2; errores=1 ;; esac
     # Protocolos: solo los declarados (la red no entra ni autoseleccionada).
     if [[ "$c" == *_PROTOCOL ]]; then
       n=${c#CONFIG_}; n=${n%_PROTOCOL}; n=${n,,}
-      [[ " ${FF_PROTOCOLS[*]} " == *" $n "* ]] || { echo "ERROR: protocolo no declarado activo: $n" >&2; errores=1; }
+      [[ " ${FF_LISTAS[protocol]} " == *" $n "* ]] || { echo "ERROR: protocolo no declarado activo: $n" >&2; errores=1; }
     fi
     for n in "${FF_PROHIBIDOS[@]}"; do
       [[ "$c" != "CONFIG_${n^^}_"* ]] || { echo "ERROR: prohibido activo: $c" >&2; errores=1; }
@@ -95,12 +105,14 @@ comprobar_config_h() { # <directorio con config.h y config_components.h>
   [ "$errores" = 0 ] || error "config_components.h no corresponde a componentes.conf"
 }
 
-comprobar_fuentes() { # re-verifica el SHA-256 de cada fuente (llegan de otro contenedor)
-  local nombre version tipo url sha f
+comprobar_fuentes() { # <lock> <dir>: re-verifica el SHA-256 de cada fuente (llegan de otro contenedor)
+  local nombre version tipo url sha f n=0
   while IFS=$'\t' read -r nombre version tipo url sha _; do
     case "$tipo" in tar) f=$(basename "$url") ;; git) f=$nombre-$version.tar ;; *) continue ;; esac
-    echo "$sha  $FUENTES/$f" | sha256sum -c --quiet - || error "fuente alterada o ausente: $f"
-  done < <(grep -v '^#' "$AQUI/fuentes.lock")
+    echo "$sha  $2/$f" | sha256sum -c --quiet - || error "fuente alterada o ausente: $f"
+    n=$((n + 1))
+  done < <(grep -v '^#' "$1")
+  [ "$n" -gt 0 ] || error "el lock no tiene fuentes"
 }
 
 extraer() { # <nombre-en-lock> → imprime el directorio extraído
@@ -141,7 +153,7 @@ EOF
   ninja -C "$d/build" install
 }
 
-instalar_nvcodec() { local d; d=$(extraer nv-codec-headers); make -C "$d" install PREFIX="$PREFIX"; }
+instalar_nvcodec() { NV=$(extraer nv-codec-headers); make -C "$NV" install PREFIX="$PREFIX"; }
 
 instalar_amf() {
   local d; d=$(extraer amf-headers)
@@ -152,12 +164,12 @@ instalar_amf() {
 construir_ffmpeg() {
   local d log conf
   d=$(extraer ffmpeg); log=$RAIZ/configure.log
-  comprobar_carga_dll "$d"
+  comprobar_carga_dll "$d" "$NV"
   opciones_configure
   (cd "$d" && PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" ./configure "${OPC[@]}" \
     --extra-cflags="-I$PREFIX/include $CFLAGS_COMUNES" --extra-ldflags="-L$PREFIX/lib $LDFLAGS_COMUNES" \
     --extra-version=seo-studio) >"$log" 2>&1 || { cat "$log" >&2; error "configure falló"; }
-  if grep -nE 'did not match anything|WARNING:' "$log" >&2; then error "configure avisó: no se acepta (I11)"; fi
+  comprobar_log_configure "$log"
   comprobar_config_h "$d"
   conf=$(sed -n 's/^#define FFMPEG_CONFIGURATION "\(.*\)"$/\1/p' "$d/config.h")
   echo "$conf" >"$RAIZ/configuracion.txt"
@@ -190,7 +202,7 @@ main() {
   umask 022
   [ -z "$(ls -A "$SALIDA")" ] || error "--salida debe estar vacía"
   rm -rf "$RAIZ"; mkdir -p "$RAIZ/src" "$PREFIX"
-  comprobar_fuentes
+  comprobar_fuentes "$AQUI/fuentes.lock" "$FUENTES"
   construir_zlib
   construir_dav1d
   instalar_nvcodec
@@ -202,6 +214,9 @@ main() {
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  if [ "${1:-}" = "--imprimir-configure" ]; then opciones_configure; echo "${OPC[*]}"; exit 0; fi
+  case "${1:-}" in
+    --imprimir-configure) opciones_configure; echo "${OPC[*]}"; exit 0 ;;
+    --comprobar-fuentes) comprobar_fuentes "${3:-$AQUI/fuentes.lock}" "$2"; echo "Fuentes conformes al lock."; exit 0 ;;
+  esac
   main "$@"
 fi

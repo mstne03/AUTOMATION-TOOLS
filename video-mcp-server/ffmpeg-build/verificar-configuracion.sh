@@ -17,11 +17,6 @@ mapfile -t opciones < <(grep -oE -- '--(enable|disable)-[a-z0-9_-]+(=[^[:space:]
 [[ " ${opciones[*]} " == *" --disable-everything "* ]] \
   || error "falta --disable-everything: el build habilitaría todos los componentes"
 
-declare -A listas=(
-  [protocol]="${FF_PROTOCOLS[*]}" [demuxer]="${FF_DEMUXERS[*]}" [muxer]="${FF_MUXERS[*]}"
-  [decoder]="${FF_DECODERS[*]}" [encoder]="${FF_ENCODERS[*]}" [parser]="${FF_PARSERS[*]}"
-  [bsf]="${FF_BSFS[*]}" [filter]="${FF_FILTERS[*]}" [indev]="${FF_INDEVS[*]}"
-)
 declare -A reales=()
 
 for o in "${opciones[@]}"; do
@@ -32,7 +27,7 @@ for o in "${opciones[@]}"; do
   esac
   if [[ "$o" == *=* ]]; then
     tipo=${o%%=*}; tipo=${tipo#--enable-}
-    if [ -z "${listas[$tipo]+x}" ]; then error "$o: tipo '$tipo' que componentes.conf no declara"; continue; fi
+    if [ -z "${FF_LISTAS[$tipo]+x}" ]; then error "$o: tipo '$tipo' que componentes.conf no declara"; continue; fi
     reales[$tipo]+=" ${o#*=}"
   elif [[ " ${FF_LISTA_BLANCA_ENABLE[*]} " != *" $o "* ]]; then
     error "$o: fuera de la lista blanca de componentes.conf"
@@ -42,9 +37,9 @@ done
 # Cada lista debe coincidir exactamente (como conjunto) con la declarada. Bash puro: en Git Bash
 # cada proceso cuesta y esto corre muchas veces en los tests.
 set -f
-for tipo in "${!listas[@]}"; do
+for tipo in "${FF_TIPOS[@]}"; do
   declare -A esp=() rea=()
-  for x in ${listas[$tipo]}; do esp[$x]=1; done
+  for x in ${FF_LISTAS[$tipo]}; do esp[$x]=1; done
   real=${reales[$tipo]:-}
   for x in ${real//,/ }; do rea[$x]=1; done
   sobran=""; faltan=""
