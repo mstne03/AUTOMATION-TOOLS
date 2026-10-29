@@ -2,7 +2,8 @@
 // `cifra`, la segunda con golpe) y saca dos variantes con los mismos tiempos:
 //   gsap/  la composición tal cual, recortada a esos hosts (referencia)
 //   waapi/ la misma, sin GSAP: index.html sin gsap.min.js y las piezas de spikes/waapi/piezas/
-// Uso: node spikes/waapi/montar.mjs <carpeta bin del ffmpeg LGPL>   (requiere `npm run build`)
+// Uso: node spikes/waapi/montar.mjs <carpeta bin del ffmpeg LGPL> [fondo]   (requiere `npm run build`)
+// La composición completa del pipeline (todas las piezas, con voz) queda en salidas/waapi/proyecto/video001/_composicion.
 // Salidas en spikes/salidas/waapi/ (ignorada por git). No llama a ElevenLabs.
 import fs from "node:fs";
 import path from "node:path";
@@ -27,10 +28,12 @@ const { ejecutar } = await dist("proceso.js");
 const ID = "video001";
 const DUR_VOZ = 12;
 const valores = [[1234.5, '"$"', '""', 1], [87, '""', '" %"', 0], [42, '""', '""', 0], [90000, '""', '" pts"', 0], [3.75, '"€"', '""', 2], [12, '""', '"x"', 0]];
+// Segundo argumento opcional: el fondo de las escenas (aurora, plasma… o gradiente). Lo usa el spike de Chromium.
+const FONDO = process.argv[3];
 const GUION = `---
 titulo: Spike WAAPI
 gancho: "Nobody saw this coming"
-golpe: thousand
+golpe: thousand${FONDO ? `\nfondo: ${FONDO}` : ""}
 escenas:
 ${valores.map(([v, pre, suf, dec], i) => `  ${i + 1}:
     tipo: cifra
