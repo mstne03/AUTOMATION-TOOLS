@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Descarga y verifica las fuentes de fuentes.lock (I9). Es la ÚNICA fase con red; corre dentro de
 # la imagen fijada (construir.sh) y la compilación va después en otro contenedor sin red.
-#   descargar-fuentes.sh --salida DIR [--lock F] [--claves DIR] [--directorio-origen DIR] [--arranque]
+#   descargar-fuentes.sh --salida DIR [--lock F] [--claves DIR] [--directorio-origen DIR]
+#   descargar-fuentes.sh --arranque [--lock F] [--claves DIR]   (solo Tarea 10)
 #   descargar-fuentes.sh --solo-validar [--lock F] [--claves DIR]
 # --directorio-origen: toma los ficheros y repos de DIR por nombre (tests, sin red).
-# --arranque: solo Tarea 10. Acepta PENDIENTE e imprime SHA-256/commits para revisarlos a mano.
-# --solo-validar: la fase 1 y nada más (sin red); la usan los tests y la puerta del workflow.
+# --arranque: acepta PENDIENTE e imprime SHA-256, commits y la huella que firma, para revisarlos a
+#   mano; si claves/<nombre>.asc ya existe, verifica también la firma con ella.
+# --solo-validar: solo la fase 1 (sin red); la usa tests/pendientes.test.sh.
 # Primero valida TODAS las filas (sin red); si alguna falla, no se descarga nada. Después, cada
 # fuente se verifica en un temporal y solo pasa a --salida si todo cuadra.
 set -euo pipefail
@@ -25,52 +27,78 @@ done
 [ -n "$SALIDA" ] || [ "$ARRANQUE" = 1 ] || [ "$SOLO_VALIDAR" = 1 ] || { echo "Falta --salida" >&2; exit 2; }
 error() { echo "ERROR: $*" >&2; exit 1; }
 export GIT_TERMINAL_PROMPT=0 LC_ALL=C
-
-host() { local h=${1#*://}; echo "${h%%/*}"; }
 hex() { [[ "$1" =~ ^[0-9a-f]{$2}$ ]]; }
-# Keyservers y el propio .asc no son canales de anclaje (R0 H1).
-KEYSERVERS=" keys.openpgp.org keyserver.ubuntu.com pgp.mit.edu keys.gnupg.net "
+
+# Autoridad de una URL https://, normalizada (minúsculas, sin punto final). Sin usuario (@) ni
+# puerto (:): con ellos «https://zlib.net@otro/» parecería zlib.net y no lo es.
+host() {
+  local a=${1#https://}; a=${a%%/*}
+  [[ -n "$a" && "$a" != *[@:]* ]] || return 1
+  a=${a,,}; echo "${a%.}"
+}
+# Independencia por OPERADOR, no por nombre de host: tabla cerrada. Un host fuera de ella no vale
+# como canal (tampoco los keyservers). Subdominios incluidos (downloads.videolan.org → videolan).
+declare -A OPERADORES=(
+  [ffmpeg.org]=ffmpeg [videolan.org]=videolan [zlib.net]=zlib-madler [madler.net]=zlib-madler
+  [github.com]=github [debian.org]=debian [archlinux.org]=arch
+)
+operador() { # <host> → operador, o falla si no está en la tabla
+  local d
+  for d in "${!OPERADORES[@]}"; do
+    if [ "$1" = "$d" ] || [[ "$1" == *."$d" ]]; then echo "${OPERADORES[$d]}"; return 0; fi
+  done
+  return 1
+}
+operador_url() { local h; h=$(host "$1") || return 1; operador "$h"; }
 
 validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
-  local e canal fpr h vistos=" " n=0
+  local e canal fpr op vistos=" " n=0 op_url op_firma
+  op_url=$(operador_url "$2") || error "$1: la URL de descarga no está en la tabla de operadores"
+  op_firma=$(operador_url "$3") || error "$1: la URL de la firma no está en la tabla de operadores"
   IFS=';' read -ra entradas <<<"$5"
   for e in "${entradas[@]}"; do
     canal=${e%=*}; fpr=${e##*=}
-    [ "$fpr" = "$4" ] || error "$1: el anclaje '$canal' confirma $fpr, no la huella $4"
+    [ "$fpr" = "$4" ] || error "$1: anclaje: '$canal' confirma $fpr, no la huella $4"
     case "$canal" in
-      debian:?*) h=snapshot.debian.org ;;
-      https://?*) h=$(host "$canal") ;;
-      *) error "$1: canal de anclaje no válido '$canal' (debian:<paquete> o https://…)" ;;
+      debian:?*) op=debian ;;
+      https://?*)
+        op=$(operador_url "$canal") || error "$1: anclaje: '$canal' no es de un operador conocido (ni keyserver ni host suelto)"
+        [ "$op" != arch ] || [[ "$canal" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$1: anclaje: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)" ;;
+      *) error "$1: anclaje: canal no válido '$canal' (debian:<paquete> o https://…)" ;;
     esac
-    [ "$canal" != "$3" ] || error "$1: el anclaje no puede ser la propia firma"
-    [[ "$KEYSERVERS" != *" $h "* ]] || error "$1: un keyserver no es canal de anclaje ($h)"
-    [ "$h" != "$(host "$2")" ] && [ "$h" != "$(host "$3")" ] || error "$1: anclaje en el host de descarga ($h)"
-    [[ "$vistos" != *" $h "* ]] || error "$1: dos canales de anclaje en el mismo host ($h)"
-    vistos+="$h "; n=$((n + 1))
+    [ "$op" != "$op_url" ] && [ "$op" != "$op_firma" ] || error "$1: anclaje en el operador de la descarga ($op)"
+    [[ "$vistos" != *" $op "* ]] || error "$1: anclaje: dos canales del mismo operador ($op)"
+    vistos+="$op "; n=$((n + 1))
   done
-  [ "$n" -ge 2 ] || error "$1: el anclaje necesita dos canales independientes del host de descarga ($n)"
+  [ "$n" -ge 2 ] || error "$1: anclaje: hacen falta dos canales independientes de la descarga ($n)"
 }
 
 validar_fila() { # campos de la fila
   local nombre=$1 version=$2 tipo=$3 url=$4 sha=$5 commit=$6 ruta=$7 firma=$8 huella=$9 anclaje=${10} canal2=${11}
   if [ "$ARRANQUE" = 0 ] && [[ "$*" == *PENDIENTE* ]]; then error "$nombre: celda PENDIENTE en fuentes.lock (Tarea 10)"; fi
-  [[ "$url" == https://* ]] || error "$nombre: la URL debe ser https:// ($url)"
-  [ "$firma" = - ] || [[ "$firma" == https://* ]] || error "$nombre: la firma debe ser https:// ($firma)"
-  [ "$canal2" = - ] || [[ "$canal2" == https://* || "$canal2" == PENDIENTE* ]] || error "$nombre: canal2 debe ser https://"
+  host "$url" >/dev/null && [[ "$url" == https://* ]] || error "$nombre: la URL debe ser https:// sin usuario ni puerto ($url)"
+  [ "$firma" = - ] || { host "$firma" >/dev/null && [[ "$firma" == https://* ]]; } || error "$nombre: firma no válida ($firma)"
   [ "$ARRANQUE" = 1 ] && return 0
   hex "$sha" 64 || error "$nombre: sha256 no válido"
   case "$tipo" in
-    tar) ;;
+    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un .sha256 de otro operador)" ;;
     git) hex "$commit" 40 || error "$nombre: commit de 40 hex obligatorio"
-         [ "$canal2" != - ] || error "$nombre: una fuente git (sin firma) necesita canal2" ;;
+         [[ "$canal2" == https://*.git ]] || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable" ;;
     *) error "$nombre: tipo '$tipo' desconocido" ;;
   esac
+  if [ "$canal2" != - ]; then
+    local op2 op
+    op2=$(operador_url "$canal2") || error "$nombre: canal2 no es de un operador conocido ($canal2)"
+    op=$(operador_url "$url") || error "$nombre: la URL no está en la tabla de operadores"
+    [ "$op2" != "$op" ] || error "$nombre: canal2 es del mismo operador que la descarga ($op)"
+  fi
   if [ "$firma" != - ]; then
     [[ "$huella" =~ ^[0-9A-F]{40}$ ]] || error "$nombre: huella de 40 hex en mayúsculas obligatoria"
     [ -f "$CLAVES/$nombre.asc" ] || error "$nombre: falta la clave $CLAVES/$nombre.asc"
     validar_anclaje "$nombre" "$url" "$firma" "$huella" "$anclaje"
-  elif [ "$tipo" = tar ] && [ "$canal2" = - ]; then
-    error "$nombre: tarball sin firma y sin canal2"
+    if [[ ";$anclaje" == *";debian:"* ]]; then
+      hex "${INRELEASE_SHA:-}" 64 || error "$nombre: el anclaje debian necesita la fila apt (InRelease) completa"
+    fi
   fi
 }
 
@@ -85,20 +113,72 @@ obtener() { # <url> <destino>
   fi
 }
 
-verificar_firma() { # <nombre> <fichero> <asc> <huella>
-  local gh estado primaria
+# Firma OpenPGP (R0 M4, R1 LOW-5): claves/<nombre>.asc con exactamente una clave primaria, que es la
+# de la huella fijada; gpg sale con 0; ni caducada ni revocada ni mala; VALIDSIG de esa primaria y
+# con SHA-256/384/512 (8, 9, 10). <huella> «-» solo en --arranque: imprime la que firma.
+verificar_firma() { # <nombre> <fichero> <asc> <huella o ->
+  local gh estado primaria algoritmo claves fallo=""
   gh=$(mktemp -d)
-  GNUPGHOME=$gh gpg --batch --quiet --import "$CLAVES/$1.asc" 2>/dev/null || error "$1: clave ilegible"
-  estado=$(GNUPGHOME=$gh gpg --batch --status-fd 1 --verify "$3" "$2" 2>/dev/null || true)
+  if ! GNUPGHOME=$gh gpg --batch --quiet --import "$CLAVES/$1.asc" 2>/dev/null; then fallo="clave ilegible"
+  else
+    claves=$(GNUPGHOME=$gh gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '/^pub/ {p = 1; next} p && /^fpr/ {print $10; p = 0}')
+    if [ -z "$claves" ] || [ "$(wc -l <<<"$claves")" -ne 1 ]; then fallo="claves/$1.asc debe tener exactamente una clave primaria"
+    elif [ "$4" != - ] && [ "$claves" != "$4" ]; then fallo="claves/$1.asc es $claves, no la huella fijada $4"
+    elif ! estado=$(GNUPGHOME=$gh gpg --batch --status-fd 1 --verify "$3" "$2" 2>/dev/null); then fallo="gpg rechaza la firma"
+    fi
+  fi
   GNUPGHOME=$gh gpgconf --kill all 2>/dev/null || true
   rm -rf "$gh"
+  [ -z "$fallo" ] || error "$1: $fallo"
+  # gpg sale con 0 aunque la clave esté caducada o revocada: esta línea es la que lo impide.
   if grep -qE '^\[GNUPG:\] (BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG) ' <<<"$estado"; then
     error "$1: firma no válida, caducada o de clave revocada"
   fi
-  # VALIDSIG: el último campo es la huella de la clave primaria.
   primaria=$(awk '$2 == "VALIDSIG" {print $NF}' <<<"$estado")
+  algoritmo=$(awk '$2 == "VALIDSIG" {print $10}' <<<"$estado")
   [ -n "$primaria" ] || error "$1: sin VALIDSIG"
-  [ "$primaria" = "$4" ] || error "$1: firmado por $primaria, no por la huella fijada $4"
+  [ "$primaria" = "$claves" ] || error "$1: firmado por $primaria, no por la clave de claves/ ($claves)"
+  [[ " 8 9 10 " == *" $algoritmo "* ]] || error "$1: firma con algoritmo de resumen $algoritmo (se exige SHA-256/384/512)"
+  echo "$primaria"
+}
+
+# Canal debian:<paquete> (R1 LOW-3): el signing-key.asc del paquete fuente de Debian en el mismo
+# snapshot, encadenado al InRelease anclado: InRelease (SHA-256 del lock) → Sources.xz (SHA-256
+# del InRelease) → .dsc y debian.tar.* (SHA-256 de Sources) → debian/upstream/signing-key.asc.
+verificar_anclaje_debian() { # <nombre> <paquete> <huella>
+  local d base fila dir sha nombre_f f deb="" dsc="" claves
+  d=$(mktemp -d -p "$TRABAJO")
+  base=${INRELEASE_URL%/dists/*}
+  obtener "$INRELEASE_URL" "$d/InRelease"
+  bash "$AQUI/comprobar-inrelease.sh" "$d/InRelease" "$LOCK" >/dev/null || error "$1: InRelease de Debian no anclado"
+  sha=$(awk '/^SHA256:/ {f = 1; next} /^[^ ]/ {f = 0} f && $3 == "main/source/Sources.xz" {print $1}' "$d/InRelease")
+  hex "$sha" 64 || error "$1: el InRelease no lista main/source/Sources.xz"
+  obtener "${INRELEASE_URL%/InRelease}/main/source/Sources.xz" "$d/Sources.xz"
+  [ "$(sha256sum <"$d/Sources.xz" | cut -d' ' -f1)" = "$sha" ] || error "$1: Sources.xz no coincide con el InRelease"
+  xz -dc "$d/Sources.xz" >"$d/Sources"
+  # Primera estrofa del paquete: «Directory sha nombre» por cada fichero de Checksums-Sha256.
+  awk -v p="$2" 'BEGIN {RS = ""; FS = "\n"}
+    !hecho { pkg = ""; for (i = 1; i <= NF; i++) if ($i ~ /^Package: /) pkg = substr($i, 10)
+      if (pkg != p) next
+      dir = ""; cs = 0; hecho = 1
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^Directory: /) dir = substr($i, 12)
+        if ($i ~ /^Checksums-Sha256:/) { cs = 1; continue }
+        if (cs && $i ~ /^ /) { split($i, a, " "); print dir, a[1], a[3] } else cs = 0 } }' "$d/Sources" >"$d/ficheros"
+  [ -s "$d/ficheros" ] || error "$1: el paquete fuente $2 no está en Sources"
+  while read -r dir sha nombre_f; do
+    case "$nombre_f" in *.dsc) dsc=$nombre_f ;; *.debian.tar.*) deb=$nombre_f ;; *) continue ;; esac
+    f="$d/$nombre_f"
+    obtener "$base/$dir/$nombre_f" "$f"
+    [ "$(sha256sum <"$f" | cut -d' ' -f1)" = "$sha" ] || error "$1: $nombre_f no coincide con Sources"
+  done <"$d/ficheros"
+  [ -n "$dsc" ] && [ -n "$deb" ] || error "$1: falta el .dsc o el debian.tar del paquete $2"
+  tar -xOf "$d/$deb" debian/upstream/signing-key.asc >"$d/clave.asc" 2>/dev/null || error "$1: $deb sin debian/upstream/signing-key.asc"
+  claves=$(GNUPGHOME=$d gpg --batch --quiet --import "$d/clave.asc" 2>/dev/null; GNUPGHOME=$d gpg --batch --with-colons --list-keys 2>/dev/null |
+    awk -F: '/^pub/ {p = 1; next} p && /^fpr/ {print $10; p = 0}')
+  GNUPGHOME=$d gpgconf --kill all 2>/dev/null || true
+  grep -qx "$3" <<<"$claves" || error "$1: anclaje: el signing-key.asc de Debian ($2) no contiene la huella $3"
+  echo "  anclaje debian:$2 verificado"
 }
 
 archivo_git() { # <url> <version> <commit-esperado o -> <ruta> <tar-salida> → imprime commit
@@ -120,6 +200,8 @@ archivo_git() { # <url> <version> <commit-esperado o -> <ruta> <tar-salida> → 
 }
 
 # --- 1. Validación de todas las filas, sin red ----------------------------------------------
+INRELEASE_URL=$(awk -F'\t' '$3 == "apt" {print $4}' "$LOCK")
+INRELEASE_SHA=$(awk -F'\t' '$3 == "apt" {print $5}' "$LOCK")
 filas=()
 while IFS= read -r linea; do
   [[ -z "$linea" || "$linea" == \#* ]] && continue
@@ -142,9 +224,26 @@ for linea in "${filas[@]}"; do
     obtener "$url" "$f"
     real=$(sha256sum "$f" | cut -d' ' -f1)
     [ "$firma" = - ] || obtener "$firma" "$f.asc"
-    if [ "$ARRANQUE" = 1 ]; then echo "$nombre	sha256=$real"; continue; fi
+    if [ "$ARRANQUE" = 1 ]; then
+      linea_arranque="$nombre	sha256=$real"
+      if [ "$firma" != - ] && [ -f "$CLAVES/$nombre.asc" ]; then
+        h=$huella; [[ "$h" =~ ^[0-9A-F]{40}$ ]] || h=-
+        linea_arranque+="	firma=OK huella=$(verificar_firma "$nombre" "$f" "$f.asc" "$h")"
+      fi
+      echo "$linea_arranque"; continue
+    fi
     [ "$real" = "$sha" ] || error "$nombre: SHA-256 $real ≠ fijado $sha"
-    [ "$firma" = - ] || verificar_firma "$nombre" "$f" "$f.asc" "$huella"
+    if [ "$firma" != - ]; then
+      verificar_firma "$nombre" "$f" "$f.asc" "$huella" >/dev/null
+      IFS=';' read -ra entradas <<<"$anclaje"
+      for e in "${entradas[@]}"; do
+        [[ "$e" != debian:* ]] || { e=${e#debian:}; verificar_anclaje_debian "$nombre" "${e%=*}" "$huella"; }
+      done
+    else
+      # Sin firma: el segundo canal (un .sha256 de otro operador) debe contener el mismo SHA-256.
+      obtener "$canal2" "$TRABAJO/canal2"
+      grep -qw "$sha" "$TRABAJO/canal2" || error "$nombre: canal2 no confirma el SHA-256"
+    fi
     mv "$f" "$TRABAJO/ok/"; [ "$firma" = - ] || mv "$f.asc" "$TRABAJO/ok/"
   else
     f="$TRABAJO/$nombre-$version.tar"
@@ -153,12 +252,10 @@ for linea in "${filas[@]}"; do
     real=$(sha256sum "$f" | cut -d' ' -f1)
     if [ "$ARRANQUE" = 1 ]; then echo "$nombre	commit=$c1	sha256=$real"; continue; fi
     [ "$real" = "$sha" ] || error "$nombre: SHA-256 del git archive $real ≠ fijado $sha"
-    # Segundo canal: si es otro repo git, debe dar el mismo commit y el mismo archive (L1).
-    if [[ "$canal2" == *.git ]]; then
-      archivo_git "$canal2" "$version" "$commit" "$ruta" "$f.2" >/dev/null
-      [ "$(sha256sum "$f.2" | cut -d' ' -f1)" = "$sha" ] || error "$nombre: el espejo $canal2 da otro contenido"
-      rm -f "$f.2"
-    fi
+    # Segundo canal: otro repositorio, de otro operador, con el mismo commit y archive (L1).
+    archivo_git "$canal2" "$version" "$commit" "$ruta" "$f.2" >/dev/null
+    [ "$(sha256sum "$f.2" | cut -d' ' -f1)" = "$sha" ] || error "$nombre: el espejo $canal2 da otro contenido"
+    rm -f "$f.2"
     mv "$f" "$TRABAJO/ok/"
   fi
   echo "verificado: $nombre $version"

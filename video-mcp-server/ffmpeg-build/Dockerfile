@@ -18,13 +18,13 @@ COPY fuentes.lock comprobar-inrelease.sh /opt/ffbuild/
 
 RUN rm -f /etc/apt/sources.list.d/* /etc/apt/sources.list \
  && echo 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/PENDIENTE-TAREA-10/ trixie main' >/etc/apt/sources.list \
- && apt-get update \
+ && apt-get update --error-on=any -o Acquire::http::AllowRedirect=false -o Acquire::https::AllowRedirect=false \
  && bash /opt/ffbuild/comprobar-inrelease.sh /var/lib/apt/lists/*_InRelease /opt/ffbuild/fuentes.lock \
  && apt-get install -y --no-install-recommends ca-certificates=PENDIENTE-TAREA-10 \
  && sed -i 's|http://snapshot.debian.org|https://snapshot.debian.org|' /etc/apt/sources.list \
  && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update \
+RUN apt-get update --error-on=any -o Acquire::http::AllowRedirect=false -o Acquire::https::AllowRedirect=false \
  && bash /opt/ffbuild/comprobar-inrelease.sh /var/lib/apt/lists/*_InRelease /opt/ffbuild/fuentes.lock \
  && apt-get install -y --no-install-recommends \
       gcc-mingw-w64-x86-64-posix=PENDIENTE-TAREA-10 \

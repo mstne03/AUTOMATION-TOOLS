@@ -7,16 +7,6 @@ T=$TMP_TEST
 R="$DIR_BUILD/recopilar-avisos.sh"; E="$DIR_BUILD/empaquetar-fuente.sh"
 
 # --- Fuentes de juguete con la misma forma que las verificadas ---------------------------------
-fila() { local IFS=$'\t'; echo "$*"; }
-{
-  fila ffmpeg 7.1.5 tar https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz - - - x - - -
-  fila dav1d 1.5.4 tar https://x.invalid/dav1d-1.5.4.tar.xz - - - x - - -
-  fila zlib 1.3.2 tar https://zlib.net/zlib-1.3.2.tar.xz - - - x - - -
-  fila nv-codec-headers n12.1.14.0 git https://x.invalid/nv.git - - - - - - -
-  fila amf-headers v1.4.36 git https://x.invalid/AMF.git - - amf/public/include - - - -
-  fila debian-inrelease trixie apt - - - - - - - -
-  fila source-date-epoch 1767225600 meta - - - - - - - -
-} >"$T/lock"
 mkdir -p "$T/arbol" "$T/fuentes"
 tarxz() { # tarxz <nombre-dir> <fichero-de-licencia>
   mkdir -p "$T/arbol/$1"; echo "Licencia de $1" >"$T/arbol/$1/$2"; echo "código" >"$T/arbol/$1/fuente.c"
@@ -28,6 +18,17 @@ printf '/*\n * MIT de NVIDIA\n */\nint x;\n' >"$T/arbol/nv/include/ffnvcodec/nvE
 printf '//\n// MIT de AMD\n//\n#pragma once\n' >"$T/arbol/amf/amf/public/include/core/Platform.h"
 tar -C "$T/arbol/nv" -cf "$T/fuentes/nv-codec-headers-n12.1.14.0.tar" include
 tar -C "$T/arbol/amf" -cf "$T/fuentes/amf-headers-v1.4.36.tar" amf
+sha() { sha256sum <"$T/fuentes/$1" | cut -d' ' -f1; }
+fila() { local IFS=$'\t'; echo "$*"; }
+{
+  fila ffmpeg 7.1.5 tar https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz "$(sha ffmpeg-7.1.5.tar.xz)" - - x - - -
+  fila dav1d 1.5.4 tar https://x.invalid/dav1d-1.5.4.tar.xz "$(sha dav1d-1.5.4.tar.xz)" - - x - - -
+  fila zlib 1.3.2 tar https://zlib.net/zlib-1.3.2.tar.xz "$(sha zlib-1.3.2.tar.xz)" - - x - - -
+  fila nv-codec-headers n12.1.14.0 git https://x.invalid/nv.git "$(sha nv-codec-headers-n12.1.14.0.tar)" - - - - - -
+  fila amf-headers v1.4.36 git https://x.invalid/AMF.git "$(sha amf-headers-v1.4.36.tar)" - amf/public/include - - - -
+  fila debian-inrelease trixie apt - - - - - - - -
+  fila source-date-epoch 1767225600 meta - - - - - - - -
+} >"$T/lock"
 
 mkdir -p "$T/build/avisos-toolchain"
 echo "--prefix=/tmp/ffbuild/prefix --disable-everything --enable-ffmpeg" >"$T/build/configuracion.txt"
@@ -74,6 +75,23 @@ if [ -s "$P1" ]; then
   done
   a=$(sha256sum <"$P1" | cut -d' ' -f1); b=$(sha256sum <"$T/paquete2/ffmpeg-fuente-correspondiente-7.1.5-abc.tar.xz" | cut -d' ' -f1)
   afirmar "dos ejecuciones dan el mismo SHA-256" test "$a" = "$b"
+
+  # Reconstrucción desde el tarball (R1 punto 1): la puerta corre en el árbol desempaquetado,
+  # sin el workflow (que no viaja); solo la detienen los marcadores, nunca un fichero ausente.
+  mkdir -p "$T/desempaquetado"; tar -xJf "$P1" -C "$T/desempaquetado"
+  U="$T/desempaquetado/ffmpeg-fuente-correspondiente-7.1.5-abc"
+  ejecutar bash "$U/ffmpeg-build/comprobar-pendientes.sh"
+  if ! grep -q 'falta' <<<"$SALIDA" && { [ "$CODIGO" -eq 0 ] || grep -q 'fuentes.lock' <<<"$SALIDA"; }; then
+    ok "comprobar-pendientes.sh corre desde el árbol desempaquetado"
+  else mal "comprobar-pendientes.sh en el tarball: $SALIDA"; fi
+  afirmar "LEEME-FUENTE remite a construir.sh --sin-descarga" grep -q 'construir.sh --sin-descarga --fuentes fuentes' "$U/LEEME-FUENTE.txt"
+  negar "LEEME-FUENTE no lleva órdenes docker propias" grep -q 'docker run' "$U/LEEME-FUENTE.txt"
 fi
+
+# Solo se empaqueta lo verificado (R1 LOW-8): una fuente alterada o un fichero ajeno → ≠ 0.
+cp -r "$T/fuentes" "$T/f-alterada"; echo x >>"$T/f-alterada/zlib-1.3.2.tar.xz"
+negar "fuente que no cuadra con el lock → ≠ 0" bash "$E" --lock "$T/lock" --rev r "$T/f-alterada" "$T/avisos" "$T/p3"
+cp -r "$T/fuentes" "$T/f-ajena"; echo x >"$T/f-ajena/extra.tar"
+negar "fichero ajeno al lock en las fuentes → ≠ 0" bash "$E" --lock "$T/lock" --rev r "$T/f-ajena" "$T/avisos" "$T/p4"
 
 fin

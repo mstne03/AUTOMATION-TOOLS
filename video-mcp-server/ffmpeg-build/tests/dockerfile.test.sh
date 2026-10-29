@@ -37,6 +37,11 @@ afirmar "el grueso de paquetes va por https://snapshot" grep -q 'https://snapsho
 updates=$(grep -o 'apt-get update' "$DF" | wc -l)
 comprobaciones=$(grep -o 'comprobar-inrelease.sh /var/lib/apt/lists' "$DF" | wc -l)
 afirmar "cada apt-get update va seguido de comprobar-inrelease.sh" test "$updates" -ge 1 -a "$updates" -eq "$comprobaciones"
+estrictos=$(grep -o 'apt-get update --error-on=any -o Acquire::http::AllowRedirect=false -o Acquire::https::AllowRedirect=false' "$DF" | wc -l)
+afirmar "cada apt-get update con --error-on=any y sin redirecciones (R1 LOW-9)" test "$estrictos" -eq "$updates"
+for p in 'trusted=yes' 'allow-insecure' '--allow-unauthenticated' 'AllowInsecureRepositories' 'AllowDowngradeToInsecureRepositories' '--force-yes' 'Verify-Peer' 'AllowUnauthenticated'; do
+  negar "apt sin '$p'" grep -qi -- "$p" "$TMP_TEST/instrucciones"
+done
 
 # Cada paquete con versión exacta: paquete=versión.
 # Se unen las líneas con «\», se parte cada RUN por «&&» y se toman los argumentos de cada

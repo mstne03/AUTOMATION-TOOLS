@@ -19,6 +19,15 @@ epoch=$(awk -F'\t' '$1 == "source-date-epoch" {print $2}' "$LOCK")
 [[ "$epoch" =~ ^[0-9]{9,11}$ ]] || { echo "ERROR: SOURCE_DATE_EPOCH no válido en fuentes.lock: '$epoch'" >&2; exit 1; }
 [ -d "$AVISOS/LICENSES" ] || { echo "ERROR: faltan los avisos (recopilar-avisos.sh)" >&2; exit 1; }
 
+# Se empaqueta exactamente lo verificado (R1 LOW-8): cada fuente con el SHA-256 del lock y ningún
+# fichero que no sea una fuente del lock o su firma .asc.
+bash "$AQUI/compilar.sh" --comprobar-fuentes "$FUENTES" "$LOCK" >/dev/null
+esperados=" $(awk -F'\t' '$3 == "tar" { n = split($4, u, "/"); print u[n]; if ($8 != "-") print u[n] ".asc" }
+  $3 == "git" { print $1 "-" $2 ".tar" }' "$LOCK" | tr '\n' ' ') "
+for f in "$FUENTES"/*; do
+  [[ "$esperados" == *" $(basename "$f") "* ]] || { echo "ERROR: fichero ajeno al lock en las fuentes: $(basename "$f")" >&2; exit 1; }
+done
+
 nombre=ffmpeg-fuente-correspondiente-$REV
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/$nombre"
@@ -26,6 +35,7 @@ cp -r "$FUENTES" "$T/$nombre/fuentes"
 cp -r "$AVISOS/LICENSES" "$T/$nombre/LICENSES"
 mkdir -p "$T/$nombre/ffmpeg-build"
 (cd "$AQUI" && tar --exclude=./tests/muestras -cf - .) | tar -xf - -C "$T/$nombre/ffmpeg-build"
+# Las órdenes de Docker (con su aislamiento) viven solo en construir.sh: aquí se remite a él.
 cat >"$T/$nombre/LEEME-FUENTE.txt" <<EOF
 Código fuente correspondiente de ffmpeg.exe/ffprobe.exe de SEO Studio ($REV).
 
@@ -34,13 +44,9 @@ ffmpeg-build/   cómo se construye: componentes.conf, fuentes.lock (SHA-256, com
                 claves/, Dockerfile y scripts; el árbol del repositorio (sin tests/muestras)
 LICENSES/       avisos de licencia de FFmpeg y de todo lo enlazado estáticamente
 
-Reconstruir con estas mismas fuentes (Docker; la compilación no usa la red y vuelve a comprobar
-el SHA-256 de cada fuente contra ffmpeg-build/fuentes.lock):
-  docker build -t ffbuild ffmpeg-build
-  mkdir salida
-  docker run --rm --network none --tmpfs /tmp:rw,exec,size=8g \\
-    -v "\$PWD/ffmpeg-build:/build/ffmpeg-build:ro" -v "\$PWD/fuentes:/build/fuentes:ro" \\
-    -v "\$PWD/salida:/build/out" ffbuild bash /build/ffmpeg-build/compilar.sh
+Reconstruir con estas mismas fuentes (Docker y bash; la compilación no usa la red y vuelve a
+comprobar el SHA-256 de cada fuente contra ffmpeg-build/fuentes.lock):
+  bash ffmpeg-build/construir.sh --sin-descarga --fuentes fuentes --salida <dir vacío>
 O descargándolas de nuevo y verificando firmas:
   bash ffmpeg-build/construir.sh --fuentes <dir vacío> --salida <dir vacío>
 EOF

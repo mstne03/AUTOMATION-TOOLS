@@ -1,119 +1,167 @@
 #!/usr/bin/env bash
-# descargar-fuentes.sh sin red: claves GPG desechables, tarballs falsos y repos git locales.
-# Casos del plan (a)–(g) y del R0 (h, anclaje, canal2).
+# descargar-fuentes.sh sin red: claves GPG desechables (también caducada, revocada y RSA con
+# SHA-224), tarballs falsos, material de Debian de juguete y repos git locales.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 temporal
 D="$DIR_BUILD/descargar-fuentes.sh"
 T=$TMP_TEST
-mkdir -p "$T/origen" "$T/claves-buena" "$T/claves-ambas" "$T/claves-otra"
+mkdir -p "$T/origen" "$T/deb"
 
-# --- Dos claves desechables: K1 (la buena) y K2 (otra) -------------------------------------
+# --- Claves desechables ------------------------------------------------------------------------
 export GNUPGHOME="$T/gnupg"; mkdir -p "$GNUPGHOME"
-gpg --batch --quiet --passphrase '' --quick-gen-key "Buena <b@ejemplo.invalid>" ed25519 sign never 2>/dev/null
-gpg --batch --quiet --passphrase '' --quick-gen-key "Otra <o@ejemplo.invalid>" ed25519 sign never 2>/dev/null
+gen() { gpg --batch --quiet --passphrase '' "${@:3}" --quick-gen-key "$1 <$2>" "${ALGO:-ed25519}" sign "${CADUCA:-never}" 2>/dev/null; }
 huella() { gpg --batch --with-colons --list-keys "$1" 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}'; }
-K1=$(huella b@ejemplo.invalid); K2=$(huella o@ejemplo.invalid)
-gpg --batch --armor --export "$K1" >"$T/claves-buena/paq.asc"
-gpg --batch --armor --export "$K2" >"$T/claves-otra/paq.asc"
-gpg --batch --armor --export "$K1" "$K2" >"$T/claves-ambas/paq.asc"
+gen Buena b@x.invalid; gen Otra o@x.invalid
+CADUCA=1d gen Caducada c@x.invalid --faked-system-time 20200101T000000
+gen Revocada r@x.invalid
+ALGO=rsa2048 gen Rsa s@x.invalid
+K1=$(huella b@x.invalid); K2=$(huella o@x.invalid); KC=$(huella c@x.invalid); KR=$(huella r@x.invalid); KS=$(huella s@x.invalid)
+claves() { mkdir -p "$T/claves-$1"; gpg --batch --armor --export "${@:2}" >"$T/claves-$1/paq.asc"; }
+claves k1 "$K1"; claves k2 "$K2"; claves ambas "$K1" "$K2"; claves kc "$KC"; claves ks "$KS"
 
-# --- Tarball falso firmado por K1, y una copia firmada por K2 ---------------------------------
-head -c 4096 /dev/urandom >"$T/origen/paq-1.0.tar.xz"
-SHA=$(sha256sum "$T/origen/paq-1.0.tar.xz" | cut -d' ' -f1)
-gpg --batch --yes --local-user "$K1" --armor --detach-sign -o "$T/origen/paq-1.0.tar.xz.asc" "$T/origen/paq-1.0.tar.xz"
-mkdir -p "$T/origen-k2"; cp "$T/origen/paq-1.0.tar.xz" "$T/origen-k2/"
-gpg --batch --yes --local-user "$K2" --armor --detach-sign -o "$T/origen-k2/paq-1.0.tar.xz.asc" "$T/origen/paq-1.0.tar.xz"
+# Tarball y firmas: buena (K1), de otra clave (K2), caducada (KC firmó en 2020, cuando valía),
+# revocada (KR), RSA con SHA-224 (KS) y una firma de K1 sobre OTRO contenido (BADSIG).
+head -c 4096 /dev/urandom >"$T/tarball"
+SHA=$(sha256sum <"$T/tarball" | cut -d' ' -f1)
+firmar() { # firmar <dir-origen> <clave> [opciones gpg…]
+  mkdir -p "$T/$1"; cp "$T/tarball" "$T/$1/paq-1.0.tar.xz"
+  gpg --batch --yes --local-user "$2" "${@:3}" --armor --detach-sign -o "$T/$1/paq-1.0.tar.xz.asc" "$T/tarball" 2>/dev/null
+}
+firmar origen "$K1"; firmar o-k2 "$K2"; firmar o-kc "$KC" --faked-system-time 20200101T000100
+firmar o-kr "$KR"; firmar o-ks "$KS" --digest-algo SHA224
+mkdir -p "$T/o-bad"; cp "$T/tarball" "$T/o-bad/paq-1.0.tar.xz"; echo otro >"$T/otro"
+gpg --batch --yes --local-user "$K1" --armor --detach-sign -o "$T/o-bad/paq-1.0.tar.xz.asc" "$T/otro" 2>/dev/null
+# Revocación: el certificado que gpg deja en openpgp-revocs.d (con el «:» de seguridad quitado).
+sed 's/^://' "$GNUPGHOME/openpgp-revocs.d/$KR.rev" | gpg --batch --quiet --import 2>/dev/null
+claves kr "$KR"
+
+# --- Material de Debian para el canal debian:paq (R1 LOW-3) ------------------------------------
+debian() { # debian <dir> <huella de la clave que va en signing-key.asc>
+  local d=$T/$1 sk; mkdir -p "$d/m/debian/upstream"
+  gpg --batch --armor --export "$2" >"$d/m/debian/upstream/signing-key.asc"
+  tar -C "$d/m" -cJf "$d/paq_1.0-1.debian.tar.xz" debian; echo "Source: paq" >"$d/paq_1.0-1.dsc"
+  sk() { echo " $(sha256sum <"$d/$1" | cut -d' ' -f1) $(wc -c <"$d/$1") $1"; }
+  printf 'Package: otro\nDirectory: pool/main/o/otro\n\nPackage: paq\nVersion: 1.0-1\nDirectory: pool/main/p/paq\nChecksums-Sha256:\n%s\n%s\n' \
+    "$(sk paq_1.0-1.dsc)" "$(sk paq_1.0-1.debian.tar.xz)" | xz -c >"$d/Sources.xz"
+  printf 'Origin: Debian\nSuite: trixie\nDate: Tue, 14 Oct 2026 20:12:34 UTC\nSHA256:\n%s\n' \
+    " $(sha256sum <"$d/Sources.xz" | cut -d' ' -f1) $(wc -c <"$d/Sources.xz") main/source/Sources.xz" >"$d/InRelease"
+  rm -rf "$d/m"
+}
+debian deb "$K1"; debian deb-k2 "$K2"; debian deb-kc "$KC"; debian deb-kr "$KR"; debian deb-ks "$KS"
 gpgconf --kill all 2>/dev/null || true
 unset GNUPGHOME
+INREL=$(sha256sum <"$T/deb/InRelease" | cut -d' ' -f1)
 
-URL=https://ejemplo.invalid/rel/paq-1.0.tar.xz
-ANC="debian:paq=$K1;https://otro.invalid/paq.html=$K1"
+URL=https://zlib.net/rel/paq-1.0.tar.xz
+ARCH=https://gitlab.archlinux.org/archlinux/packaging/packages/paq/-/raw/0123456789abcdef0123456789abcdef01234567/PKGBUILD
+anc() { echo "debian:paq=$1;$ARCH=$1"; }
 
-# --- Repo git local con dos commits y una etiqueta en el segundo; un espejo y un espejo falso -
-g() { git -C "$1" -c core.autocrlf=false -c user.name=t -c user.email=t@ejemplo.invalid -c commit.gpgsign=false -c tag.gpgsign=false "${@:2}"; }
-git init -q "$T/origen/repo.git"
-mkdir -p "$T/origen/repo.git/inc"; echo uno >"$T/origen/repo.git/inc/a.h"
-g "$T/origen/repo.git" add -A; g "$T/origen/repo.git" commit -qm uno
-C1=$(git -C "$T/origen/repo.git" rev-parse HEAD)
-echo dos >"$T/origen/repo.git/inc/a.h"; g "$T/origen/repo.git" commit -qam dos; g "$T/origen/repo.git" tag v2
-C2=$(git -C "$T/origen/repo.git" rev-parse HEAD)
-GSHA=$(git -C "$T/origen/repo.git" -c core.autocrlf=false archive --format=tar "$C2" inc | sha256sum | cut -d' ' -f1)
-git clone -q "$T/origen/repo.git" "$T/origen/espejo.git"
-git clone -q "$T/origen/repo.git" "$T/origen/espejo-falso.git"
-g "$T/origen/espejo-falso.git" tag -f v2 "$C1" >/dev/null
-GURL=https://ejemplo.invalid/org/repo.git
+# --- Repo git local, espejo y espejo falso -------------------------------------------------------
+g() { git -C "$1" -c core.autocrlf=false -c user.name=t -c user.email=t@x.invalid -c commit.gpgsign=false -c tag.gpgsign=false "${@:2}"; }
+mkdir -p "$T/repos"; git init -q "$T/repos/repo.git"
+mkdir -p "$T/repos/repo.git/inc"; echo uno >"$T/repos/repo.git/inc/a.h"
+g "$T/repos/repo.git" add -A; g "$T/repos/repo.git" commit -qm uno
+C1=$(git -C "$T/repos/repo.git" rev-parse HEAD)
+echo dos >"$T/repos/repo.git/inc/a.h"; g "$T/repos/repo.git" commit -qam dos; g "$T/repos/repo.git" tag v2
+C2=$(git -C "$T/repos/repo.git" rev-parse HEAD)
+GSHA=$(git -C "$T/repos/repo.git" -c core.autocrlf=false archive --format=tar "$C2" inc | sha256sum | cut -d' ' -f1)
+git clone -q "$T/repos/repo.git" "$T/repos/espejo.git"
+git clone -q "$T/repos/repo.git" "$T/repos/espejo-falso.git"
+g "$T/repos/espejo-falso.git" tag -f v2 "$C1" >/dev/null
+GURL=https://github.com/org/repo.git
+ESPEJO=https://code.videolan.org/x/espejo.git
 
-# --- Ayudas ---------------------------------------------------------------------------------
+# --- Ayudas ----------------------------------------------------------------------------------
 fila() { local IFS=$'\t'; echo "$*"; }
-lock() { { echo "# nombre	version	tipo	url	sha256	commit	ruta	firma_url	huella	anclaje	canal2"; for f in "$@"; do echo "$f"; done; } >"$T/fuentes.lock"; }
-correr() { # correr <claves> <origen> [args…] → CODIGO/SALIDA; salida limpia en $T/salida
-  rm -rf "$T/salida"
-  ejecutar bash "$D" --lock "$T/fuentes.lock" --claves "$1" --directorio-origen "$2" --salida "$T/salida" "${@:3}"
+APT=$(fila debian-inrelease trixie apt https://snapshot.debian.org/archive/debian/20261015T000000Z/dists/trixie/InRelease "$INREL" - - - - - -)
+lock() { local s; s=$(sha256sum <"$T/${DEBL:-deb}/InRelease" | cut -d" " -f1); { echo "# lock de prueba"; echo "${APT/$INREL/$s}"; for f in "$@"; do echo "$f"; done; } >"$T/fuentes.lock"; }
+correr() { # correr <claves> <origen> [<debian>] [args…] → CODIGO/SALIDA; salida limpia en $T/salida
+  local o="$T/run-origen"; rm -rf "$T/salida" "$o"; mkdir -p "$o"
+  cp -r "$T/$2/." "$o/"; cp "$T/${3:-deb}/"* "$o/"
+  if grep -q "	git	" "$T/fuentes.lock"; then cp -r "$T/repos/." "$o/"; fi
+  ejecutar bash "$D" --lock "$T/fuentes.lock" --claves "$T/claves-$1" --directorio-origen "$o" --salida "$T/salida" "${@:4}"
 }
 debe_ir() { if [ "$CODIGO" -eq 0 ]; then ok "$1"; else mal "$1: $SALIDA"; fi; }
 debe_fallar() { # debe_fallar <desc> [<texto esperado>]
   if [ "$CODIGO" -ne 0 ] && { [ -z "${2:-}" ] || grep -qi -- "$2" <<<"$SALIDA"; }; then ok "$1"; else mal "$1 (código $CODIGO): $SALIDA"; fi
   if [ -n "$(ls -A "$T/salida" 2>/dev/null)" ]; then mal "$1: dejó ficheros en --salida"; fi
 }
-BUENA=$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K1" "$ANC" -)
-GIT_OK=$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://espejo.invalid/x/espejo.git)
+tarfila() { fila paq 1.0 tar "${URL2:-$URL}" "$SHA" - - "${URL2:-$URL}.asc" "$1" "${2:-$(anc "$1")}" -; }
+GIT_OK=$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - "$ESPEJO")
 
-# (a) Todo correcto → 0, y el tarball, su firma y el git archive acaban en --salida.
-lock "$BUENA" "$GIT_OK"; correr "$T/claves-buena" "$T/origen"
-debe_ir "(a) tarball firmado + git fijado → 0"
+# (a) Todo correcto → 0, con el canal debian verificado de verdad.
+lock "$(tarfila "$K1")" "$GIT_OK"; correr k1 origen
+debe_ir "(a) tarball firmado + anclaje debian + git fijado → 0"
+afirmar "(a) el anclaje debian se verificó" grep -q 'anclaje debian:paq verificado' <<<"$SALIDA"
 afirmar "(a) tarball y .asc en --salida" test -f "$T/salida/paq-1.0.tar.xz" -a -f "$T/salida/paq-1.0.tar.xz.asc"
 afirmar "(a) git archive en --salida con el SHA-256 fijado" bash -c "echo '$GSHA  $T/salida/cab-v2.tar' | sha256sum -c -"
 
 # (b) Tarball alterado → ≠ 0 y no queda en --salida.
-cp -r "$T/origen" "$T/origen-b"; printf x >>"$T/origen-b/paq-1.0.tar.xz"
-lock "$BUENA"; correr "$T/claves-buena" "$T/origen-b"; debe_fallar "(b) tarball alterado → ≠ 0" sha-256
+mkdir -p "$T/o-b"; cp "$T/origen/paq-1.0.tar.xz.asc" "$T/o-b/"; { cat "$T/tarball"; printf x; } >"$T/o-b/paq-1.0.tar.xz"
+lock "$(tarfila "$K1")"; correr k1 o-b; debe_fallar "(b) tarball alterado → ≠ 0" sha-256
 
-# (c) Firma válida de otra clave (K2) cuando la huella fijada es K1 → ≠ 0.
-lock "$BUENA"; correr "$T/claves-ambas" "$T/origen-k2"; debe_fallar "(c) firma de otra clave → ≠ 0" huella
+# (c) Firmas y claves: otra clave, dos claves en el fichero, clave que no es la huella fijada.
+lock "$(tarfila "$K1")"; correr k1 o-k2; debe_fallar "(c) firma de otra clave → ≠ 0 (gpg sale ≠ 0)" "rechaza la firma"
+lock "$(tarfila "$K1")"; correr ambas origen; debe_fallar "claves/paq.asc con dos claves primarias → ≠ 0" "exactamente una"
+lock "$(tarfila "$K1")"; correr k2 o-k2; debe_fallar "claves/paq.asc que no es la huella fijada → ≠ 0" "no la huella fijada"
+
+# R1 MEDIUM-2: caducada, revocada (gpg sale con 0 en ambas) y BADSIG; LOW-5: SHA-224.
+DEBL=deb-kc lock "$(tarfila "$KC")"; correr kc o-kc deb-kc; debe_fallar "clave caducada (EXPKEYSIG) → ≠ 0" "caducada"
+DEBL=deb-kr lock "$(tarfila "$KR")"; correr kr o-kr deb-kr; debe_fallar "clave revocada (REVKEYSIG) → ≠ 0" "revocada"
+lock "$(tarfila "$K1")"; correr k1 o-bad; debe_fallar "BADSIG: el .asc firma otro contenido → ≠ 0"
+DEBL=deb-ks lock "$(tarfila "$KS")"; correr ks o-ks deb-ks; debe_fallar "firma con SHA-224 → ≠ 0" "resumen"
 
 # (d) La fila exige firma y no hay .asc → ≠ 0.
-mkdir -p "$T/origen-d"; cp "$T/origen/paq-1.0.tar.xz" "$T/origen-d/"
-lock "$BUENA"; correr "$T/claves-buena" "$T/origen-d"; debe_fallar "(d) sin firma donde se exige → ≠ 0"
+mkdir -p "$T/o-d"; cp "$T/tarball" "$T/o-d/paq-1.0.tar.xz"
+lock "$(tarfila "$K1")"; correr k1 o-d; debe_fallar "(d) sin firma donde se exige → ≠ 0"
 
-# (e) Una celda PENDIENTE → ≠ 0 antes de descargar nada.
-lock "$(fila paq 1.0 tar "$URL" PENDIENTE-TAREA-10 - - "$URL.asc" "$K1" "$ANC" -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "(e) PENDIENTE-TAREA-10 → ≠ 0" PENDIENTE
+# (e) PENDIENTE → ≠ 0 antes de descargar nada; (f) http:// → ≠ 0.
+lock "$(fila paq 1.0 tar "$URL" PENDIENTE-TAREA-10 - - "$URL.asc" "$K1" "$(anc "$K1")" -)"
+correr k1 origen; debe_fallar "(e) PENDIENTE-TAREA-10 → ≠ 0" PENDIENTE
+lock "$(URL2=http://zlib.net/rel/paq-1.0.tar.xz tarfila "$K1")"
+correr k1 origen; debe_fallar "(f) URL http:// → ≠ 0" https
 
-# (f) URL http:// → ≠ 0.
-lock "$(fila paq 1.0 tar "http://ejemplo.invalid/rel/paq-1.0.tar.xz" "$SHA" - - "$URL.asc" "$K1" "$ANC" -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "(f) URL http:// → ≠ 0" https
+# Autoridad de la URL (R1 LOW-2): usuario, puerto y mayúsculas/punto final no engañan.
+lock "$(URL2=https://zlib.net@x.invalid/paq-1.0.tar.xz tarfila "$K1")"; correr k1 origen; debe_fallar "URL con usuario (@) → ≠ 0" usuario
+lock "$(URL2=https://zlib.net:8443/paq-1.0.tar.xz tarfila "$K1")"; correr k1 origen; debe_fallar "URL con puerto → ≠ 0" puerto
+lock "$(tarfila "$K1" "debian:paq=$K1;https://ZLIB.net./claves.html=$K1")"; correr k1 origen; debe_fallar "anclaje en ZLIB.net. (mismo host normalizado) → ≠ 0" operador
 
-# (g) git: la etiqueta apunta a otro commit que el fijado → ≠ 0.
-lock "$(fila cab v2 git "$GURL" "$GSHA" "$C1" inc - - - https://espejo.invalid/x/espejo.git)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "(g) commit distinto del de la etiqueta → ≠ 0" commit
+# (g) git: la etiqueta apunta a otro commit; espejo falso; canal2 no comparable o del mismo operador.
+lock "$(fila cab v2 git "$GURL" "$GSHA" "$C1" inc - - - "$ESPEJO")"; correr k1 origen; debe_fallar "(g) commit distinto del de la etiqueta → ≠ 0" commit
+lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://code.videolan.org/x/espejo-falso.git)"; correr k1 origen; debe_fallar "espejo con otra etiqueta → ≠ 0" commit
+lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://code.videolan.org/x/pagina.html)"; correr k1 origen; debe_fallar "canal2 que no es un repo .git → ≠ 0" canal2
+lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://github.com/otro/espejo.git)"; correr k1 origen; debe_fallar "canal2 del mismo operador (github) → ≠ 0" operador
 
-# (h) Firma válida de K2, huella K2, pero el anclaje confirma K1 → ≠ 0 (R0 H1).
-lock "$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K2" "$ANC" -)"
-correr "$T/claves-otra" "$T/origen-k2"; debe_fallar "(h) huella que el anclaje no confirma → ≠ 0" anclaje
+# (h) y anclaje (R0 H1, R1 LOW-2/LOW-3).
+lock "$(tarfila "$K2" "$(anc "$K1")")"; correr k2 o-k2 deb-k2; debe_fallar "(h) huella que el anclaje no confirma → ≠ 0" anclaje
+lock "$(tarfila "$K1" "debian:paq=$K1")"; correr k1 origen; debe_fallar "anclaje con un solo canal → ≠ 0" anclaje
+lock "$(tarfila "$K1" "debian:paq=$K1;https://keys.openpgp.org/x=$K1")"; correr k1 origen; debe_fallar "anclaje en un keyserver → ≠ 0" anclaje
+lock "$(tarfila "$K1" "debian:paq=$K1;https://madler.net/pgp.html=$K1")"; correr k1 origen; debe_fallar "madler.net y zlib.net son el mismo operador → ≠ 0" operador
+lock "$(tarfila "$K1" "debian:paq=$K1;https://gitlab.archlinux.org/archlinux/packaging/packages/paq/-/raw/main/PKGBUILD=$K1")"
+correr k1 origen; debe_fallar "PKGBUILD de Arch sin commit fijado → ≠ 0" commit
+DEBL=deb-k2 lock "$(tarfila "$K1")"; correr k1 origen deb-k2; debe_fallar "el signing-key.asc de Debian es de otra clave → ≠ 0" signing-key
+mkdir -p "$T/deb-mal"; cp "$T/deb/"* "$T/deb-mal/"; echo "Source: otra cosa" >"$T/deb-mal/paq_1.0-1.dsc"
+lock "$(tarfila "$K1")"; correr k1 origen deb-mal; debe_fallar ".dsc que no coincide con Sources → ≠ 0" Sources
+{ echo "# lock"; echo "${APT/$INREL/PENDIENTE-TAREA-10}"; tarfila "$K1"; } >"$T/fuentes.lock"
+correr k1 origen; debe_fallar "anclaje debian sin InRelease anclado → ≠ 0"
 
-# Anclaje: un solo canal, un keyserver o el host de descarga no cuentan (R0 H1).
-lock "$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K1" "debian:paq=$K1" -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "anclaje con un solo canal → ≠ 0" anclaje
-lock "$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K1" "debian:paq=$K1;https://keys.openpgp.org/x=$K1" -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "anclaje en un keyserver → ≠ 0" anclaje
-lock "$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K1" "debian:paq=$K1;https://ejemplo.invalid/claves.html=$K1" -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "anclaje en el host de descarga → ≠ 0" anclaje
-
-# Sin firma: hace falta un segundo canal (L1). git: el espejo debe dar el mismo commit.
-lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - -)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "git sin canal2 → ≠ 0" canal2
-lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://espejo.invalid/x/espejo-falso.git)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "espejo con otra etiqueta → ≠ 0" commit
+# Tarball sin firma: canal2 (un .sha256 de otro operador) debe confirmar el SHA-256 (R1 M-6).
+mkdir -p "$T/o-sf"; cp "$T/tarball" "$T/o-sf/paq-1.0.tar.xz"; echo "$SHA  paq-1.0.tar.xz" >"$T/o-sf/paq.sha256"
+lock "$(fila paq 1.0 tar "$URL" "$SHA" - - - - - https://github.com/x/paq.sha256)"; correr k1 o-sf; debe_ir "tar sin firma con canal2 que confirma el SHA → 0"
+echo "0000  paq-1.0.tar.xz" >"$T/o-sf/paq.sha256"
+correr k1 o-sf; debe_fallar "tar sin firma con canal2 que no lo confirma → ≠ 0" canal2
 
 # La puerta va antes de la red: con una fila mala no se descarga ni la buena.
-lock "$BUENA" "$(fila cab v2 git "$GURL" PENDIENTE-TAREA-10 "$C2" inc - - - https://espejo.invalid/x/espejo.git)"
-correr "$T/claves-buena" "$T/origen"; debe_fallar "una fila PENDIENTE detiene todas las descargas" PENDIENTE
+lock "$(tarfila "$K1")" "$(fila cab v2 git "$GURL" PENDIENTE-TAREA-10 "$C2" inc - - - "$ESPEJO")"
+correr k1 origen; debe_fallar "una fila PENDIENTE detiene todas las descargas" PENDIENTE
 
-# --arranque (Tarea 10): acepta PENDIENTE, calcula el SHA-256 y no escribe en --salida.
+# --arranque (Tarea 10): acepta PENDIENTE y no escribe en --salida; con la clave presente
+# verifica también la firma e imprime la huella que firma (R1 LOW-4).
 lock "$(fila paq 1.0 tar "$URL" PENDIENTE-TAREA-10 - - "$URL.asc" PENDIENTE-TAREA-10 PENDIENTE-TAREA-10 -)"
-correr "$T/claves-buena" "$T/origen" --arranque
-if [ "$CODIGO" -eq 0 ] && grep -q "$SHA" <<<"$SALIDA"; then ok "--arranque imprime el SHA-256"; else mal "--arranque: $SALIDA"; fi
+correr k1 origen deb --arranque
+if [ "$CODIGO" -eq 0 ] && grep -q "$SHA" <<<"$SALIDA" && grep -q "huella=$K1" <<<"$SALIDA"; then ok "--arranque imprime SHA-256 y huella verificada"; else mal "--arranque: $SALIDA"; fi
 afirmar "--arranque no escribe en --salida" test ! -e "$T/salida"
+correr k1 o-bad deb --arranque; debe_fallar "--arranque con una firma mala → ≠ 0"
 
 fin
