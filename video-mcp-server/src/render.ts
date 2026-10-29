@@ -8,7 +8,7 @@ import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
-import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio } from "./proceso.js";
+import { ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 
@@ -16,13 +16,130 @@ export { HYPERFRAMES_BIN };
 
 export const TIMEOUT_CHECK_MS = 600_000;
 const MAX_SETTIMEOUT_MS = 2_147_483_647;
-export const TIMEOUT_RENDER_MS = 3_600_000;
 
-/** Timeout del render; VIDEO_TIMEOUT_RENDER_S (segundos) lo sustituye, pensado para tests. */
-export function timeoutRenderMs(): number {
-  const s = Number(process.env.VIDEO_TIMEOUT_RENDER_S);
-  // setTimeout dispara al instante por encima de 2^31-1 ms: se recorta a ese máximo.
-  return Number.isFinite(s) && s > 0 ? Math.min(s * 1000, MAX_SETTIMEOUT_MS) : TIMEOUT_RENDER_MS;
+/**
+ * Timeout de cada ejecución de la CLI (y de la segunda pasada): 5 min + 40 s por segundo de vídeo
+ * (50 s → 38 min; el spike midió 8,6–13,8 min). VIDEO_TIMEOUT_RENDER_S lo sustituye solo fuera del
+ * integrado (pruebas). setTimeout dispara al instante por encima de 2^31-1 ms: se recorta a ese máximo.
+ */
+export function timeoutPasadaMs(duracionS: number, env: NodeJS.ProcessEnv = process.env): number {
+  const s = Number(env.VIDEO_TIMEOUT_RENDER_S);
+  const ms = !esIntegrado(env) && Number.isFinite(s) && s > 0 ? s * 1000 : 300_000 + duracionS * 40_000;
+  return Math.min(ms, MAX_SETTIMEOUT_MS);
+}
+
+/** Error de tiempo máximo: no dispara la reserva Rápido→Compatible (repetirlo costaría otra media hora). */
+export class ErrorTiempo extends Error {}
+
+// ---------- Codificadores (D11) ----------
+
+/** Modo de Automático: Compatible (codificador predecible) hasta que un parche fije el de Rápido. */
+export const MODO_AUTOMATICO: "rapido" | "compatible" = "compatible";
+
+/** Argumentos provisionales de la segunda pasada (INFORME-codificacion.md); pendientes de medir con fotos reales. */
+export const ARGS_CODIFICADOR: Record<CodificadorH264, string[]> = {
+  h264_nvenc: ["-preset", "p5", "-rc", "vbr", "-b:v", "12M", "-maxrate", "16M", "-profile:v", "high"],
+  h264_qsv: ["-preset", "medium", "-b:v", "12M", "-maxrate", "16M"],
+  h264_amf: ["-rc", "vbr_peak", "-b:v", "12M", "-maxrate", "16M"],
+  h264_mf: ["-b:v", "12M"],
+};
+
+export const FABRICANTE: Record<CodificadorH264, string> = {
+  h264_nvenc: "NVIDIA",
+  h264_qsv: "Intel",
+  h264_amf: "AMD",
+  h264_mf: "Media Foundation (Windows)",
+};
+
+/** Si el ffmpeg los trae, no es el LGPL del bundle (I4, I11). */
+const PROHIBIDOS = ["libx264", "libx265", "libopenh264"];
+
+/**
+ * Lee `ffmpeg -encoders`: qué codificadores admitidos trae y cuáles prohibidos. Integrado, uno
+ * prohibido es error (alguien cambió el ffmpeg); en desarrollo, aviso.
+ */
+export function revisarEncoders(listado: string, integrado: boolean): { presentes: CodificadorH264[]; prohibidos: string[] } {
+  const tiene = (c: string) => new RegExp(`^\\s*\\S+\\s+${c}\\s`, "m").test(listado);
+  const presentes = CODIFICADORES.filter(tiene);
+  const prohibidos = PROHIBIDOS.filter(tiene);
+  if (prohibidos.length) {
+    const texto = `El ffmpeg del motor no es el LGPL del bundle (trae ${prohibidos.join(", ")}).`;
+    if (integrado) throw new ErrorVideo(`${texto} Reinstala SEO Studio.`);
+    log.warn(`${texto} En desarrollo se tolera; el MP4 nunca sale con ellos.`);
+  }
+  return { presentes, prohibidos };
+}
+
+let sondeo: Promise<CodificadorH264[]> | undefined;
+
+/**
+ * Codificadores H.264 que funcionan en esta máquina, en orden nvenc, qsv, amf, mf: cada uno codifica
+ * un fotograma, en serie (en paralelo se pisan, que es lo que rompe la sonda de HyperFrames). Caché
+ * en memoria del proceso: los drivers pueden cambiar entre arranques.
+ */
+export function sondearCodificadores(h: Herramientas): Promise<CodificadorH264[]> {
+  sondeo ??= (async () => {
+    const r = await ejecutar(h.ffmpeg, ["-hide_banner", "-encoders"], { timeoutMs: 30_000 });
+    if (r.code !== 0) throw new Error(`ffmpeg -encoders falló: ${r.stderr.trim().slice(0, 300)}`);
+    const { presentes } = revisarEncoders(r.stdout, esIntegrado());
+    const funcionan: CodificadorH264[] = [];
+    for (const c of presentes) {
+      const p = await ejecutar(
+        h.ffmpeg,
+        ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=size=1080x1920:rate=30:duration=1", "-frames:v", "1", "-c:v", c, "-f", "null", "-"],
+        { timeoutMs: 30_000 },
+      );
+      if (p.code === 0) funcionan.push(c);
+      else log.info(`Sondeo: ${c} no funciona en esta máquina (${p.timeout ? "timeout" : `código ${p.code}`}).`);
+    }
+    log.info(`Sondeo de codificadores: ${funcionan.join(", ") || "ninguno"}.`);
+    return funcionan;
+  })();
+  // Un fallo no se cachea: el siguiente render lo reintenta.
+  sondeo.catch(() => (sondeo = undefined));
+  return sondeo;
+}
+
+/** Inyectable para los tests (simular una GPU en una máquina sin ella). */
+export const dependencias = { sondear: sondearCodificadores };
+
+/** Codificadores de GPU disponibles en orden y h264_mf siempre al final: es la última reserva y su fallo se verá. */
+export function ordenSegundaPasada(disponibles: CodificadorH264[]): CodificadorH264[] {
+  return [...CODIFICADORES.filter((c) => c !== "h264_mf" && disponibles.includes(c)), "h264_mf"];
+}
+
+export function elegirModo(pedido: "auto" | "rapido" | "compatible", disponibles: CodificadorH264[]): "rapido" | "compatible" {
+  const quiere = pedido === "auto" ? MODO_AUTOMATICO : pedido;
+  return quiere === "rapido" && disponibles.some((c) => c !== "h264_mf") ? "rapido" : "compatible";
+}
+
+const MiB = 1024 * 1024;
+
+/** ProRes 4444 ocupa ~16 MB/s; si no cabe, webm (D11, I15.4); si ni eso, error antes de renderizar. */
+export function elegirIntermedio(libresBytes: number, duracionS: number): "mov" | "webm" {
+  const necesarioMov = Math.ceil(duracionS) * 16 * MiB * 1.25 + 512 * MiB;
+  if (libresBytes >= necesarioMov) return "mov";
+  if (libresBytes >= 512 * MiB) return "webm";
+  throw new ErrorVideo(
+    `No hay espacio para renderizar: hacen falta al menos 512 MB libres (${Math.ceil(necesarioMov / MiB)} MB para la calidad máxima) y hay ${Math.floor(libresBytes / MiB)} MB.`,
+  );
+}
+
+/** Segunda pasada con el ffmpeg del bundle: solo ficheros locales y el demuxer del intermedio explícito. */
+export function segundaPasada(h: Herramientas, intermedio: string, formato: "mov" | "webm", salida: string, cod: CodificadorH264, timeoutMs: number): Promise<Resultado> {
+  return ejecutar(
+    h.ffmpeg,
+    [
+      "-y", "-v", "error", "-protocol_whitelist", "file", "-f", formato === "mov" ? "mov" : "matroska", "-i", intermedio,
+      "-c:v", cod, ...ARGS_CODIFICADOR[cod], "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", salida,
+    ],
+    { timeoutMs },
+  );
+}
+
+/** ¿Un fallo de Rápido justifica repetir en Compatible? No si es del navegador, de disco o de tiempo. */
+export function disparaReserva(e: unknown): boolean {
+  return !(e instanceof ErrorNavegador || e instanceof ErrorVideo || e instanceof ErrorTiempo);
 }
 
 // ---------- Verificación del MP4 (I11) ----------
@@ -91,6 +208,15 @@ export interface Job {
   error?: string;
   avisos: string[];
   lineas: string[];
+  /** Modo con el que salió el MP4 (D11). */
+  modo?: "rapido" | "compatible";
+  /** Codificador H.264 del MP4 final (h264_nvenc, h264_qsv, h264_amf o h264_mf). */
+  codificador?: string;
+  /** Fabricante del codificador: el adaptador que codificó. */
+  adaptador?: string;
+  intermedio?: "mov" | "webm";
+  /** Qué falló y a qué se recurrió, si hubo reserva (I11: nunca en silencio). */
+  reserva?: string;
 }
 
 export interface Preparado {
@@ -113,6 +239,8 @@ export interface OpcionesRender {
   ffmpegDir?: string;
   browserPath?: string;
   tema?: Tema;
+  /** D11; por defecto "auto" (= MODO_AUTOMATICO). Exponerlo en la tool es de la oleada 2. */
+  modo?: "auto" | "rapido" | "compatible";
 }
 
 /** Valida todo antes de crear el job. Lanza ErrorVideo con un mensaje accionable si falta algo. */
@@ -338,12 +466,12 @@ export interface ResultadoCheck {
 }
 
 /** `hyperframes check --json`: los errores paran el render; los avisos se agrupan por regla. */
-export async function comprobarComposicion(dir: string, env: NodeJS.ProcessEnv, gpu: boolean, alLinea?: (l: string) => void): Promise<ResultadoCheck> {
+export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: (l: string) => void): Promise<ResultadoCheck> {
   const args = [HYPERFRAMES_BIN, "check", dir, "--json", "--no-contrast"];
   if (gpu) args.push("--browser-gpu");
-  // CI=1: sin esto `check` deja un proceso "caliente" 5 minutos con la carpeta abierta, y en Windows eso
-  // impide regenerar _composicion\ en el siguiente render. El cwd va fuera de la composición por lo mismo.
-  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env: { ...env, CI: "1" }, timeoutMs: TIMEOUT_CHECK_MS });
+  // `ejecutar` fija CI=1 (sin él `check` deja un proceso "caliente" 5 minutos con la carpeta abierta) y
+  // el cwd en hf-home, fuera de la composición.
+  const r = await ejecutar(process.execPath, args, { timeoutMs: TIMEOUT_CHECK_MS });
   if (r.timeout) {
     return { errores: [`La CLI de HyperFrames superó el tiempo máximo de comprobación (${duracionLegible(TIMEOUT_CHECK_MS)}).`], avisos: [] };
   }
@@ -379,48 +507,119 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
   job.estado = "renderizando";
   job.fase = "composicion";
   const h = prep.herramientas;
-  const env = entornoConFfmpeg(h, o.browserPath ? { HYPERFRAMES_BROWSER_PATH: o.browserPath } : {});
 
   const montaje = await montarComposicion(prep, prep.rutas.composicion, o);
   job.avisos.push(...montaje.avisos);
 
   job.fase = "check";
-  const check = await comprobarComposicion(prep.rutas.composicion, env, montaje.usaWebgpu, (l) => anotar(job, l));
+  const check = await comprobarComposicion(prep.rutas.composicion, montaje.usaWebgpu, (l) => anotar(job, l));
   job.avisos.push(...check.avisos);
   if (check.errores.length) {
     throw new Error(`hyperframes check encontró ${check.errores.length} error(es): ${check.errores.slice(0, 5).join(" | ")}`);
   }
 
+  const disponibles = await dependencias.sondear(h);
+  const pedido = o.modo ?? "auto";
+  let modo = elegirModo(pedido, disponibles);
+  if (pedido === "rapido" && modo === "compatible") job.avisos.push("Rápido no disponible: no hay codificador H.264 de GPU; se usa Compatible.");
+  const timeoutMs = timeoutPasadaMs(montaje.duracion);
+  const carpeta = path.dirname(prep.rutas.mp4);
   // Render a un archivo temporal y renombrado al final: un fallo no deja un mp4 a medias donde lo busca la subida.
-  job.fase = "render";
-  job.progreso = 0;
-  const temporal = path.join(path.dirname(prep.rutas.mp4), `${prep.id}.renderizando.mp4`);
+  const temporal = path.join(carpeta, `${prep.id}.renderizando.mp4`);
   fs.rmSync(temporal, { force: true });
-  const args = [HYPERFRAMES_BIN, "render", prep.rutas.composicion, "-o", temporal, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
-  if (montaje.usaWebgpu) args.push("--browser-gpu");
-  const r = await ejecutar(process.execPath, args, { cwd: prep.rutas.composicion, env, onLinea: (l) => anotar(job, l), timeoutMs: timeoutRenderMs() });
-  if (r.timeout) {
-    fs.rmSync(temporal, { force: true });
-    throw new Error(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(timeoutRenderMs())}).`);
-  }
-  if (r.code !== 0 || !fs.existsSync(temporal)) {
-    fs.rmSync(temporal, { force: true });
-    throw new Error(`La CLI de HyperFrames terminó con código ${r.code}.`);
-  }
 
-  job.fase = "verificacion";
-  const info = await sondear(h.ffprobe, temporal);
+  /** Una ejecución de la CLI de render; lanza ErrorTiempo o Error con la última línea útil. */
+  const renderCli = async (salida: string, formato: "mp4" | "mov" | "webm") => {
+    job.fase = "render";
+    job.progreso = 0;
+    const args = [HYPERFRAMES_BIN, "render", prep.rutas.composicion, "-o", salida, "--fps", "30", "--format", formato];
+    if (formato === "mp4") args.push("--quality", "delivery");
+    if (montaje.usaWebgpu) args.push("--browser-gpu");
+    const r = await ejecutar(process.execPath, args, { onLinea: (l) => anotar(job, l), timeoutMs });
+    if (r.timeout) throw new ErrorTiempo(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(timeoutMs)}).`);
+    if (r.code !== 0 || !fs.existsSync(salida)) {
+      const ultima = ultimasLineasUtiles(job, 1)[0];
+      throw new Error(`La CLI de HyperFrames terminó con código ${r.code}${ultima ? ` (${ultima})` : ""}.`);
+    }
+  };
+  const verificar = async (cod?: CodificadorH264): Promise<InfoMedio> => {
+    job.fase = "verificacion";
+    const info = await sondear(h.ffprobe, temporal);
+    verificarMp4(info, montaje.duracion, cod);
+    return info;
+  };
+
+  let info: InfoMedio | undefined;
+  let codificador: string | undefined;
   try {
-    verificarMp4(info, montaje.duracion);
+    if (modo === "rapido") {
+      try {
+        await renderCli(temporal, "mp4");
+        info = await verificar();
+        codificador = codificadorDeEtiqueta(info.codificador);
+        const preferido = disponibles.find((c) => c !== "h264_mf");
+        if (preferido && codificador !== preferido) job.avisos.push(`HyperFrames eligió ${codificador}; el sondeo del motor prefería ${preferido}.`);
+      } catch (e) {
+        if (!disparaReserva(e)) throw e;
+        fs.rmSync(temporal, { force: true });
+        job.reserva = `Rápido falló (${(e as Error).message}); se repite en Compatible.`;
+        job.avisos.push(job.reserva);
+        log.warn(`Job ${job.job_id}: ${job.reserva}`);
+        modo = "compatible";
+      }
+    }
+    if (modo === "compatible") {
+      const formato = elegirIntermedio(espacioLibre(carpeta), montaje.duracion);
+      job.intermedio = formato;
+      const intermedio = path.join(carpeta, `${prep.id}.intermedio.${formato}`);
+      fs.rmSync(intermedio, { force: true });
+      try {
+        await renderCli(intermedio, formato);
+        job.fase = "codificacion";
+        const fallidos: string[] = [];
+        for (const cod of ordenSegundaPasada(disponibles)) {
+          const r = await segundaPasada(h, intermedio, formato, temporal, cod, timeoutMs);
+          if (r.timeout) throw new ErrorTiempo(`La codificación con ${cod} superó el tiempo máximo (${duracionLegible(timeoutMs)}).`);
+          if (r.code === 0) {
+            codificador = cod;
+            break;
+          }
+          fallidos.push(cod);
+          log.warn(`Job ${job.job_id}: la segunda pasada con ${cod} falló: ${r.stderr.trim().slice(-300)}`);
+          fs.rmSync(temporal, { force: true });
+        }
+        if (!codificador) throw new Error(`Ningún codificador H.264 pudo codificar el vídeo (${fallidos.join(", ")}).`);
+        if (fallidos.length) {
+          const texto = `${fallidos.join(", ")} falló; se usó ${codificador}.`;
+          job.reserva = job.reserva ? `${job.reserva} ${texto}` : texto;
+          job.avisos.push(texto);
+        }
+        info = await verificar(codificador as CodificadorH264);
+      } finally {
+        fs.rmSync(intermedio, { force: true });
+      }
+    }
   } catch (e) {
     fs.rmSync(temporal, { force: true });
     throw e;
   }
+
   fs.rmSync(prep.rutas.mp4, { force: true });
   fs.renameSync(temporal, prep.rutas.mp4);
-  job.duracion = info.duracion;
+  job.modo = modo;
+  job.codificador = codificador;
+  job.adaptador = FABRICANTE[codificador as CodificadorH264];
+  job.avisos.push(
+    `Codificador: ${codificador} (${job.adaptador}) · modo ${modo === "rapido" ? "Rápido" : "Compatible"}${job.intermedio === "webm" ? " · intermedio webm" : ""}`,
+  );
+  job.duracion = info!.duracion;
   job.progreso = 100;
   job.fase = undefined;
   job.estado = "terminado";
-  log.info(`Job ${job.job_id} terminado: ${prep.rutas.mp4} (${info.duracion?.toFixed(2)} s).`);
+  log.info(`Job ${job.job_id} terminado: ${prep.rutas.mp4} (${info!.duracion?.toFixed(2)} s, ${codificador}, modo ${modo}).`);
+}
+
+function espacioLibre(carpeta: string): number {
+  const s = fs.statfsSync(carpeta);
+  return s.bavail * s.bsize;
 }

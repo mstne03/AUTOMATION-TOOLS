@@ -48,7 +48,7 @@ vi.mock("node:child_process", async (orig) => {
 });
 
 import { resolverHyperframesBin } from "../src/musica.js";
-import { timeoutRenderMs } from "../src/render.js";
+import { timeoutPasadaMs } from "../src/render.js";
 import { catalogo, listar } from "../src/herramientas.js";
 import { ejecutar, mensajeSinFfmpeg } from "../src/proceso.js";
 import type { Config } from "../src/config.js";
@@ -59,16 +59,16 @@ afterEach(() => {
   estado.spawns.length = 0;
 });
 
-describe("timeoutRenderMs", () => {
+describe("timeoutPasadaMs", () => {
   it("recorta al máximo de setTimeout y conserva los valores no válidos como por defecto", () => {
     vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", "99999999999");
-    expect(timeoutRenderMs()).toBe(2_147_483_647);
+    expect(timeoutPasadaMs(50)).toBe(2_147_483_647);
     for (const v of ["0", "-5", "abc", "Infinity"]) {
       vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", v);
-      expect(timeoutRenderMs()).toBe(3_600_000);
+      expect(timeoutPasadaMs(50)).toBe(2_300_000);
     }
     vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", "2");
-    expect(timeoutRenderMs()).toBe(2000);
+    expect(timeoutPasadaMs(50)).toBe(2000);
   });
 });
 
