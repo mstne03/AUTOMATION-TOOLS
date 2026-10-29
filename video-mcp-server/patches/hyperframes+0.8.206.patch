@@ -1,0 +1,107 @@
+diff --git a/node_modules/hyperframes/dist/chunk-G6W55MTX.js b/node_modules/hyperframes/dist/chunk-G6W55MTX.js
+--- a/node_modules/hyperframes/dist/chunk-G6W55MTX.js
++++ b/node_modules/hyperframes/dist/chunk-G6W55MTX.js
+@@ -25,6 +25,7 @@
+ import { randomUUID } from "crypto";
+ import {
+   existsSync,
++  lstatSync,
+   mkdirSync,
+   readFileSync,
+   readdirSync,
+@@ -310,11 +311,23 @@
+   }
+ }
+ function findFromEnv() {
+-  const envPath = browserPathFromEnv()?.path;
+-  if (envPath && existsSync(envPath)) {
+-    return { executablePath: envPath, source: "env" };
++  // SEO Studio (parche local, SEO-109, I13): cada una de las dos variables que esté definida (aunque
++  // vacía) tiene que ser la ruta absoluta de unidad de un fichero normal (sin UNC, sin ADS, sin enlace).
++  // Si no lo es, error: nunca se cae a la caché, al Chrome del sistema ni a una descarga (I11).
++  const names = ["HYPERFRAMES_BROWSER_PATH", "PRODUCER_HEADLESS_SHELL_PATH"].filter((n) => n in process.env);
++  for (const name of names) {
++    const envPath = process.env[name] ?? "";
++    const forma = process.platform === "win32" ? /^[A-Za-z]:[\\/]/.test(envPath) && !envPath.includes(":", 2) : envPath.startsWith("/");
++    let st;
++    try {
++      st = lstatSync(envPath);
++    } catch {
++    }
++    if (!forma || !st || !st.isFile() || st.isSymbolicLink()) {
++      throw new Error(`${name}="${envPath}" no es la ruta absoluta de un fichero. SEO Studio no busca otro navegador ni lo descarga.`);
++    }
+   }
+-  return void 0;
++  return names.length ? { executablePath: process.env[names[0]], source: "env" } : void 0;
+ }
+ async function findFromHyperframesCache() {
+   if (!existsSync(CACHE_DIR)) return {};
+diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
+--- a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
++++ b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
+@@ -7,8 +7,31 @@
+ 
+ // ../core/dist/browserMarker.js
+ var HYPERFRAMES_BROWSER_MARKER_ARG = "--hyperframes-owned-browser";
++// SEO Studio (parche local, SEO-109): todo lanzamiento de Chrome de HyperFrames pasa por aquí.
++// Windows: renderer con sandbox (I3); el proceso de GPU sin él solo donde HyperFrames quitaba el
++// sandbox (riesgo residual aceptado); red solo en loopback aunque falle la CSP (I2b).
++var SEO_STUDIO_ARGS_WIN32 = [
++  "--proxy-server=127.0.0.1:1",
++  "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;[::1]",
++  "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
++  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
++  "--disable-quic",
++  "--disable-accelerated-video-decode"
++];
++var SEO_STUDIO_FUERA = /^--(no-sandbox|disable-setuid-sandbox|no-proxy-server|proxy-|host-resolver-rules=|force-webrtc-ip-handling-policy=)/;
++var SEO_STUDIO_UN_PROCESO = /^--(single-process|in-process-gpu)(=|$)/;
++function seoStudioArgs(args) {
++  if (process.platform !== "win32") return [...args];
++  if (args.some((a) => SEO_STUDIO_UN_PROCESO.test(a))) {
++    throw new Error("SEO Studio: HyperFrames pidió --single-process; el renderer saldría del sandbox (I3)");
++  }
++  const extra = args.includes("--no-sandbox") ? ["--disable-gpu-sandbox", ...SEO_STUDIO_ARGS_WIN32] : SEO_STUDIO_ARGS_WIN32;
++  const limpios = args.filter((a) => SEO_STUDIO_ARGS_WIN32.includes(a) || !SEO_STUDIO_FUERA.test(a));
++  return [...limpios, ...extra.filter((a) => !limpios.includes(a))];
++}
+ function withHyperframesBrowserMarker(args = []) {
+-  return args.includes(HYPERFRAMES_BROWSER_MARKER_ARG) ? [...args] : [...args, HYPERFRAMES_BROWSER_MARKER_ARG];
++  const a = seoStudioArgs(args);
++  return a.includes(HYPERFRAMES_BROWSER_MARKER_ARG) ? a : [...a, HYPERFRAMES_BROWSER_MARKER_ARG];
+ }
+ 
+ export {
+diff --git a/node_modules/hyperframes/dist/chunk-OZUAVHFE.js b/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
+--- a/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
++++ b/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
+@@ -132,7 +132,7 @@
+         };
+         server.once("error", onErr);
+         server.once("listening", onOk);
+-        server.listen(port);
++        server.listen(port, "127.0.0.1"); // SEO Studio (parche local, SEO-109, I7): solo loopback.
+       });
+       return port;
+     } catch (err) {
+diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
+--- a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
++++ b/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
+@@ -1047,6 +1047,7 @@
+   return findManagedHeadlessShell(ours) ?? findSharedHeadlessShell(shared) ?? findCachedHeadlessShell(ours);
+ }
+ function resolveFullChromePath() {
++  if (browserPathFromEnv() || "HYPERFRAMES_BROWSER_PATH" in process.env) throw new Error("SEO Studio: el render HDR no está soportado en modo cerrado (I13)");
+   const baseDir = join2(homedir(), ".cache", "puppeteer", "chrome");
+   let versions;
+   try {
+@@ -18019,7 +18020,7 @@
+     });
+   });
+   return new Promise((resolve2) => {
+-    const server = serve({ fetch: app.fetch, port }, (info) => {
++    const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => { // SEO Studio (parche local, SEO-109, I7): solo loopback.
+       const actualPort = info.port;
+       const url = `http://localhost:${actualPort}`;
+       resolve2({
