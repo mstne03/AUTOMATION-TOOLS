@@ -5,14 +5,19 @@ Ningún test toca la red: zips fabricados aquí, `httpx.MockTransport` o un serv
 
 import ast
 import hashlib
+import http.server
+import ipaddress
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
+import threading
 import zipfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app_backend import config, kb_update, navegador
@@ -568,3 +573,280 @@ def test_instalar_con_candado_ocupado_error_legible(cft_falso):
         navegador.instalar_desde_zip(ruta)
     assert str(e.value) == navegador.MENSAJE_OCUPADO
     assert navegador.instalado() is None
+
+
+# ------------------------------------------------------------------ Tarea 4: descarga y Descargador
+
+
+class _Transporte(httpx.MockTransport):
+    """MockTransport que anota cada petición."""
+
+    def __init__(self, handler):
+        self.peticiones: list[httpx.Request] = []
+
+        def anotar(request):
+            self.peticiones.append(request)
+            return handler(request)
+
+        super().__init__(anotar)
+
+
+def _trozos(datos: bytes, n: int = 3) -> list[bytes]:
+    paso = max(1, len(datos) // n + 1)
+    return [datos[i : i + paso] for i in range(0, len(datos), paso)]
+
+
+def _sirve(datos: bytes) -> _Transporte:
+    return _Transporte(lambda r: httpx.Response(200, content=iter(_trozos(datos))))
+
+
+def _espia_zipfile(monkeypatch) -> list:
+    llamadas: list = []
+    original = zipfile.ZipFile
+
+    def espia(*a, **k):
+        llamadas.append(a)
+        return original(*a, **k)
+
+    monkeypatch.setattr(navegador.zipfile, "ZipFile", espia)
+    return llamadas
+
+
+def test_descarga_ok_instala_y_reporta_progreso(cft_falso, monkeypatch):
+    _, datos = cft_falso
+    t = _sirve(datos)
+    avances: list[int] = []
+    original = navegador.Descargador._avance
+
+    def anotar(self, n):
+        avances.append(n)
+        original(self, n)
+
+    monkeypatch.setattr(navegador.Descargador, "_avance", anotar)
+    d = navegador.Descargador(t)
+    assert d.estado() == {
+        "version": "156.0.8078.73",
+        "tamano": len(datos),
+        "estado": "ausente",
+        "descargado": 0,
+        "error": None,
+    }
+    assert d.reservar()
+    assert d.estado()["estado"] == "descargando"
+    d.ejecutar()
+    e = d.estado()
+    assert e["estado"] == "listo" and e["error"] is None and e["descargado"] == len(datos)
+    assert avances == sorted(avances) and len(avances) >= 2 and avances[-1] == len(datos)
+    assert [(r.method, str(r.url)) for r in t.peticiones] == [("GET", config.NAVEGADOR_URL)]
+    assert navegador.instalado() is not None and _restos() == ["156.0.8078.73"]
+
+
+def test_sin_redirecciones(cft_falso):
+    t = _Transporte(lambda r: httpx.Response(302, headers={"Location": "https://evil.test/x.zip"}))
+    d = navegador.Descargador(t)
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "error" and "respondió 302" in d.estado()["error"]
+    assert len(t.peticiones) == 1 and t.peticiones[0].url.host == "storage.googleapis.com"
+    assert _restos() == []
+
+
+def test_descarga_mas_grande_que_el_maximo(cft_falso, monkeypatch):
+    llamadas = _espia_zipfile(monkeypatch)
+    cuerpo = b"x" * (config.NAVEGADOR_MAX_DESCARGA + 1)
+    t = _Transporte(lambda r: httpx.Response(200, content=iter(_trozos(cuerpo, 5))))
+    d = navegador.Descargador(t)
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_GRANDE
+    assert _restos() == [] and llamadas == []
+
+
+def test_content_length_excesivo_no_se_lee(cft_falso):
+    def no_leer():
+        raise AssertionError("no debía leerse el cuerpo")
+        yield b""  # pragma: no cover
+
+    t = _Transporte(
+        lambda r: httpx.Response(200, headers={"Content-Length": str(10**12)}, content=no_leer())
+    )
+    d = navegador.Descargador(t)
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_GRANDE
+    assert _restos() == []
+
+
+def test_descarga_hash_distinto_no_extrae(cft_falso, monkeypatch):
+    _, datos = cft_falso
+    malo = bytearray(datos)
+    malo[len(malo) // 2] ^= 0x01
+    llamadas = _espia_zipfile(monkeypatch)
+    d = navegador.Descargador(_sirve(bytes(malo)))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_HASH
+    assert llamadas == [] and navegador.instalado() is None and _restos() == []
+
+
+def test_sin_red_error_claro(cft_falso):
+    _, datos = cft_falso
+
+    def sin_red(request):
+        raise httpx.ConnectError("getaddrinfo failed", request=request)
+
+    d = navegador.Descargador(_Transporte(sin_red))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "error" and d.estado()["error"] == navegador.MENSAJE_SIN_RED
+    # Reintento: lo decide el usuario con otra petición.
+    d._transporte = _sirve(datos)
+    assert d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "listo" and d.estado()["error"] is None
+
+
+def test_corte_a_mitad_borra_temporal(cft_falso):
+    _, datos = cft_falso
+
+    def cortado():
+        yield datos[: len(datos) // 2]
+        raise httpx.ReadError("conexión cortada")
+
+    d = navegador.Descargador(_Transporte(lambda r: httpx.Response(200, content=cortado())))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_SIN_RED
+    assert _restos() == []
+
+
+def _certificado(carpeta: Path) -> tuple[Path, Path]:
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    clave = ec.generate_private_key(ec.SECP256R1())
+    nombre = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    ahora = datetime.datetime.now(datetime.UTC)
+    san = x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(nombre)
+        .issuer_name(nombre)
+        .public_key(clave.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(ahora - datetime.timedelta(minutes=5))
+        .not_valid_after(ahora + datetime.timedelta(hours=1))
+        .add_extension(san, critical=False)
+        .sign(clave, hashes.SHA256())
+    )
+    crt, key = carpeta / "c.pem", carpeta / "k.pem"
+    crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key.write_bytes(
+        clave.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return crt, key
+
+
+def test_tls_no_verificado_falla(cft_falso, tmp_path, monkeypatch):
+    # Sin esto, un proxy del sistema podría interceptar 127.0.0.1 y el error no sería el de TLS.
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    crt, key = _certificado(tmp_path)
+    recibidas: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            recibidas.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    servidor = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(crt, key)
+    servidor.socket = ctx.wrap_socket(servidor.socket, server_side=True)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    try:
+        puerto = servidor.server_address[1]
+        monkeypatch.setattr(config, "NAVEGADOR_URL", f"https://127.0.0.1:{puerto}/x.zip")
+        monkeypatch.setattr(navegador, "PREFIJO_URL", f"https://127.0.0.1:{puerto}/")
+        d = navegador.Descargador()  # cliente real, verificación TLS por defecto
+        d.reservar()
+        d.ejecutar()
+    finally:
+        servidor.shutdown()
+        servidor.server_close()
+    assert d.estado()["error"] == navegador.MENSAJE_TLS
+    assert recibidas == []
+
+
+def test_solo_https_de_storage(cft_falso, monkeypatch):
+    monkeypatch.setattr(config, "NAVEGADOR_URL", "http://127.0.0.1:9/x.zip")
+    t = _sirve(b"")
+    d = navegador.Descargador(t)
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "error" and t.peticiones == []
+
+
+def test_reservar_impide_dos_descargas(cft_falso):
+    d = navegador.Descargador(_sirve(b""))
+    assert d.reservar() is True
+    assert d.reservar() is False
+
+
+def test_ya_instalado_no_descarga(cft_falso):
+    ruta, _ = cft_falso
+    navegador.instalar_desde_zip(ruta)
+
+    def no_llamar(request):
+        raise AssertionError("no debía tocar la red")
+
+    t = _Transporte(no_llamar)
+    d = navegador.Descargador(t)
+    assert d.estado()["estado"] == "listo"
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "listo" and d.estado()["descargado"] == 0 and t.peticiones == []
+
+
+def test_instalado_pero_corrupto_se_descarga_de_nuevo(cft_falso):
+    ruta, datos = cft_falso
+    exe = navegador.instalar_desde_zip(ruta)
+    exe.write_bytes(b"cambiado")
+    d = navegador.Descargador(_sirve(datos))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "listo" and navegador.verificar(_version()) == exe
+
+
+def test_descarga_con_candado_ocupado_error_legible(cft_falso):
+    _, datos = cft_falso
+    t = _sirve(datos)
+    d = navegador.Descargador(t)
+    config.NAVEGADOR_DIR.mkdir(parents=True)
+    with navegador._candado():
+        d.reservar()
+        d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_OCUPADO and t.peticiones == []
+
+
+def test_error_inesperado_es_legible(cft_falso, monkeypatch):
+    def roto(cliente, al_avanzar):
+        raise ZeroDivisionError
+
+    monkeypatch.setattr(navegador, "descargar", roto)
+    d = navegador.Descargador(_sirve(b""))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == "Error inesperado al instalar el navegador: ZeroDivisionError"

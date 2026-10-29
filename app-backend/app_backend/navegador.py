@@ -29,11 +29,14 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
 import zipfile  # siempre por el módulo: los tests espían `navegador.zipfile.ZipFile`
 import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+import httpx
 
 from app_backend import config
 from app_backend.kb_update import _replace_retry
@@ -432,6 +435,132 @@ def instalar_desde_zip(zip_path: Path, al_cambiar_fase: Callable[[str], None] = 
     _preparar_base()
     with _candado():
         return _instalar(Path(zip_path), al_cambiar_fase)
+
+
+# ----------------------------------------------------------------------------- descarga
+
+# Guard de la constante: la URL fijada tiene que ser HTTPS de storage.googleapis.com (solo los tests
+# la cambian). Ninguna redirección se sigue (ni siquiera al mismo host): no hace falta ninguna.
+PREFIJO_URL = "https://storage.googleapis.com/"
+
+
+def _cliente(transporte: httpx.BaseTransport | None) -> httpx.Client:
+    # Verificación TLS por defecto (certifi). `trust_env` por defecto: proxies del sistema; la
+    # integridad la da el SHA-256, no el canal.
+    return httpx.Client(transport=transporte, follow_redirects=False, timeout=httpx.Timeout(30.0, read=60.0))
+
+
+def descargar(cliente: httpx.Client, al_avanzar: Callable[[int], None]) -> Path:
+    """Baja el zip fijado a `NAVEGADOR_DIR/.descarga-*.zip` y lo devuelve ya comprobado (tamaño y
+    SHA-256 al vuelo). Quien llama lo borra. En cualquier fallo no queda nada."""
+    url = config.NAVEGADOR_URL
+    if not url.startswith(PREFIJO_URL):
+        raise NavegadorError(f"URL del navegador no permitida: {_corto(url)}")
+    fd, nombre = tempfile.mkstemp(prefix=".descarga-", suffix=".zip", dir=config.NAVEGADOR_DIR)
+    ruta = Path(nombre)
+    try:
+        h = hashlib.sha256()
+        with os.fdopen(fd, "wb") as f, cliente.stream("GET", url) as r:
+            if r.status_code != 200:
+                raise NavegadorError(MENSAJE_HTTP.format(codigo=r.status_code))
+            try:
+                anunciado = int(r.headers.get("content-length", "0"))
+            except ValueError:
+                anunciado = config.NAVEGADOR_MAX_DESCARGA + 1
+            if anunciado > config.NAVEGADOR_MAX_DESCARGA:
+                raise NavegadorError(MENSAJE_GRANDE)
+            n = 0
+            for trozo in r.iter_bytes():  # según llegan: el progreso avanza con la red
+                n += len(trozo)
+                if n > config.NAVEGADOR_MAX_DESCARGA:
+                    raise NavegadorError(MENSAJE_GRANDE)
+                h.update(trozo)
+                f.write(trozo)
+                al_avanzar(n)
+        if h.hexdigest() != config.NAVEGADOR_SHA256:
+            raise NavegadorError(MENSAJE_HASH)
+        return ruta
+    except httpx.TransportError as e:
+        _borrar(ruta)
+        raise NavegadorError(MENSAJE_TLS if "CERTIFICATE_VERIFY_FAILED" in str(e) else MENSAJE_SIN_RED) from None
+    except OSError as e:
+        _borrar(ruta)
+        raise NavegadorError(MENSAJE_DISCO.format(detalle=e.strerror or type(e).__name__)) from None
+    except BaseException:
+        _borrar(ruta)
+        raise
+
+
+ACTIVAS = ("descargando", "verificando", "extrayendo")
+
+
+class Descargador:
+    """Estado en memoria del «job» de descarga (base de `GET/POST /video/navegador`).
+
+    `reservar` y `ejecutar` van por separado para que la ruta responda 409 en el acto; `ejecutar`
+    es bloqueante (para `asyncio.to_thread`). Sin reintentos automáticos: los decide el usuario.
+    """
+
+    def __init__(self, transporte: httpx.BaseTransport | None = None) -> None:
+        self._transporte = transporte
+        self._lock = threading.Lock()
+        self._fase = "listo" if instalado() else "ausente"
+        self._descargado = 0
+        self._error: str | None = None
+
+    def estado(self) -> dict:
+        with self._lock:
+            return {
+                "version": config.NAVEGADOR_VERSION,
+                "tamano": config.NAVEGADOR_TAMANO,
+                "estado": self._fase,
+                "descargado": self._descargado,
+                "error": self._error,
+            }
+
+    def reservar(self) -> bool:
+        with self._lock:
+            if self._fase in ACTIVAS:
+                return False
+            self._fase, self._descargado, self._error = "descargando", 0, None
+            return True
+
+    def _avance(self, n: int) -> None:
+        with self._lock:
+            self._descargado = n
+
+    def _cambiar_fase(self, fase: str) -> None:
+        with self._lock:
+            self._fase = fase
+
+    def _fin(self, fase: str, error: str | None = None) -> None:
+        with self._lock:
+            self._fase, self._error = fase, error
+
+    def ejecutar(self) -> None:
+        try:
+            _preparar_base()
+            with _candado():
+                carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
+                if instalado():
+                    try:
+                        verificar(carpeta)
+                        self._fin("listo")
+                        return
+                    except NavegadorError as e:
+                        log.warning("Navegador instalado que no verifica, se descarga de nuevo: %s", e)
+                with _cliente(self._transporte) as cliente:
+                    zip_path = descargar(cliente, self._avance)
+                try:
+                    _instalar(zip_path, self._cambiar_fase)
+                finally:
+                    _borrar(zip_path)
+            self._fin("listo")
+        except NavegadorError as e:
+            self._fin("error", str(e))
+        except Exception as e:  # nunca un 500 mudo: error visible y reintentable
+            log.exception("Error inesperado al instalar el navegador")
+            self._fin("error", f"Error inesperado al instalar el navegador: {type(e).__name__}")
 
 
 # ----------------------------------------------------------------------------- __main__
