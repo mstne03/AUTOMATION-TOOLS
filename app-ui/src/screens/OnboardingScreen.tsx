@@ -1,28 +1,24 @@
-/** Onboarding (docs/pantallas.md → Onboarding): clave, asistente de Google Cloud con
- *  validador por paso, OAuth y estado de la KB. */
+/** Onboarding (docs/pantallas.md → Onboarding): asistente de bienvenida a ancho completo, sin barra
+ *  lateral, con un paso visible cada vez: clave de Anthropic, proyecto de Google Cloud, autorizar el
+ *  canal y base de conocimiento. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Play } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useClient } from "../api/context";
-import { usePutSettings, useSettings, useYoutubeStatus } from "../api/queries";
+import { useSettings, useYoutubeStatus } from "../api/queries";
+import { EnlaceExterno } from "../enlaces";
+import { Button, Estado, Field, Input, Progress, toast } from "../ui";
+import { cx } from "../ui/cx";
+import s from "./OnboardingScreen.module.css";
+import { avisarCanalAutorizado, CONSOLE, CREDENCIALES, ImportarClientSecret, nombreCanal, PUBLICO } from "./ProyectoGoogle";
 
-const CONSOLE = "https://console.cloud.google.com/apis/library/youtube.googleapis.com";
-const CREDENCIALES = "https://console.cloud.google.com/apis/credentials";
-
-/** Validador del client_secret.json de una app "de escritorio". Devuelve el motivo del fallo. */
-export function validarClientSecret(texto: string): string | null {
-  let j: unknown;
-  try {
-    j = JSON.parse(texto);
-  } catch {
-    return "No es JSON válido.";
-  }
-  const inst = (j as { installed?: Record<string, unknown> })?.installed;
-  if (!inst) return 'Falta la clave "installed": las credenciales deben ser de tipo "Aplicación de escritorio".';
-  if (typeof inst.client_id !== "string" || !inst.client_id) return 'Falta "installed.client_id".';
-  if (typeof inst.client_secret !== "string" || !inst.client_secret) return 'Falta "installed.client_secret".';
-  return null;
-}
+const PASOS = [
+  { id: "paso-clave", titulo: "Clave de Anthropic" },
+  { id: "paso-google", titulo: "Google Cloud" },
+  { id: "paso-oauth", titulo: "Autorizar canal" },
+  { id: "paso-kb", titulo: "Base de conocimiento" },
+] as const;
 
 export function OnboardingScreen() {
   const client = useClient();
@@ -30,144 +26,228 @@ export function OnboardingScreen() {
   const navigate = useNavigate();
   const settings = useSettings();
   const yt = useYoutubeStatus();
-  const put = usePutSettings();
   const kb = useQuery({ queryKey: ["kb", "estado"], queryFn: () => client.kbEstado(), retry: 1 });
 
   const [apiKey, setApiKey] = useState("");
+  const [claveError, setClaveError] = useState<string | null>(null);
   const [paso2a, setPaso2a] = useState(false);
   const [paso2b, setPaso2b] = useState(false);
-  const [jsonText, setJsonText] = useState("");
-  const [path, setPath] = useState("");
-  const [googleError, setGoogleError] = useState<string | null>(null);
+  const [paso2c, setPaso2c] = useState(false);
+  const [elegido, setElegido] = useState<number | null>(null);
+  /** Hay un JSON pegado o una ruta escrita sin importar: el asistente no avanza con el proyecto viejo. */
+  const [googlePendiente, setGooglePendiente] = useState(false);
 
-  const importar = useMutation({
-    mutationFn: (body: { json_text?: string; path?: string }) => client.importClientSecret(body),
-    onSuccess: (data) => {
-      qc.setQueryData(["settings"], data);
-      setJsonText("");
-      setPath("");
-      setGoogleError(null);
+  const guardarClave = useMutation({
+    mutationFn: async (clave: string) => {
+      // Antes de marcar el paso como hecho: una llamada barata a Anthropic (GET /v1/models, sin coste).
+      const r = await client.validateAnthropicKey(clave);
+      if (!r.valida) throw new Error(r.detalle ?? "La clave no es válida.");
+      return client.putSettings({ anthropic_api_key: clave });
     },
-    onError: (e) => setGoogleError(e.message),
+    onSuccess: (datos) => {
+      qc.setQueryData(["settings"], datos);
+      setApiKey("");
+      setClaveError(null);
+      setElegido(null); // al completar un paso, el asistente sigue al siguiente pendiente
+      toast({ title: "Clave validada y guardada" });
+    },
+    onError: (e) => setClaveError(e.message),
   });
+  /** `reautorizar`: ignora el token guardado y vuelve a pedir el consentimiento de Google. */
   const oauth = useMutation({
-    mutationFn: () => client.youtubeAuth({}),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["youtube", "status"] }),
+    mutationFn: (reautorizar: boolean) => client.youtubeAuth(reautorizar ? { reauthorize: true } : {}),
+    onSuccess: async (r) => {
+      await qc.invalidateQueries({ queryKey: ["youtube"] });
+      setElegido(null);
+      avisarCanalAutorizado(r);
+    },
   });
 
-  if (settings.isPending) return <p className="estado">Cargando…</p>;
-  if (settings.isError) return <p className="estado error">Error: {settings.error.message}</p>;
-  const s = settings.data;
+  if (settings.isPending) return <Estado>Cargando…</Estado>;
+  if (settings.isError) return <Estado error>Error: {settings.error.message}</Estado>;
+  const st = settings.data;
 
-  const hechoClave = s.has_anthropic_key;
-  const hechoGoogle = s.has_client_secret;
-  const hechoOauth = !!yt.data?.auth.authenticated;
-  const hechoKb = kb.isSuccess;
-
-  const onImportar = () => {
-    if (jsonText.trim()) {
-      const err = validarClientSecret(jsonText);
-      if (err) return setGoogleError(err);
-      return importar.mutate({ json_text: jsonText });
-    }
-    if (path.trim()) return importar.mutate({ path: path.trim() });
-    setGoogleError("Pega el JSON o indica la ruta del fichero.");
-  };
+  const hechos = [st.has_anthropic_key, st.has_client_secret, !!yt.data?.auth.authenticated, kb.isSuccess];
+  const primerPendiente = hechos.slice(0, 3).findIndex((h) => !h);
+  // Mientras el usuario no navegue, el asistente va al primer paso pendiente; con todo hecho, al final
+  // ("Todo listo"), nunca a un paso ya hecho. Completar un paso vuelve a esta regla (setElegido(null)).
+  const actual = elegido ?? (primerPendiente === -1 ? PASOS.length - 1 : primerPendiente);
+  const alcanzable = (i: number) => i <= (primerPendiente === -1 ? 3 : primerPendiente);
+  const listo = hechos[0] && hechos[1] && hechos[2];
+  const hechosEnTotal = hechos.filter(Boolean).length;
 
   return (
-    <div className="onboarding">
-      <h1>Primeros pasos</h1>
-      <ol className="pasos" data-testid="onboarding-pasos">
-        <Paso id="paso-clave" titulo="Clave de Anthropic" hecho={hechoClave}>
-          <p className="nota">
-            El agente usa tu propia clave (BYOK). Se guarda en el Credential Manager de Windows y no se vuelve a mostrar.
-          </p>
-          <div className="fila">
-            <input type="password" data-testid="clave-input" placeholder="sk-ant-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
-            <button
-              data-testid="clave-guardar"
-              disabled={!apiKey || put.isPending}
-              onClick={() => {
-                put.mutate({ anthropic_api_key: apiKey });
-                setApiKey("");
+    <div className={s.pantalla} data-testid="onboarding">
+      <header className={s.cabecera}>
+        <div className={s.marca}>
+          <div className={s.logo}>
+            <Play aria-hidden size="0.9em" />
+          </div>
+          <span className={s.marcaNombre}>SEO Studio</span>
+        </div>
+        <div className={s.progreso}>
+          <div className={s.progresoTexto}>
+            <h1 className={s.titulo}>Primeros pasos</h1>
+            <span className={s.suave} data-testid="onboarding-progreso">
+              Paso {actual + 1} de {PASOS.length}
+            </span>
+          </div>
+          <Progress label="Progreso de la configuración" value={hechosEnTotal / PASOS.length} />
+          <ol className={s.migas} aria-label="Pasos">
+            {PASOS.map((p, i) => (
+              <li key={p.id} aria-current={i === actual ? "step" : undefined}>
+                <button type="button" className={cx(s.miga, i === actual && s.migaActual, hechos[i] && s.migaHecha)} disabled={!alcanzable(i)} data-testid={`onboarding-ir-${p.id}`} onClick={() => setElegido(i)}>
+                  <span className={s.migaNumero}>{hechos[i] ? <Check aria-hidden size="0.9em" /> : i + 1}</span>
+                  {p.titulo}
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </header>
+
+      <main className={s.cuerpo}>
+        <ol className={s.pasos} data-testid="onboarding-pasos">
+          <Paso id="paso-clave" titulo="Clave de Anthropic" hecho={hechos[0]} visible={actual === 0}>
+            <p className={s.ayuda}>El agente usa tu propia clave (BYOK). Se comprueba con Anthropic, se guarda en el almacén de credenciales de Windows y no se vuelve a mostrar.</p>
+            <form
+              className={s.fila}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (apiKey) guardarClave.mutate(apiKey.trim());
               }}
             >
-              Guardar
-            </button>
-          </div>
-          {put.error && <p className="error">{put.error.message}</p>}
-        </Paso>
+              <Field label={hechos[0] ? "Nueva clave (ya hay una guardada)" : "Clave de la API"} className={s.crece} error={claveError ?? undefined} errorTestId="clave-error">
+                <Input type="password" mono data-testid="clave-input" placeholder="sk-ant-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
+              </Field>
+              <Button type="submit" variant="primary" data-testid="clave-guardar" disabled={!apiKey} loading={guardarClave.isPending}>
+                {guardarClave.isPending ? "Comprobando…" : "Validar y guardar"}
+              </Button>
+            </form>
+          </Paso>
 
-        <Paso id="paso-google" titulo="Proyecto de Google Cloud" hecho={hechoGoogle}>
-          <p className="nota">
-            YouTube exige que cada usuario traiga su propio proyecto de Google Cloud (gratuito). Tres sub-pasos:
-          </p>
-          <ol className="subpasos">
-            <li>
-              <label>
-                <input type="checkbox" data-testid="google-paso-a" checked={paso2a} onChange={(e) => setPaso2a(e.target.checked)} />{" "}
-                Crea un proyecto y activa <strong>YouTube Data API v3</strong>:{" "}
-                <a href={CONSOLE} target="_blank" rel="noopener noreferrer">
-                  abrir la biblioteca de APIs
-                </a>
-                .
-              </label>
-            </li>
-            <li>
-              <label>
-                <input type="checkbox" data-testid="google-paso-b" checked={paso2b} onChange={(e) => setPaso2b(e.target.checked)} />{" "}
-                En{" "}
-                <a href={CREDENCIALES} target="_blank" rel="noopener noreferrer">
-                  Credenciales
-                </a>
-                , crea un <strong>ID de cliente OAuth</strong> de tipo <strong>Aplicación de escritorio</strong> y descarga el JSON.
-              </label>
-            </li>
-            <li>
-              Importa el JSON descargado (se guarda cifrado; el fichero original puedes borrarlo):
-              <textarea data-testid="google-json" rows={4} placeholder='{"installed": {"client_id": …}}' value={jsonText} onChange={(e) => setJsonText(e.target.value)} />
-              <div className="fila">
-                <span>o ruta:</span>
-                <input data-testid="google-path" placeholder="C:\Users\…\client_secret_….json" value={path} onChange={(e) => setPath(e.target.value)} />
-                <button data-testid="google-importar" disabled={importar.isPending || !(paso2a && paso2b)} onClick={onImportar}>
-                  Importar
-                </button>
-              </div>
-              {googleError && (
-                <p className="error" data-testid="google-error">
-                  {googleError}
-                </p>
+          <Paso id="paso-google" titulo="Proyecto de Google Cloud" hecho={hechos[1]} visible={actual === 1}>
+            <p className={s.ayuda}>YouTube exige que cada usuario traiga su propio proyecto de Google Cloud (gratuito). Esta lista es una guía: no bloquea nada.</p>
+            <ul className={s.checklist}>
+              <li>
+                <label>
+                  <input type="checkbox" data-testid="google-paso-a" checked={paso2a} onChange={(e) => setPaso2a(e.target.checked)} />
+                  <span>Crea un proyecto y activa <strong>YouTube Data API v3</strong>: <EnlaceExterno href={CONSOLE}>abrir la biblioteca de APIs</EnlaceExterno>.</span>
+                </label>
+              </li>
+              <li>
+                <label>
+                  <input type="checkbox" data-testid="google-paso-b" checked={paso2b} onChange={(e) => setPaso2b(e.target.checked)} />
+                  <span>En <EnlaceExterno href={CREDENCIALES}>Credenciales</EnlaceExterno>, crea un <strong>ID de cliente OAuth</strong> de tipo <strong>Aplicación de escritorio</strong> y descarga el JSON.</span>
+                </label>
+              </li>
+              <li>
+                <label>
+                  <input type="checkbox" data-testid="google-paso-c" checked={paso2c} onChange={(e) => setPaso2c(e.target.checked)} />
+                  <span>En <EnlaceExterno href={PUBLICO}>Público</EnlaceExterno>, pulsa <strong>Publicar aplicación</strong>. Si la dejas en «Prueba», Google desconecta tu canal cada 7 días y tendrías que volver a autorizarlo.</span>
+                </label>
+              </li>
+            </ul>
+
+            <p className={s.ayuda}>Es un solo proyecto para toda la app: todos tus canales lo usan y comparten su cuota diaria.</p>
+            <ImportarClientSecret onImportado={() => setElegido(null)} onPendiente={setGooglePendiente} />
+          </Paso>
+
+          <Paso id="paso-oauth" titulo="Autorizar tu canal de YouTube" hecho={hechos[2]} visible={actual === 2}>
+            <p className={s.ayuda}>Se abre el navegador con el consentimiento de Google. Es la única acción que abre el navegador.</p>
+            <p className={s.aviso} data-testid="oauth-no-verificada">
+              Google avisará de que «no ha verificado esta app»: es tu propio proyecto y es normal. Pulsa «Configuración avanzada» y luego «Ir a …» para continuar.
+            </p>
+            {hechos[2] && (
+              <p className={s.ok} data-testid="oauth-estado">
+                <Check aria-hidden size="1em" /> Canal autorizado · {nombreCanal(yt.data?.auth.channel) ?? <>perfil <Mono>{yt.data?.auth.profile}</Mono></>}
+              </p>
+            )}
+            {!hechos[2] && typeof yt.data?.auth.reason === "string" && (
+              <p className={s.aviso} data-testid="oauth-motivo" role="alert">
+                {yt.data.auth.reason}
+              </p>
+            )}
+            <div className={s.fila}>
+              {/* Ya autorizado: "Volver a autorizar" pide de nuevo el consentimiento (p. ej. para cambiar de cuenta). */}
+              <Button variant={hechos[2] ? "secondary" : "primary"} data-testid="oauth-autorizar" disabled={!hechos[1]} loading={oauth.isPending} onClick={() => oauth.mutate(hechos[2])}>
+                {oauth.isPending ? "Se ha abierto el navegador…" : hechos[2] ? "Volver a autorizar" : "Autorizar canal de YouTube"}
+              </Button>
+              {/* Si se cierra la pestaña de Google, el sidecar esperaría hasta su límite: esto lo corta. */}
+              {oauth.isPending && (
+                <Button data-testid="oauth-cancelar" onClick={() => void client.youtubeAuthCancel().catch(() => undefined)}>
+                  Cancelar
+                </Button>
               )}
-            </li>
-          </ol>
-        </Paso>
+            </div>
+            {oauth.isPending && (
+              <p className={s.ayuda} data-testid="oauth-ayuda-google">
+                Elige en el navegador la cuenta de Google del canal. Si Google bloquea el acceso, esa cuenta no es usuario de prueba del proyecto: añádela o publica la app en <EnlaceExterno href={PUBLICO}>Público</EnlaceExterno>.
+              </p>
+            )}
+            {!hechos[1] && <p className={s.ayuda}>Primero importa las credenciales de Google.</p>}
+            {oauth.error && (
+              <div className={s.fila}>
+                <p className={s.error} data-testid="oauth-error">
+                  {oauth.error.message}
+                </p>
+                <Button size="sm" variant="ghost" data-testid="oauth-ir-google" onClick={() => setElegido(1)}>
+                  Revisar el proyecto de Google
+                </Button>
+              </div>
+            )}
+          </Paso>
 
-        <Paso id="paso-oauth" titulo="Autorizar tu canal de YouTube" hecho={hechoOauth}>
-          <p className="nota">Se abre el navegador con el consentimiento de Google. Es la única acción que abre el navegador.</p>
-          <button data-testid="oauth-autorizar" disabled={!hechoGoogle || oauth.isPending} onClick={() => oauth.mutate()}>
-            {oauth.isPending ? "Se ha abierto el navegador…" : "Autorizar canal de YouTube"}
-          </button>
-          {oauth.error && <p className="error">{oauth.error.message}</p>}
-        </Paso>
+          <Paso id="paso-kb" titulo="Base de conocimiento" hecho={hechos[3]} visible={actual === 3}>
+            {listo && (
+              <p className={s.ok} data-testid="onboarding-listo" role="status">
+                <Check aria-hidden size="1em" /> Todo listo: clave, proyecto de Google y canal configurados. Ya puedes ir al chat.
+              </p>
+            )}
+            <p className={s.ayuda}>El agente consulta una base de conocimiento de SEO en redes (se actualiza sola). Este es su estado:</p>
+            {kb.isPending && <p className={s.suave}>Comprobando…</p>}
+            {kb.isError && <p className={s.error}>{kb.error.message}</p>}
+            {kb.data && (
+              <pre className={s.estadoKb} data-testid="kb-estado-texto">
+                {kb.data.texto}
+              </pre>
+            )}
+          </Paso>
+        </ol>
 
-        <Paso id="paso-kb" titulo="Base de conocimiento" hecho={hechoKb}>
-          {kb.isPending && <p>Comprobando…</p>}
-          {kb.isError && <p className="error">{kb.error.message}</p>}
-          {kb.data && <pre data-testid="kb-estado-texto">{kb.data.texto}</pre>}
-        </Paso>
-      </ol>
-      <button data-testid="onboarding-terminar" disabled={!(hechoClave && hechoGoogle && hechoOauth)} onClick={() => navigate("/chat")}>
-        Ir al chat
-      </button>
+        <div className={s.navegacion}>
+          <Button variant="ghost" data-testid="onboarding-atras" disabled={actual === 0} onClick={() => setElegido(actual - 1)}>
+            Atrás
+          </Button>
+          {actual < PASOS.length - 1 && (
+            <Button variant="primary" data-testid="onboarding-continuar" disabled={!hechos[actual] || (actual === 1 && googlePendiente)} onClick={() => setElegido(actual + 1)}>
+              Continuar
+            </Button>
+          )}
+          {/* Siempre hay salida: un paso que no se puede completar ahora (p. ej. Google rechaza la
+              autorización) no puede dejar al usuario encerrado; el aviso de la barra recuerda lo que falta. */}
+          <Button variant={listo && actual === PASOS.length - 1 ? "primary" : "secondary"} data-testid="onboarding-terminar" onClick={() => navigate("/chat", listo ? { state: { bienvenida: true } } : undefined)}>
+            {listo ? "Ir al chat" : "Terminar más tarde"}
+          </Button>
+        </div>
+      </main>
     </div>
   );
 }
 
-function Paso({ id, titulo, hecho, children }: { id: string; titulo: string; hecho: boolean; children: ReactNode }) {
+function Mono({ children }: { children: ReactNode }) {
+  return <code className={s.mono}>{children}</code>;
+}
+
+function Paso({ id, titulo, hecho, visible, children }: { id: string; titulo: string; hecho: boolean; visible: boolean; children: ReactNode }) {
   return (
-    <li data-testid={id} data-estado={hecho ? "hecho" : "pendiente"} className={`paso ${hecho ? "hecho" : ""}`}>
-      <h2>
-        {hecho ? "✓" : "○"} {titulo}
+    <li data-testid={id} data-estado={hecho ? "hecho" : "pendiente"} hidden={!visible} className={s.paso}>
+      <h2 className={s.h2}>
+        <span className={cx(s.estado, hecho && s.estadoHecho)} aria-hidden>
+          {hecho ? <Check size="0.9em" /> : "○"}
+        </span>
+        {titulo}
+        <span className={s.soloLectores}>{hecho ? " (hecho)" : " (pendiente)"}</span>
       </h2>
       {children}
     </li>

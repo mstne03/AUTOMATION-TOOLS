@@ -1,0 +1,36 @@
+# Dependabot solo lee este fichero desde la rama por defecto (main): se activa al fusionar
+# ds/v1. Semanal y agrupado para no inundar de PRs. `cooldown` espera 7 días antes de proponer
+# una versión recién publicada: una versión maliciosa suele detectarse y retirarse en ese plazo.
+# Las alertas de seguridad (Dependabot alerts) van aparte y no esperan.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: uv
+    directories: [/app-backend, /kb-seo, /youtube-mcp-server]
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+    groups:
+      python: { update-types: [minor, patch] }
+
+  - package-ecosystem: npm
+    directories: [/app-ui, /video-mcp-server]
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+    groups:
+      npm: { update-types: [minor, patch] }
+
+  - package-ecosystem: cargo
+    directory: /app-ui/src-tauri
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+    groups:
+      cargo: { update-types: [minor, patch] }

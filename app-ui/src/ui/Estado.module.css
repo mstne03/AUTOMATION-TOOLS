@@ -1,0 +1,8 @@
+.estado {
+  margin: 0;
+  padding: var(--space-32);
+  color: var(--color-text);
+}
+.error {
+  color: var(--color-risk-destructive-text);
+}

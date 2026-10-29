@@ -2,18 +2,45 @@
 
 Provides access to channel and video performance metrics, audience data,
 traffic sources, and more via the YouTube Analytics API.
+
+Notas verificadas contra la API real (2026-10-27):
+- `creatorContentType` se FILTRA en minúsculas (`shorts`, `video_on_demand`,
+  `live_stream`); las mayúsculas de la documentación devuelven 400.
+- Los datos llegan con 48-72 h de retraso: pedir hasta hoy no da error, pero los
+  últimos días faltan y el resultado parece una caída.
+- `views` cuenta cada inicio de reproducción (cambio de 2025/2026); `engagedViews`
+  es la vista "que cuenta" (la que usa la monetización).
 """
 
 from datetime import date, timedelta
 
+from googleapiclient.errors import HttpError
+
 from youtube_mcp.server import auth, mcp
 
+DATA_LAG_DAYS = 3
 
-def _default_date_range(days: int = 28) -> tuple[str, str]:
-    """Return (start_date, end_date) strings for the last N days."""
-    end = date.today()
-    start = end - timedelta(days=days)
-    return start.isoformat(), end.isoformat()
+
+def _date_range(
+    start_date: str | None, end_date: str | None, default_days: int = 28
+) -> tuple[str, str, str | None]:
+    """(start, end, aviso). Por defecto, los `default_days` días que terminan donde
+    acaban los datos procesados; el aviso aparece si el rango pide días sin procesar."""
+    ultimo = date.today() - timedelta(days=DATA_LAG_DAYS)
+    end = date.fromisoformat(end_date) if end_date else ultimo
+    start = date.fromisoformat(start_date) if start_date else end - timedelta(days=default_days)
+    note = None
+    if end > ultimo:
+        note = (
+            f"YouTube Analytics data lags 48-72h: days after {ultimo.isoformat()} "
+            "are missing or incomplete, not a real drop."
+        )
+    return start.isoformat(), end.isoformat(), note
+
+
+def _api_error(e: HttpError) -> dict:
+    status = e.resp.status
+    return {"error": f"YouTube Analytics API {status}: {e.reason or e}", "status": status}
 
 
 def _run_analytics_query(
@@ -24,12 +51,12 @@ def _run_analytics_query(
     filters: str | None = None,
     sort: str | None = None,
     max_results: int | None = None,
+    default_days: int = 28,
 ) -> dict:
-    """Execute a YouTube Analytics API query."""
+    """Execute a YouTube Analytics API query. API errors come back as {"error", "status"}."""
     analytics = auth.build_youtube_analytics_service()
 
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range()
+    start_date, end_date, note = _date_range(start_date, end_date, default_days)
 
     params = {
         "ids": "channel==MINE",
@@ -46,7 +73,10 @@ def _run_analytics_query(
     if max_results:
         params["maxResults"] = max_results
 
-    response = analytics.reports().query(**params).execute()
+    try:
+        response = analytics.reports().query(**params).execute()
+    except HttpError as e:
+        return {**_api_error(e), "start_date": start_date, "end_date": end_date}
 
     # Transform into a more readable format
     column_headers = [h["name"] for h in response.get("columnHeaders", [])]
@@ -56,13 +86,16 @@ def _run_analytics_query(
     for row in rows:
         results.append(dict(zip(column_headers, row)))
 
-    return {
+    out = {
         "start_date": start_date,
         "end_date": end_date,
         "columns": column_headers,
         "results": results,
         "total_rows": len(results),
     }
+    if note:
+        out["note"] = note
+    return out
 
 
 @mcp.tool()
@@ -72,16 +105,17 @@ def youtube_analytics_overview(
 ) -> dict:
     """Get channel-level analytics summary.
 
-    Returns views, watch time, subscribers gained/lost, likes, comments,
-    and shares for the date range.
+    Returns views, engaged views, watch time, subscribers gained/lost, likes,
+    comments, and shares for the date range. `views` counts every playback start;
+    `engagedViews` is the view that counts for monetization.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
     return _run_analytics_query(
         metrics=(
-            "views,estimatedMinutesWatched,averageViewDuration,"
+            "views,engagedViews,estimatedMinutesWatched,averageViewDuration,"
             "subscribersGained,subscribersLost,"
             "likes,comments,shares"
         ),
@@ -101,13 +135,13 @@ def youtube_analytics_top_videos(
     Returns per-video metrics sorted by view count, excluding Shorts.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
         max_results: Number of videos to return (max 200).
     """
     return _run_analytics_query(
         metrics=(
-            "views,estimatedMinutesWatched,averageViewDuration,"
+            "views,engagedViews,estimatedMinutesWatched,averageViewDuration,"
             "likes,comments,shares"
         ),
         dimensions="video",
@@ -130,13 +164,13 @@ def youtube_analytics_top_shorts(
     Returns per-Short metrics sorted by view count.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
         max_results: Number of Shorts to return (max 200).
     """
     return _run_analytics_query(
         metrics=(
-            "views,estimatedMinutesWatched,averageViewDuration,"
+            "views,engagedViews,estimatedMinutesWatched,averageViewDuration,"
             "likes,comments,shares"
         ),
         dimensions="video",
@@ -160,12 +194,12 @@ def youtube_analytics_video_detail(
 
     Args:
         video_id: YouTube video ID
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
     return _run_analytics_query(
         metrics=(
-            "views,estimatedMinutesWatched,averageViewDuration,"
+            "views,engagedViews,estimatedMinutesWatched,averageViewDuration,"
             "likes,comments,shares,"
             "subscribersGained,subscribersLost"
         ),
@@ -188,8 +222,8 @@ def youtube_analytics_traffic_sources(
     Shows views from search, suggested, browse, external, etc.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
         video_id: Optional video ID to filter to a specific video.
     """
     filters = f"video=={video_id}" if video_id else None
@@ -211,8 +245,8 @@ def youtube_analytics_demographics(
     """Get audience demographics — age group and gender breakdown.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
     return _run_analytics_query(
         metrics="viewerPercentage",
@@ -232,8 +266,8 @@ def youtube_analytics_geography(
     """Get views by country.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
         max_results: Number of countries to return.
     """
     return _run_analytics_query(
@@ -257,12 +291,12 @@ def youtube_analytics_daily(
     Returns one row per day with views, watch time, subs, likes, shares.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
     return _run_analytics_query(
         metrics=(
-            "views,estimatedMinutesWatched,averageViewDuration,"
+            "views,engagedViews,estimatedMinutesWatched,averageViewDuration,"
             "subscribersGained,likes,shares"
         ),
         dimensions="day",
@@ -283,25 +317,27 @@ def youtube_analytics_day_of_week(
     perform best. Useful for scheduling uploads.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 90 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 90 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range(days=90)
-
     raw = _run_analytics_query(
-        metrics="views,estimatedMinutesWatched,likes,shares",
+        metrics="views,engagedViews,estimatedMinutesWatched,likes,shares",
         dimensions="day",
         sort="day",
         start_date=start_date,
         end_date=end_date,
+        default_days=90,
     )
+    if "error" in raw:
+        return raw
 
     # Aggregate by day of week
     from collections import defaultdict
     from datetime import date as date_cls
 
-    weekday_totals = defaultdict(lambda: {"views": 0, "minutes": 0, "likes": 0, "shares": 0, "days": 0})
+    weekday_totals = defaultdict(
+        lambda: {"views": 0, "engaged": 0, "minutes": 0, "likes": 0, "shares": 0, "days": 0}
+    )
     weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
     for row in raw.get("results", []):
@@ -311,6 +347,7 @@ def youtube_analytics_day_of_week(
         d = date_cls.fromisoformat(day_str)
         name = weekday_names[d.weekday()]
         weekday_totals[name]["views"] += row.get("views", 0)
+        weekday_totals[name]["engaged"] += row.get("engagedViews", 0)
         weekday_totals[name]["minutes"] += row.get("estimatedMinutesWatched", 0)
         weekday_totals[name]["likes"] += row.get("likes", 0)
         weekday_totals[name]["shares"] += row.get("shares", 0)
@@ -324,17 +361,21 @@ def youtube_analytics_day_of_week(
         results.append({
             "day": name,
             "avg_views": round(totals["views"] / n, 1),
+            "avg_engaged_views": round(totals["engaged"] / n, 1),
             "avg_minutes": round(totals["minutes"] / n, 1),
             "avg_likes": round(totals["likes"] / n, 1),
             "avg_shares": round(totals["shares"] / n, 1),
             "sample_days": totals["days"],
         })
 
-    return {
-        "start_date": start_date,
-        "end_date": end_date,
+    out = {
+        "start_date": raw["start_date"],
+        "end_date": raw["end_date"],
         "results": results,
     }
+    if "note" in raw:
+        out["note"] = raw["note"]
+    return out
 
 
 @mcp.tool()
@@ -345,11 +386,10 @@ def youtube_analytics_content_type_breakdown(
     """Compare performance of Shorts vs long-form videos vs live streams.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
-    if not start_date or not end_date:
-        start_date, end_date = _default_date_range()
+    start_date, end_date, note = _date_range(start_date, end_date)
 
     content_types = {
         "shorts": "creatorContentType==shorts",
@@ -359,25 +399,45 @@ def youtube_analytics_content_type_breakdown(
 
     results = {}
     for label, filter_str in content_types.items():
-        try:
-            data = _run_analytics_query(
-                metrics="views,estimatedMinutesWatched,averageViewDuration,likes,comments,shares",
-                filters=filter_str,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            if data.get("results"):
-                results[label] = data["results"][0]
-            else:
-                results[label] = {"views": 0, "estimatedMinutesWatched": 0}
-        except Exception:
-            results[label] = {"error": "not available"}
+        data = _run_analytics_query(
+            metrics="views,engagedViews,estimatedMinutesWatched,averageViewDuration,likes,comments,shares",
+            filters=filter_str,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if "error" in data:
+            results[label] = {"error": data["error"]}
+        elif data.get("results"):
+            results[label] = data["results"][0]
+        else:
+            results[label] = {"views": 0, "engagedViews": 0, "estimatedMinutesWatched": 0}
 
-    return {
+    out = {
         "start_date": start_date,
         "end_date": end_date,
         "breakdown": results,
     }
+    if note:
+        out["note"] = note
+    return out
+
+
+def _revenue_query(**kwargs) -> dict:
+    """Un canal sin monetizar no da 403: devuelve filas vacías (comprobado en vivo).
+    Se explican ambos casos para que el modelo no lea el vacío como "0 de ingresos"."""
+    data = _run_analytics_query(**kwargs)
+    if data.get("status") == 403:
+        data["error"] = (
+            "Revenue data not available (403). Channel may not be monetized "
+            "(YouTube Partner Program required) or the token lacks yt-analytics-monetary."
+        )
+    elif "error" not in data and not data["results"]:
+        data["note"] = " ".join(filter(None, [
+            "No revenue rows: the channel is probably not in the YouTube Partner Program, "
+            "or earned nothing in this range.",
+            data.get("note"),
+        ]))
+    return data
 
 
 @mcp.tool()
@@ -391,22 +451,14 @@ def youtube_analytics_revenue(
     Returns estimated revenue, ad revenue, and YouTube Premium revenue.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
-    try:
-        return _run_analytics_query(
-            metrics="estimatedRevenue,estimatedAdRevenue,grossRevenue,estimatedRedPartnerRevenue",
-            start_date=start_date,
-            end_date=end_date,
-        )
-    except Exception as e:
-        if "Forbidden" in str(e):
-            return {
-                "error": "Revenue data not available. Channel may not be monetized "
-                "(YouTube Partner Program required)."
-            }
-        raise
+    return _revenue_query(
+        metrics="estimatedRevenue,estimatedAdRevenue,grossRevenue,estimatedRedPartnerRevenue",
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @mcp.tool()
@@ -420,26 +472,18 @@ def youtube_analytics_revenue_by_video(
     Requires the channel to be in the YouTube Partner Program.
 
     Args:
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
         max_results: Number of videos to return (max 200).
     """
-    try:
-        return _run_analytics_query(
-            metrics="estimatedRevenue,estimatedAdRevenue,grossRevenue",
-            dimensions="video",
-            sort="-estimatedRevenue",
-            max_results=min(max_results, 200),
-            start_date=start_date,
-            end_date=end_date,
-        )
-    except Exception as e:
-        if "Forbidden" in str(e):
-            return {
-                "error": "Revenue data not available. Channel may not be monetized "
-                "(YouTube Partner Program required)."
-            }
-        raise
+    return _revenue_query(
+        metrics="estimatedRevenue,estimatedAdRevenue,grossRevenue",
+        dimensions="video",
+        sort="-estimatedRevenue",
+        max_results=min(max_results, 200),
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @mcp.tool()
@@ -456,8 +500,8 @@ def youtube_analytics_retention(
 
     Args:
         video_id: YouTube video ID
-        start_date: Start date (YYYY-MM-DD). Defaults to 28 days ago.
-        end_date: End date (YYYY-MM-DD). Defaults to today.
+        start_date: Start date (YYYY-MM-DD). Defaults to 28 days before end_date.
+        end_date: End date (YYYY-MM-DD). Defaults to the last processed day (3 days ago).
     """
     return _run_analytics_query(
         metrics="audienceWatchRatio,relativeRetentionPerformance",

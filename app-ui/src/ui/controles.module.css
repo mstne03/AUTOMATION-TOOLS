@@ -1,0 +1,43 @@
+/* Aspecto común de Input, Textarea, Select y TagInput. */
+.control {
+  width: 100%;
+  height: var(--size-control-md);
+  padding: 0 var(--space-12);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+.control::placeholder {
+  color: var(--color-subtle);
+}
+.control:hover:not(:disabled) {
+  border-color: var(--color-subtle);
+}
+.control:disabled {
+  background: var(--color-surface-2);
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+.control[aria-invalid="true"] {
+  border-color: var(--color-risk-destructive);
+}
+/* IDs, rutas: monoespaciada para distinguir I/l/1 y O/0. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+}
+.area {
+  height: auto;
+  padding-block: var(--space-8);
+  resize: vertical;
+}
+.compacto {
+  height: var(--size-control-30);
+  padding: 0 var(--space-8);
+  font-size: var(--text-13);
+}

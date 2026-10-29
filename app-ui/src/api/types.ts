@@ -59,10 +59,28 @@ export interface Settings {
   profile: string;
   has_anthropic_key: boolean;
   has_client_secret: boolean;
+  /** Proyecto de Google Cloud (client_secret.json) de toda la app; null si no hay ninguno. */
+  google_project?: GoogleProject | null;
   state_dir: string;
   secret_store: string;
   /** Diagnóstico: debe ser null (si no, Whisper no puede bajar su modelo). */
   hf_hub_offline?: string | null;
+}
+
+/** El cliente OAuth llega enmascarado ("123456…wxyz"): identifica el proyecto sin exponerlo. */
+export interface GoogleProject {
+  project_id: string | null;
+  client_id: string;
+}
+
+/** Respuesta de importar/quitar el client_secret.json: perfiles cuya autorización se ha perdido. */
+export type SettingsTrasProyecto = Settings & { desautorizados: string[] };
+
+/** Canal de YouTube que autorizó un perfil (lo lee el sidecar al autorizar). */
+export interface CanalYouTube {
+  id: string;
+  title: string | null;
+  handle: string | null;
 }
 
 export interface SettingsPatch {
@@ -79,12 +97,103 @@ export interface YouTubeStatus {
     profiles: string[];
     authenticated: boolean;
     store: string;
+    /** Canal del perfil activo, si se conoce. */
+    channel?: CanalYouTube | null;
+    /** Canal de cada perfil autorizado (solo los que se conocen). */
+    channels?: Record<string, CanalYouTube>;
     [k: string]: unknown;
   };
   quota: {
     buckets: Record<"general" | "search" | "video_insert", { used: number; limit: number }>;
     [k: string]: unknown;
   };
+}
+
+/** Conversación guardada en el sidecar (GET /conversations): `perfil`, el canal activo al crearla. */
+export interface ConversacionResumen {
+  id: string;
+  titulo: string;
+  perfil: string | null;
+  creada: number;
+  actualizada: number;
+}
+
+/** GET /conversations/{id}: cada turno, con el texto del usuario y los eventos SSE de la respuesta. */
+export interface ConversacionDetalle extends ConversacionResumen {
+  turnos: Array<{ texto: string; eventos: ChatEvent[] }>;
+}
+
+/** POST /youtube/auth: `duplicated_in`, otros perfiles que ya tenían autorizado este mismo canal. */
+export interface YouTubeAuthOut {
+  status: "authenticated";
+  detail: YouTubeStatus["auth"];
+  duplicated_in: string[];
+}
+
+/** Tarjeta de GET /kb/buscar?formato=json. `origen`: snapshot público o KB privada del usuario. */
+export interface KbResultado {
+  titulo: string;
+  plataforma: string | null;
+  plataformas: string[];
+  fecha: string | null;
+  url: string | null;
+  origen: "publica" | "privada";
+  fragmento: string;
+}
+
+/** Documento de GET /kb/fuentes?formato=json. */
+export type KbFuente = Omit<KbResultado, "fragmento">;
+
+/** Estado del snapshot instalado (GET /kb/estado → snapshot). */
+export interface KbSnapshot {
+  instalada: boolean;
+  version: string | null;
+  exportada: string | null;
+  documentos: number | null;
+  chunks: number | null;
+  anterior_disponible: boolean;
+  url: string;
+  ultima_comprobacion?: string | null;
+  ultimo_error?: string | null;
+}
+
+export interface KbEstado extends Texto {
+  snapshot: KbSnapshot;
+}
+
+/** Documento de la KB privada (GET /kb/privada/fuentes). */
+export interface KbPrivadaFuente {
+  title: string | null;
+  url: string;
+  published_at: string | null;
+  platforms: string[];
+}
+
+/** GET /youtube/channel: datos del Panel de canal (caché de 10 min en el sidecar). */
+export interface CanalPanel {
+  canal: { id: string; titulo: string; handle: string | null; avatar: string | null; suscriptores: number; visualizaciones_totales: number; videos: number };
+  metricas: {
+    inicio: string;
+    fin: string;
+    visualizaciones: number;
+    visualizaciones_delta_pct: number | null;
+    horas_vistas: number;
+    suscriptores_netos: number;
+    retencion_media: number;
+  } | null;
+  metricas_error: string | null;
+  videos: Array<{
+    id: string;
+    titulo: string | null;
+    publicado: string | null;
+    visualizaciones: number;
+    es_short: boolean;
+    miniatura: string | null;
+    estado: "private" | "public" | "unlisted" | null;
+    programado_para: string | null;
+  }>;
+  actualizado: string;
+  cache: boolean;
 }
 
 export interface ToolInfo {

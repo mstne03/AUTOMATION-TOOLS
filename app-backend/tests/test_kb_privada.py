@@ -67,3 +67,28 @@ async def test_la_tool_de_guardar_es_write():
 
     specs = registry.by_name(registry.build())
     assert specs["guardar_en_kb_privada"].risk == "write"
+
+
+async def test_busqueda_y_fuentes_en_json_para_la_ui(client):
+    await client.post("/kb/privada/notas", headers=AUTH, json={
+        "identificador": "analitica:2026-10",
+        "titulo": "Analiticas de octubre",
+        "texto": "Los shorts con gancho en los primeros dos segundos retienen un 40% mas.",
+        "platforms": ["youtube"],
+        "published_at": "2026-10-11",
+    })
+    try:
+        r = await client.get("/kb/buscar", headers=AUTH, params={"q": "retencion en shorts", "formato": "json", "k": 5})
+        assert r.status_code == 200, r.text
+        tarjeta = next(t for t in r.json() if t["url"] == "analitica:2026-10")
+        assert (tarjeta["titulo"], tarjeta["plataforma"], tarjeta["origen"]) == ("Analiticas de octubre", "youtube", "privada")
+        assert "gancho" in tarjeta["fragmento"]
+
+        r = await client.get("/kb/fuentes", headers=AUTH, params={"formato": "json"})
+        assert r.status_code == 200
+        assert {"titulo": "Analiticas de octubre", "plataforma": "youtube", "plataformas": ["youtube"], "fecha": "2026-10-11",
+                "url": "analitica:2026-10", "origen": "privada"} in r.json()
+        # sin formato sigue siendo el texto del agente
+        assert "texto" in (await client.get("/kb/fuentes", headers=AUTH)).json()
+    finally:
+        await client.request("DELETE", "/kb/privada/fuentes", headers=AUTH, json={"url": "analitica:2026-10"})

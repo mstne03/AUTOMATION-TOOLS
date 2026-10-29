@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+  Escena `cartel`: frase clave en Anton tan grande como quepa, sobre `fondo`.
+  weight-wave (catálogo) necesita una fuente variable (Recursive); Anton no lo es, así que se usa la
+  alternativa del plan: entrada palabra a palabra con blur 6 → 0 px, separadas 0,067 s.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+        #{{ID}} .capa { position: absolute; inset: 0; }
+        #{{ID}}-caja { position: absolute; left: 90px; top: 300px; width: 900px; height: 700px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #{{ID}}-txt { display: flex; flex-wrap: wrap; justify-content: center; column-gap: 0.26em; width: 900px; font-family: var(--fuente-titulos); font-weight: var(--peso-titulos);
+          line-height: 1.02; text-transform: uppercase; color: var(--texto); text-align: center; -webkit-text-stroke: 5px var(--contorno); paint-order: stroke fill;
+          text-shadow: 0 16px 44px rgba(0, 0, 0, 0.5); }
+        #{{ID}} .w { display: inline-block; }
+        #{{ID}} .w.ultima { color: var(--acento); }
+        #{{ID}}-sub { margin-top: 30px; font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos); font-size: 48px; color: var(--texto); opacity: 0.85;
+          text-transform: uppercase; letter-spacing: 0.05em; text-align: center; -webkit-text-stroke: 4px var(--contorno); paint-order: stroke fill; }
+      </style>
+      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0">
+        <div id="{{ID}}-fundido" class="capa">
+          <div id="{{ID}}-golpe" class="capa">
+            <div id="{{ID}}-punch" class="capa">
+              <div id="{{ID}}-caja">
+                <div id="{{ID}}-txt" data-layout-allow-occlusion style="font-size: {{TAMANO}}px">{{PALABRAS}}</div>
+                <div id="{{ID}}-sub" data-layout-allow-occlusion>{{SUBTEXTO}}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script id="{{ID}}-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var id = "{{ID}}";
+          var d = JSON.parse(document.getElementById(id + "-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          {{ENVOLTURA}}
+          document.querySelectorAll("#" + id + " .w").forEach(function (w, i) {
+            tl.fromTo(w, { opacity: 0, filter: "blur(6px)", y: 24 }, { opacity: 1, filter: "blur(0px)", y: 0, duration: 0.35, ease: "power3.out" }, d.empieza + i * 0.067);
+          });
+          tl.fromTo("#" + id + "-sub", { opacity: 0, y: 16 }, { opacity: 0.85, y: 0, duration: 0.4, ease: "power2.out" }, d.empieza + 0.4);
+          window.__timelines = window.__timelines || {};
+          window.__timelines[id] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

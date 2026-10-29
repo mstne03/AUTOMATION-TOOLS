@@ -91,15 +91,26 @@ export function reduceTurno(turno: Turno, ev: ChatEvent): Turno {
       );
     case "done":
       return {
-        ...turno,
+        ...sinPendientes(turno),
         estado: "done",
         conversation_id: ev.conversation_id,
         stop_reason: ev.stop_reason,
         usage: ev.usage,
       };
     case "error":
-      return { ...turno, estado: "error", error: ev.message };
+      return { ...sinPendientes(turno), estado: "error", error: ev.message };
   }
+}
+
+/** Al cerrarse el turno, el sidecar cancela las propuestas que seguían esperando (Approvals.wait):
+ *  aquí también, para que ninguna tarjeta ni el diálogo de Publicar se queden esperando una
+ *  decisión que ya no se puede tomar. */
+function sinPendientes(turno: Turno): Turno {
+  if (!turno.bloques.some((b) => b.kind === "tool" && b.approval?.status === "pending")) return turno;
+  return {
+    ...turno,
+    bloques: turno.bloques.map((b) => (b.kind === "tool" && b.approval?.status === "pending" ? { ...b, approval: { ...b.approval, status: "cancelled" as const } } : b)),
+  };
 }
 
 /** Ruta real resuelta por la lista blanca (viene en el resultado, no en lo que pidió el modelo). */
@@ -117,16 +128,22 @@ export function rutaResuelta(b: BloqueTool): string | undefined {
   return undefined;
 }
 
-/** Aproximación para el indicador de coste; precios de lista en $/Mtok (2026). */
+/** Precios de lista en $/Mtok (entrada, salida, lectura de caché) por familia de modelo.
+ *  Única tabla de la UI: se corrige aquí cuando cambien los precios. Escritura de caché = 1,25 × entrada. */
+export const PRECIOS_MODELO = {
+  opus: { entrada: 4, salida: 20, cache: 0.2 },
+  sonnet: { entrada: 2, salida: 10, cache: 0.2 },
+} as const;
+
+/** Aproximación para el indicador de coste; cualquier modelo que no sea Opus se tarifa como Sonnet. */
 export function costeUsd(model: string, u: Usage | null | undefined): number {
   if (!u) return 0;
-  const opus = model.includes("opus");
-  const [inP, outP, cacheP] = opus ? [15, 75, 1.5] : [3, 15, 0.3];
+  const p = model.includes("opus") ? PRECIOS_MODELO.opus : PRECIOS_MODELO.sonnet;
   return (
-    ((u.input_tokens ?? 0) * inP +
-      (u.output_tokens ?? 0) * outP +
-      (u.cache_read_input_tokens ?? 0) * cacheP +
-      (u.cache_creation_input_tokens ?? 0) * inP * 1.25) /
+    ((u.input_tokens ?? 0) * p.entrada +
+      (u.output_tokens ?? 0) * p.salida +
+      (u.cache_read_input_tokens ?? 0) * p.cache +
+      (u.cache_creation_input_tokens ?? 0) * p.entrada * 1.25) /
     1_000_000
   );
 }

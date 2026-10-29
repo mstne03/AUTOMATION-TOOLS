@@ -66,6 +66,52 @@ def test_status_no_token(tmp_path):
     assert status["profiles"] == []
 
 
+class TestStatusConTokenCaducado:
+    """El token de acceso caduca a la hora; con token de refresco el canal sigue autorizado."""
+
+    @staticmethod
+    def _caducado(tmp_path, refresh_side_effect=None):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        creds = MagicMock(valid=False, expired=True, refresh_token="r", scopes=["s"])
+        creds.to_json.return_value = '{"renovado": true}'
+        creds.refresh.side_effect = refresh_side_effect
+        return yt_auth, creds
+
+    def test_se_renueva_y_cuenta_como_autorizado(self, tmp_path):
+        yt_auth, creds = self._caducado(tmp_path)
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is True
+        creds.refresh.assert_called_once()
+        assert yt_auth.store.get("token:default") == '{"renovado": true}'  # el token nuevo se guarda
+
+    def test_si_google_rechaza_el_refresco_no_esta_autorizado_y_dice_por_que(self, tmp_path):
+        from google.auth.exceptions import RefreshError
+
+        yt_auth, creds = self._caducado(tmp_path, RefreshError("invalid_grant: Token has been expired or revoked."))
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is False
+        assert "vuelve a autorizar" in status["reason"]
+
+    def test_sin_red_no_se_da_por_perdida_la_autorizacion(self, tmp_path):
+        from google.auth.exceptions import TransportError
+
+        yt_auth, creds = self._caducado(tmp_path, TransportError("sin conexión"))
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is True
+        assert status["unverified"] is True
+
+    def test_sin_token_de_refresco_no_esta_autorizado(self, tmp_path):
+        yt_auth, creds = self._caducado(tmp_path)
+        creds.refresh_token = None
+        with patch.object(yt_auth, "_load_token", return_value=creds):
+            status = yt_auth.status()
+        assert status["authenticated"] is False
+        creds.refresh.assert_not_called()
+
+
 def test_authenticate_missing_client_secret(tmp_path):
     yt_auth = YouTubeAuth(
         config_dir=tmp_path,
@@ -205,3 +251,196 @@ class TestInjectedStore:
             yt_auth.import_client_secret("{}")
         with pytest.raises(AuthError, match="not valid JSON"):
             yt_auth.import_client_secret("{nope")
+
+
+CLIENTE_B = json.dumps(
+    {
+        "installed": {
+            "client_id": "123456789012-abcdefghwxyz.apps.googleusercontent.com",
+            "client_secret": "s2",
+            "project_id": "proyecto-b",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+)
+
+
+def _token(client_id: str) -> str:
+    """Token guardado válido (caduca en 2099) emitido para `client_id`."""
+    return json.dumps({"token": "t", "refresh_token": "r", "client_id": client_id, "client_secret": "s", "token_uri": "https://oauth2.googleapis.com/token", "expiry": "2099-01-01T00:00:00Z"})
+
+
+class TestProyectoUnico:
+    """Un solo proyecto de Google (client_secret) para toda la app; un token por canal (perfil)."""
+
+    def test_muestra_el_proyecto_y_el_cliente_enmascarado(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        assert yt_auth.client_info() is None
+        yt_auth.import_client_secret(CLIENTE_B)
+        assert yt_auth.client_info() == {"project_id": "proyecto-b", "client_id": "123456…wxyz"}
+
+    def test_volver_a_importar_el_mismo_no_desautoriza_nada(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        yt_auth.store.set("token:default", _token("id"))
+        assert yt_auth.import_client_secret(CLIENT_SECRET) == {"mismo": True, "desautorizados": []}
+        assert yt_auth.profiles() == ["default"]
+
+    def test_otro_proyecto_con_canales_autorizados_pide_confirmacion(self, tmp_path):
+        from youtube_mcp.auth import ClientSecretConflict
+
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        yt_auth.store.set("token:default", _token("id"))
+        yt_auth.store.set("token:smooth", _token("id"))
+        with pytest.raises(ClientSecretConflict) as e:
+            yt_auth.import_client_secret(CLIENTE_B)
+        assert e.value.afectados == ["default", "smooth"]
+        assert yt_auth.client_info()["project_id"] is None  # sigue el anterior (sin project_id)
+
+    def test_sustituir_confirmado_desautoriza_todos_los_canales(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        yt_auth.store.set("token:default", _token("id"))
+        yt_auth.store.set("canal:default", '{"id": "UC1", "title": "Canal A", "handle": "@a"}')
+        r = yt_auth.import_client_secret(CLIENTE_B, replace=True)
+        assert r == {"mismo": False, "desautorizados": ["default"]}
+        assert yt_auth.profiles() == []
+        assert yt_auth.store.get("canal:default") is None
+        assert yt_auth.client_info()["project_id"] == "proyecto-b"
+
+    def test_un_token_de_otro_proyecto_no_cuenta_como_autorizado(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.store.set("client_secret", CLIENTE_B)  # p. ej. sustituido por fuera de la app
+        yt_auth.store.set("token:default", _token("id"))
+        status = yt_auth.status()
+        assert status["authenticated"] is False
+        assert "otro proyecto" in status["reason"]
+
+    def test_autorizar_con_un_token_de_otro_proyecto_abre_el_consentimiento(self, tmp_path):
+        """El token guardado lleva dentro el cliente del proyecto viejo y se renovaría contra él: ni las
+        tools deben usarlo ni "Autorizar" puede darlo por bueno sin pasar por Google con el actual."""
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.store.set("client_secret", CLIENTE_B)
+        yt_auth.store.set("token:default", _token("id"))  # válido, pero emitido para el cliente "id"
+        with pytest.raises(AuthError, match="otro proyecto"):
+            yt_auth.authenticate()
+        nuevo = MagicMock()
+        nuevo.to_json.return_value = _token("123456789012-abcdefghwxyz.apps.googleusercontent.com")
+        with patch("youtube_mcp.auth.InstalledAppFlow") as flujo:
+            flujo.from_client_config.return_value.run_local_server.return_value = nuevo
+            assert yt_auth.authenticate(interactive=True) is nuevo
+        flujo.from_client_config.assert_called_once()
+        assert yt_auth.status()["authenticated"] is True
+
+    def test_recuerda_el_canal_autorizado_de_cada_perfil(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.store.set("token:default", _token("id"))  # solo se muestran canales con token
+        servicio = MagicMock()
+        servicio.channels().list().execute.return_value = {"items": [{"id": "UC1", "snippet": {"title": "Canal A", "customUrl": "@a"}}]}
+        with patch.object(yt_auth, "build_youtube_service", return_value=servicio):
+            canal = yt_auth.remember_channel()
+        assert canal == {"id": "UC1", "title": "Canal A", "handle": "@a"}
+        status = yt_auth.status()
+        assert status["channel"] == canal
+        assert status["channels"] == {"default": canal}
+
+    def test_eliminar_el_proyecto_desautoriza_todo(self, tmp_path):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        yt_auth.store.set("token:default", _token("id"))
+        assert yt_auth.remove_client_secret() == ["default"]
+        assert not yt_auth.has_client_secret()
+        assert yt_auth.profiles() == []
+
+    @pytest.mark.parametrize(
+        "error, esperado",
+        [
+            ("(access_denied) access_denied", "usuario de prueba"),
+            ("(invalid_client) The OAuth client was not found.", "no reconoce el cliente OAuth"),
+            ("(redirect_uri_mismatch) Bad Request", "Aplicación de escritorio"),
+        ],
+    )
+    def test_los_errores_de_google_se_explican(self, tmp_path, error, esperado):
+        yt_auth = YouTubeAuth(config_dir=tmp_path, store=DictStore())
+        yt_auth.import_client_secret(CLIENT_SECRET)
+        with patch("youtube_mcp.auth.InstalledAppFlow") as flow:
+            flow.from_client_config.return_value.run_local_server.side_effect = Exception(error)
+            with pytest.raises(AuthError, match=esperado):
+                yt_auth.authenticate(interactive=True)
+
+
+class TestFlujoInterrumpido:
+    """El usuario cierra la pestaña de Google: run_local_server no debe esperar para siempre."""
+
+    @staticmethod
+    def _autorizar_en_hilo(tmp_path):
+        import threading
+        import time
+
+        secret = tmp_path / "client_secret.json"
+        secret.write_text(CLIENT_SECRET)
+        yt_auth = YouTubeAuth(config_dir=tmp_path, client_secret_path=secret, store=DictStore())
+        resultado: dict = {}
+
+        def autorizar():
+            try:
+                yt_auth.authenticate(interactive=True, force_consent=True)
+            except AuthError as e:
+                resultado["error"] = str(e)
+
+        hilo = threading.Thread(target=autorizar, daemon=True)
+        hilo.start()
+        limite = time.monotonic() + 5  # hasta que el servidor local escucha y el "navegador" se abre
+        while getattr(yt_auth, "_en_curso", None) is None and time.monotonic() < limite:
+            time.sleep(0.05)
+        return yt_auth, hilo, resultado
+
+    def test_cancelar_corta_el_flujo_en_curso(self, tmp_path):
+        with patch("google_auth_oauthlib.flow.webbrowser"):  # nadie visita la URL de Google
+            yt_auth, hilo, resultado = self._autorizar_en_hilo(tmp_path)
+            assert yt_auth.cancel_interactive() is True
+            hilo.join(5)
+        assert not hilo.is_alive()
+        assert "cancelada" in resultado["error"]
+        assert yt_auth.cancel_interactive() is False  # ya no queda ninguno en curso
+
+    def test_sin_respuesta_de_google_se_rinde_al_cabo_del_limite(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("youtube_mcp.auth.OAUTH_TIMEOUT_S", 1)
+        with patch("google_auth_oauthlib.flow.webbrowser"):
+            _, hilo, resultado = self._autorizar_en_hilo(tmp_path)
+            hilo.join(5)
+        assert not hilo.is_alive()
+        assert "no respondió" in resultado["error"]
+
+
+def test_alta_de_canal_fallida_no_deja_en_uso_el_perfil_nuevo():
+    from youtube_mcp import server
+
+    server.auth.use_profile("default")
+    with patch.object(server.auth, "authenticate", side_effect=AuthError("Autorización cancelada.")):
+        r = server.youtube_auth(profile="smooth", reauthorize=True)
+    assert r == {"status": "error", "detail": "Autorización cancelada."}
+    assert server.auth.profile == "default"
+
+
+def test_al_autorizar_recuerda_el_canal_y_avisa_si_ya_esta_en_otro_perfil(monkeypatch):
+    from youtube_mcp import server
+
+    monkeypatch.setattr(server.auth, "store", DictStore())
+    server.auth.use_profile("default")
+    server.auth.import_client_secret(CLIENT_SECRET)
+    canal = {"id": "UC1", "title": "Canal A", "handle": "@a"}
+    for perfil in ("default", "otro"):
+        server.auth.store.set(f"token:{perfil}", _token("id"))
+    server.auth.store.set("canal:otro", json.dumps(canal))  # el mismo canal ya estaba en "otro"
+
+    def recordar():
+        server.auth.store.set("canal:default", json.dumps(canal))
+        return canal
+
+    with patch.object(server.auth, "authenticate"), patch.object(server.auth, "remember_channel", side_effect=recordar):
+        r = server.youtube_auth()
+    assert r["status"] == "authenticated"
+    assert r["duplicated_in"] == ["otro"]

@@ -13,21 +13,31 @@ import secrets
 import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+import httpx
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    AsyncAnthropic,
+    AuthenticationError,
+    PermissionDeniedError,
+)
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
-from youtube_mcp.auth import AuthError
+from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, registry
-from app_backend.agent import Agent
+from app_backend import config, registry, video
+from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
+from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
+from app_backend.conversaciones import Almacen
 from app_backend.jobs import Jobs
 from app_backend.kb_update import KBUpdateError, KBUpdater
 
@@ -48,6 +58,33 @@ def _calentar_kb() -> None:
         log.warning("No se pudo precargar el modelo de embeddings: %s", e)
 
 
+def _fuentes_reales(tools: dict) -> Fuentes:
+    """Lecturas reales de youtube_mcp (las mismas funciones que usa el agente, sin pasar por él)."""
+    from youtube_mcp.tools.analytics import _run_analytics_query
+
+    def estado(ids: list[str]) -> dict[str, dict]:
+        yt_quota.consume("list")
+        r = yt_auth.build_youtube_service().videos().list(part="status", id=",".join(ids)).execute()
+        return {
+            v["id"]: {"privacy": v.get("status", {}).get("privacyStatus"), "publish_at": v.get("status", {}).get("publishAt")}
+            for v in r.get("items", [])
+        }
+
+    def analytics(inicio: str, fin: str) -> dict:
+        r = _run_analytics_query(metrics=METRICAS, start_date=inicio, end_date=fin)
+        # Un error de la API puede llegar como dato: que construir() lo muestre en metricas_error.
+        if "error" in r:
+            raise RuntimeError(r["error"])
+        return r["results"][0] if r["results"] else {}
+
+    return Fuentes(
+        canal=lambda: tools["youtube_get_channel"].fn(mine=True),
+        videos=lambda n: tools["youtube_list_videos"].fn(mine=True, max_results=n),
+        estado=estado,
+        analytics=analytics,
+    )
+
+
 def create_app(
     token: str,
     *,
@@ -55,10 +92,14 @@ def create_app(
     jobs_path: str | Path | None = None,
     kb_updater: KBUpdater | None = None,
     kb_auto_update: bool = True,
+    canal_fuentes: Fuentes | None = None,
+    conversaciones_dir: str | Path | None = None,
+    elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
     approvals = Approvals()
+    canal_cache = CanalCache(canal_fuentes or _fuentes_reales(tools))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -68,16 +109,26 @@ def create_app(
             {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()},
         )
         app.state.jobs.start()
-        app.state.agent = Agent(specs, approvals, app.state.jobs, client_factory=client_factory)
+        app.state.agent = Agent(
+            specs,
+            approvals,
+            app.state.jobs,
+            client_factory=client_factory,
+            almacen=Almacen(conversaciones_dir or config.STATE_DIR / "conversaciones"),
+        )
         app.state.kb_updater = kb_updater or KBUpdater(
             config.KB_UPDATE_URL, config.KB_MINISIGN_PUBKEY, config.KB_PUBLIC_PATH
         )
+        # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
+        argv, cwd = video.comando_motor()
+        app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
         tareas = []
         if kb_auto_update:
             tareas.append(asyncio.create_task(_arranque_kb(app.state.kb_updater)))
         yield
         for t in tareas:
             t.cancel()
+        await app.state.motor.cerrar()
         await app.state.jobs.stop()
 
     async def _arranque_kb(updater: KBUpdater) -> None:
@@ -96,7 +147,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ORIGINS,
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -111,6 +162,10 @@ def create_app(
     class ChatIn(BaseModel):
         message: str = Field(min_length=1)
         conversation_id: str | None = None
+        # "Usar KB" apagado: el sidecar se lo indica al modelo sin tocar el texto guardado.
+        sin_kb: bool = False
+        # Publicar usa conversaciones de trabajo que no van a la lista de chats.
+        persistir: bool = True
 
     @app.post("/chat", dependencies=protegido)
     async def chat(body: ChatIn, request: Request):
@@ -119,7 +174,7 @@ def create_app(
         api_key = config.anthropic_api_key(yt_auth.store)
         if not api_key:
             raise HTTPException(status_code=409, detail="Falta la clave de Anthropic (PUT /settings).")
-        conv = agent.conversation(body.conversation_id)
+        conv = agent.conversation(body.conversation_id, perfil=yt_auth.profile, persistir=body.persistir)
         if conv.lock.locked():
             raise HTTPException(status_code=409, detail="Esta conversacion ya tiene un turno en curso.")
 
@@ -128,7 +183,7 @@ def create_app(
         async def turno():
             async with conv.lock:
                 await agent.run_turn(
-                    conv, body.message, events, api_key=api_key, model=settings["model"]
+                    conv, body.message, events, api_key=api_key, model=settings["model"], sin_kb=body.sin_kb
                 )
 
         task = asyncio.create_task(turno())
@@ -145,6 +200,27 @@ def create_app(
                     task.cancel()  # cliente desconectado: cancela el turno y sus aprobaciones
 
         return EventSourceResponse(generar())
+
+    @app.get("/conversations", dependencies=protegido)
+    async def list_conversations():
+        return await asyncio.to_thread(app.state.agent.listar)
+
+    @app.get("/conversations/{conversation_id}", dependencies=protegido)
+    async def get_conversation(conversation_id: str):
+        datos = await asyncio.to_thread(app.state.agent.detalle, conversation_id)
+        if datos is None:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+        return datos
+
+    @app.delete("/conversations/{conversation_id}", dependencies=protegido)
+    async def delete_conversation(conversation_id: str):
+        try:
+            borrada = app.state.agent.borrar(conversation_id)
+        except ConversacionOcupada:
+            raise HTTPException(status_code=409, detail="La conversación tiene una respuesta en curso: cancélala antes de borrarla.")
+        if not borrada:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+        return {"borrada": conversation_id}
 
     # -------------------------------------------------------------- approvals
 
@@ -302,13 +378,58 @@ def create_app(
         return {"borrada": body.url}
 
     @app.get("/kb/fuentes", dependencies=protegido)
-    async def kb_fuentes(plataforma: str | None = None):
+    async def kb_fuentes(plataforma: str | None = None, formato: str | None = None):
+        # Sin `formato` el texto es el que lee el agente; con formato=json, la lista para pintar tarjetas.
+        if formato == "json":
+            from mcp_server.server import fuentes_estructuradas
+
+            return await _kb_json(fuentes_estructuradas, plataforma)
         return {"texto": await asyncio.to_thread(tools["listar_fuentes"].fn, plataforma)}
 
     @app.get("/kb/buscar", dependencies=protegido)
-    async def kb_buscar(q: str, plataforma: str | None = None, k: int = 3):
+    async def kb_buscar(q: str, plataforma: str | None = None, k: int = 3, formato: str | None = None):
+        if formato == "json":
+            from mcp_server.server import buscar_estructurado
+
+            return await _kb_json(buscar_estructurado, q, plataforma, k)
         fn = tools["buscar_kb"].fn
         return {"texto": await asyncio.to_thread(fn, q, plataforma, None, None, None, k)}
+
+    async def _kb_json(fn, *args):
+        try:
+            return await asyncio.to_thread(fn, *args)
+        except Exception as e:
+            log.warning("KB: %s: %s", type(e).__name__, e)
+            raise HTTPException(status_code=503, detail=f"La base de conocimiento no está disponible: {type(e).__name__}.") from e
+
+    # ---------------------------------------------------------------- guiones
+
+    @app.get("/guiones/retencion", dependencies=protegido)
+    async def guiones_retencion(
+        video_id: str = Query(pattern=r"^[A-Za-z0-9_-]{11}$"),
+        format: Literal["long", "short"] = "long",
+        language: str = Query("es", pattern=r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$"),
+    ):
+        # Sin el modelo: la pantalla pinta la curva al momento y la cuota se gasta una vez.
+        # El patrón del ID evita meter texto arbitrario en el filtro de Analytics (video==...).
+        fn = tools["youtube_retention_moments"].fn
+        return await asyncio.to_thread(fn, video_id, format, language)
+
+    # ------------------------------------------------------------------ vídeo
+
+    @app.get("/video/capacidades", dependencies=protegido)
+    async def video_capacidades():
+        try:
+            r = await app.state.motor.llamar(
+                "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
+            )
+        except video.MotorNoDisponible as e:
+            raise HTTPException(status_code=503, detail=str(e)) from None
+        except video.MotorError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        if not isinstance(r.datos, dict):
+            raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
+        return r.datos
 
     # ---------------------------------------------------------------- youtube
 
@@ -318,15 +439,40 @@ def create_app(
 
     @app.get("/youtube/status", dependencies=protegido)
     async def youtube_status():
-        return {"auth": yt_auth.status(), "quota": yt_quota.status()}
+        # status() puede renovar el token con Google (red): fuera del bucle de eventos.
+        return {"auth": await asyncio.to_thread(yt_auth.status), "quota": yt_quota.status()}
+
+    @app.get("/youtube/channel", dependencies=protegido)
+    async def youtube_channel(refresh: bool = False):
+        """Canal, métricas de 28 días y últimos vídeos para el Panel de canal (caché de 10 min)."""
+        estado = await asyncio.to_thread(yt_auth.status)
+        if not estado.get("authenticated"):
+            raise HTTPException(status_code=409, detail="El canal no está autorizado: autorízalo en Ajustes.")
+        try:
+            return await asyncio.to_thread(canal_cache.obtener, estado["profile"], refresh)
+        except CanalError as e:
+            raise HTTPException(status_code=502, detail=f"No se pudo leer el canal: {e}") from e
+        except AuthError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
 
     @app.post("/youtube/auth", dependencies=protegido)
     async def youtube_authorize(body: YouTubeAuthIn):
         # Unica ruta que abre el navegador: la pide el usuario desde la UI, no el modelo.
+        if not yt_auth.has_client_secret():
+            raise HTTPException(
+                status_code=409,
+                detail="Falta el client_secret.json del proyecto de Google Cloud: impórtalo antes de autorizar un canal.",
+            )
         r = await asyncio.to_thread(youtube_auth, body.profile, body.reauthorize)
         if r.get("status") == "error":
             raise HTTPException(status_code=400, detail=r.get("detail", "Fallo al autorizar."))
         return r
+
+    @app.post("/youtube/auth/cancel", dependencies=protegido)
+    async def youtube_authorize_cancel():
+        """Corta la autorización en curso (el usuario cerró la pestaña de Google o pulsó Cancelar):
+        la petición POST /youtube/auth pendiente responde entonces con "Autorización cancelada"."""
+        return {"cancelada": await asyncio.to_thread(yt_auth.cancel_interactive)}
 
     @app.get("/youtube/tools", dependencies=protegido)
     async def youtube_tools():
@@ -338,14 +484,20 @@ def create_app(
     # --------------------------------------------------------------- settings
 
     class SettingsIn(BaseModel):
+        # Una clave pegada con salto de línea se guardaría tal cual y fallaría al validar.
+        model_config = ConfigDict(str_strip_whitespace=True)
+
         model: str | None = None
         allowed_dirs: list[dict] | None = None
         profile: str | None = None
         anthropic_api_key: str | None = None
+        elevenlabs_api_key: str | None = None  # "" la borra
 
     class ClientSecretIn(BaseModel):
         path: str | None = None
         json_text: str | None = None
+        # Sustituir un proyecto de Google por otro desautoriza todos los canales: la UI lo confirma antes.
+        replace: bool = False
 
     def settings_out() -> dict:
         s = config.load_settings()
@@ -353,7 +505,9 @@ def create_app(
             **s,
             "models": list(config.MODELS),
             "has_anthropic_key": config.anthropic_api_key(yt_auth.store) is not None,
+            "has_elevenlabs_key": config.elevenlabs_api_key(yt_auth.store) is not None,
             "has_client_secret": yt_auth.has_client_secret(),
+            "google_project": yt_auth.client_info(),
             "state_dir": str(config.STATE_DIR),
             "secret_store": type(yt_auth.store).__name__,
             # Diagnostico para el smoke test: debe ser None (si no, Whisper no puede bajar su modelo).
@@ -388,9 +542,58 @@ def create_app(
                 yt_auth.store.set(config.ANTHROPIC_KEY, body.anthropic_api_key)
             else:
                 yt_auth.store.delete(config.ANTHROPIC_KEY)
+        if body.elevenlabs_api_key is not None:
+            if body.elevenlabs_api_key:
+                yt_auth.store.set(config.ELEVENLABS_KEY, body.elevenlabs_api_key)
+            else:
+                yt_auth.store.delete(config.ELEVENLABS_KEY)
+            # El motor recibe la clave por su entorno al arrancar: se para y la siguiente llamada lo
+            # relanza con la nueva (o sin ninguna). Si no, seguiría usando y ocultando la revocada.
+            await app.state.motor.cerrar()
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
+
+    class ValidarClaveIn(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True)
+
+        api_key: str | None = None  # sin ella, se valida la clave guardada
+
+    @app.post("/settings/validate-key", dependencies=protegido)
+    async def validate_key(body: ValidarClaveIn):
+        """Comprueba la clave de Anthropic con la llamada más barata (GET /v1/models, sin coste)."""
+        clave = body.api_key or config.anthropic_api_key(yt_auth.store)
+        if not clave:
+            raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
+        cliente = (client_factory or (lambda k: AsyncAnthropic(api_key=k)))(clave)
+        try:
+            await cliente.models.list(limit=1)
+        except AuthenticationError:
+            return {"valida": False, "detalle": "Anthropic no reconoce esta clave."}
+        except PermissionDeniedError:
+            return {"valida": False, "detalle": "Esta clave no tiene permiso para usar la API."}
+        except APIConnectionError as e:
+            raise HTTPException(status_code=502, detail="No se pudo conectar con Anthropic: comprueba tu conexión.") from e
+        except APIStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Anthropic respondió con un error ({e.status_code}).") from e
+        return {"valida": True, "detalle": None}
+
+    @app.post("/settings/validate-elevenlabs-key", dependencies=protegido)
+    async def validate_elevenlabs_key(body: ValidarClaveIn):
+        """Comprueba la clave de ElevenLabs con GET /v1/user (sin coste). La clave nunca sale en la respuesta."""
+        clave = body.api_key or config.elevenlabs_api_key(yt_auth.store)
+        if not clave:
+            raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
+        try:
+            async with httpx.AsyncClient(transport=elevenlabs_transport, timeout=15) as http:
+                r = await http.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": clave})
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="No se pudo conectar con ElevenLabs: comprueba tu conexión.") from None
+        if r.status_code in (401, 403):
+            return {"valida": False, "detalle": "ElevenLabs no reconoce esta clave."}
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs respondió con un error ({r.status_code}).")
+        return {"valida": True, "detalle": None}
 
     @app.post("/settings/client-secret", dependencies=protegido)
     async def put_client_secret(body: ClientSecretIn):
@@ -398,10 +601,32 @@ def create_app(
         if not source:
             raise HTTPException(status_code=400, detail="Indica path o json_text.")
         try:
-            yt_auth.import_client_secret(source)
+            r = yt_auth.import_client_secret(source, replace=body.replace)
+        except ClientSecretConflict as e:
+            raise HTTPException(status_code=409, detail=str(e))
         except (AuthError, OSError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return settings_out()
+        return {**settings_out(), "desautorizados": r["desautorizados"]}
+
+    @app.delete("/settings/client-secret", dependencies=protegido)
+    async def delete_client_secret():
+        """Quita el proyecto de Google y, con él, la autorización de todos los canales."""
+        desautorizados = yt_auth.remove_client_secret()
+        return {**settings_out(), "desautorizados": desautorizados}
+
+    # Spike D6 (desechable): solo con APP_BACKEND_SPIKES=1 y una composición indicada, y nunca en el
+    # binario congelado (la variable podría llegar del entorno del usuario); sí en `tauri dev`.
+    if (
+        not config.FROZEN
+        and os.environ.get("APP_BACKEND_SPIKES") == "1"
+        and os.environ.get("APP_BACKEND_SPIKE_COMPOSICION")
+    ):
+        from app_backend import spike_preview
+
+        runtime = os.environ.get("APP_BACKEND_SPIKE_RUNTIME")
+        spike_preview.montar(
+            app, protegido, Path(os.environ["APP_BACKEND_SPIKE_COMPOSICION"]), Path(runtime) if runtime else None
+        )
 
     return app
 

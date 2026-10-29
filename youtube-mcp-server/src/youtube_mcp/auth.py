@@ -12,11 +12,16 @@ injected ``SecretStore`` (file store by default: ``token.json``,
 ``YOUTUBE_MCP_PROFILE`` and switch at runtime with ``youtube_auth(profile=...)``.
 """
 
+import functools
 import json
 import os
 import re
+import threading
+import time
+import urllib.request
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -38,10 +43,53 @@ SCOPES = [
 DEFAULT_CONFIG_DIR = Path.home() / ".youtube-mcp"
 DEFAULT_PROFILE = "default"
 _PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# Espera máxima a que Google redirija al servidor local. Si el usuario cierra la pestaña, sin
+# límite el hilo (y la petición que lo lanzó) esperaría para siempre.
+OAUTH_TIMEOUT_S = 300
+# Renovar el token desde status() no debe colgar la pantalla si Google tarda (sin red, proxy...).
+STATUS_REFRESH_TIMEOUT_S = 10
 
 
 class AuthError(Exception):
     pass
+
+
+class ClientSecretConflict(AuthError):  # noqa: N818 - nombre público, lo usa app-backend
+    """El client_secret.json nuevo es de otro proyecto y hay canales autorizados con el actual."""
+
+    def __init__(self, afectados: list[str]):
+        self.afectados = afectados
+        super().__init__(
+            "Este client_secret.json es de otro proyecto de Google. Sustituirlo desautoriza "
+            f"{'el canal' if len(afectados) == 1 else 'los canales'} {', '.join(afectados)}: "
+            "tendrás que volver a autorizarlos."
+        )
+
+
+def _client_id(config: dict) -> str:
+    return (config.get("installed") or config.get("web") or {}).get("client_id", "")
+
+
+def _explicar_error_oauth(e: Exception) -> str:
+    """Mensaje entendible para los errores de Google que vuelven a la redirección del flujo."""
+    texto = str(e)
+    if "access_denied" in texto:
+        return (
+            "Google ha denegado el acceso. Si no lo cancelaste tú, lo habitual es que la app OAuth "
+            "esté en «Prueba» y tu cuenta no figure como usuario de prueba: añádela en Google Cloud "
+            "(Público → Usuarios de prueba) o publica la app."
+        )
+    if "invalid_client" in texto or "unauthorized_client" in texto:
+        return (
+            "Google no reconoce el cliente OAuth de este client_secret.json (borrado, de otro "
+            "proyecto o mal copiado): descarga uno nuevo en Google Cloud → Credenciales e impórtalo."
+        )
+    if "redirect_uri_mismatch" in texto:
+        return (
+            "El cliente OAuth no es de tipo «Aplicación de escritorio»: crea uno de ese tipo en "
+            "Google Cloud → Credenciales e importa su client_secret.json."
+        )
+    return f"OAuth flow failed: {e}"
 
 
 def _validar_client_config(raw: str) -> dict:
@@ -77,6 +125,8 @@ class YouTubeAuth:
         self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
         self.store: SecretStore = store or FileSecretStore(self.config_dir)
         self._credentials: Credentials | None = None
+        # Flujo de consentimiento en curso y su marca de cancelación (ver cancel_interactive).
+        self._en_curso: tuple[InstalledAppFlow, threading.Event] | None = None
         self.use_profile(profile or os.environ.get("YOUTUBE_MCP_PROFILE") or DEFAULT_PROFILE)
 
         # Resolve client_secret.json path
@@ -121,15 +171,53 @@ class YouTubeAuth:
         except Exception:
             return None
 
+    def _de_otro_proyecto(self, creds: Credentials | None) -> bool:
+        """Token emitido para otro cliente OAuth (el client_secret se sustituyó después de autorizar).
+
+        El token guarda dentro el client_id y el secret con los que se pidió, así que se renovaría
+        contra el proyecto viejo: usarlo mezclaría proyectos (cuota, permisos) sin que nadie lo vea.
+        """
+        if not creds or not creds.client_id:
+            return False
+        try:
+            return creds.client_id != _client_id(self._client_config())
+        except AuthError:
+            return False
+
     def _save_token(self, creds: Credentials):
         """Save credentials for the active profile."""
         self.store.set(self._token_key, creds.to_json())
 
     def delete_token(self, profile: str | None = None) -> None:
-        """Forget the saved token of a profile (the active one by default)."""
-        self.store.delete(f"token:{profile}" if profile else self._token_key)
-        if not profile or profile == self.profile:
+        """Forget the saved token (and remembered channel) of a profile (the active one by default)."""
+        nombre = profile or self.profile
+        self.store.delete(f"token:{nombre}")
+        self.store.delete(f"canal:{nombre}")
+        if nombre == self.profile:
             self._credentials = None
+
+    # ------------------------------------------------------------------ canales
+
+    def remember_channel(self) -> dict | None:
+        """Lee y guarda qué canal de YouTube autorizó el perfil activo (1 unidad de cuota).
+
+        El token no dice de qué canal es: sin esto la UI solo podría mostrar el nombre del perfil.
+        """
+        r = self.build_youtube_service().channels().list(part="snippet", mine=True).execute()
+        items = r.get("items") or []
+        if not items:
+            return None
+        snippet = items[0].get("snippet", {})
+        canal = {"id": items[0].get("id"), "title": snippet.get("title"), "handle": snippet.get("customUrl")}
+        self.store.set(f"canal:{self.profile}", json.dumps(canal))
+        return canal
+
+    def _canal(self, profile: str) -> dict | None:
+        raw = self.store.get(f"canal:{profile}")
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return None
 
     # ----------------------------------------------------------- client_secret
 
@@ -147,13 +235,56 @@ class YouTubeAuth:
             )
         return _validar_client_config(raw)
 
-    def import_client_secret(self, source: str | Path) -> None:
-        """Copy a client_secret.json (path or JSON text) into the secret store."""
+    def import_client_secret(self, source: str | Path, replace: bool = False) -> dict:
+        """Copy a client_secret.json (path or JSON text) into the secret store.
+
+        Un solo proyecto de Google para todos los canales: los tokens se emiten para un cliente
+        OAuth concreto, así que cambiar a otro cliente invalida todos. Si hay canales autorizados,
+        sin `replace=True` se lanza ClientSecretConflict; con él, se borran sus tokens para que el
+        estado no mezcle credenciales de proyectos distintos.
+        """
         texto = str(source)
         if not texto.lstrip().startswith("{"):
             texto = Path(texto).read_text(encoding="utf-8")
-        _validar_client_config(texto)
+        nuevo = _validar_client_config(texto)
+        try:
+            actual = self._client_config()
+        except AuthError:
+            actual = None
+        if actual is not None and _client_id(actual) == _client_id(nuevo):
+            self.store.set("client_secret", texto)
+            return {"mismo": True, "desautorizados": []}
+        afectados = self.profiles() if actual is not None else []
+        if afectados and not replace:
+            raise ClientSecretConflict(afectados)
+        for perfil in afectados:
+            self.delete_token(perfil)
         self.store.set("client_secret", texto)
+        return {"mismo": False, "desautorizados": afectados}
+
+    def remove_client_secret(self) -> list[str]:
+        """Olvida el client_secret.json importado y, con él, todos los tokens (dejan de valer).
+
+        Un fichero en ``client_secret_path`` (modo desarrollo) no se borra: es del usuario.
+        """
+        afectados = self.profiles()
+        for perfil in afectados:
+            self.delete_token(perfil)
+        self.store.delete("client_secret")
+        return afectados
+
+    def client_info(self) -> dict | None:
+        """Proyecto y cliente OAuth en uso, para mostrarlos (el client_id va enmascarado)."""
+        try:
+            config = self._client_config()
+        except AuthError:
+            return None
+        seccion = config.get("installed") or config.get("web") or {}
+        prefijo = _client_id(config).split(".")[0]
+        return {
+            "project_id": seccion.get("project_id"),
+            "client_id": f"{prefijo[:6]}…{prefijo[-4:]}" if len(prefijo) > 12 else prefijo,
+        }
 
     def has_client_secret(self) -> bool:
         return self.store.get("client_secret") is not None or self.client_secret_path.is_file()
@@ -170,6 +301,9 @@ class YouTubeAuth:
         Raises AuthError when not interactive and no valid token is available.
         """
         creds = None if force_consent else self._load_token()
+        de_otro_proyecto = self._de_otro_proyecto(creds)
+        if de_otro_proyecto:
+            creds = None  # hay que pasar por Google con el proyecto actual
 
         if creds and creds.valid:
             self._credentials = creds
@@ -189,19 +323,66 @@ class YouTubeAuth:
                     ) from e
 
         if not interactive:
+            if de_otro_proyecto:
+                raise AuthError(f"El canal del perfil '{self.profile}' se autorizó con otro proyecto de Google: vuelve a autorizarlo.")
             raise AuthError(
                 f"Not authenticated for profile '{self.profile}'. Run youtube_auth first."
             )
 
         config = self._client_config()
+        self.cancel_interactive()  # un intento nuevo sustituye al que se quedó esperando
+        cancelado = threading.Event()
         try:
             flow = InstalledAppFlow.from_client_config(config, SCOPES)
-            creds = flow.run_local_server(port=0)
+            self._en_curso = (flow, cancelado)
+            creds = flow.run_local_server(port=0, timeout_seconds=OAUTH_TIMEOUT_S)
+            if cancelado.is_set():  # Google respondió justo mientras se cancelaba: no se guarda
+                raise AuthError("Autorización cancelada.")
             self._save_token(creds)
             self._credentials = creds
             return creds
+        except AuthError:
+            raise
         except Exception as e:
-            raise AuthError(f"OAuth flow failed: {e}") from e
+            if cancelado.is_set():
+                raise AuthError("Autorización cancelada.") from e
+            # Al agotar timeout_seconds, run_local_server lanza AttributeError (1.2) o su
+            # subclase WSGITimeoutError (≥ 1.3): el sidecar y este paquete fijan versiones distintas.
+            if isinstance(e, AttributeError):
+                raise AuthError(
+                    f"Google no respondió en {OAUTH_TIMEOUT_S // 60} minutos: ¿se cerró la pestaña "
+                    "del navegador? Vuelve a intentarlo."
+                ) from e
+            raise AuthError(_explicar_error_oauth(e)) from e
+        finally:
+            if self._en_curso is not None and self._en_curso[1] is cancelado:
+                self._en_curso = None
+
+    def cancel_interactive(self) -> bool:
+        """Corta el flujo de consentimiento en curso (el usuario pulsó Cancelar o cerró la pestaña).
+
+        `run_local_server` no expone su servidor, pero sí la `redirect_uri` en la que escucha: se
+        le envía la redirección con `error=access_denied`, `handle_request()` vuelve y el flujo
+        falla con "Autorización cancelada". Devuelve False si no había ninguno en curso.
+        """
+        en_curso = self._en_curso
+        if en_curso is None:
+            return False
+        flow, cancelado = en_curso
+        cancelado.set()
+        # Si se cancela mientras el servidor local aún arranca, todavía no hay redirect_uri:
+        # se espera un poco a que escuche (si no, ese intento acabaría por OAUTH_TIMEOUT_S).
+        limite = time.monotonic() + 5
+        while not (flow.redirect_uri or "").startswith("http://localhost:") and time.monotonic() < limite:
+            if self._en_curso is not en_curso:
+                return True  # el flujo ya terminó por su cuenta
+            time.sleep(0.05)
+        if (flow.redirect_uri or "").startswith("http://localhost:"):
+            try:
+                urllib.request.urlopen(flow.redirect_uri + "?error=access_denied", timeout=5).close()
+            except OSError:
+                pass  # el servidor ya se había cerrado (respuesta de Google o límite de tiempo)
+        return True
 
     @property
     def credentials(self) -> Credentials:
@@ -230,12 +411,24 @@ class YouTubeAuth:
 
     def status(self) -> dict:
         """Return current auth status."""
+        perfiles = self.profiles()
+        canales = {p: c for p in perfiles if (c := self._canal(p))}
         base = {
             "profile": self.profile,
-            "profiles": self.profiles(),
+            "profiles": perfiles,
             "store": type(self.store).__name__,
+            "channel": canales.get(self.profile),  # canal autorizado del perfil activo, si se conoce
+            "channels": canales,
         }
         creds = self._load_token()
+        if self._de_otro_proyecto(creds):
+            # Token emitido para otro cliente OAuth (el client_secret se sustituyó por fuera de la
+            # app): Google lo rechazaría, y contarlo como autorizado mezclaría proyectos.
+            return {
+                **base,
+                "authenticated": False,
+                "reason": "Este canal se autorizó con otro proyecto de Google: vuelve a autorizarlo.",
+            }
         if creds and creds.valid:
             return {
                 **base,
@@ -243,12 +436,31 @@ class YouTubeAuth:
                 "scopes": creds.scopes or [],
                 "expired": False,
             }
+        if creds and creds.expired and creds.refresh_token:
+            # El token de acceso caduca a la hora, pero con el de refresco el canal sigue autorizado:
+            # se renueva aquí (sin navegador) para que el estado no dé una falsa alarma.
+            try:
+                creds.refresh(functools.partial(Request(), timeout=STATUS_REFRESH_TIMEOUT_S))
+            except RefreshError:
+                return {
+                    **base,
+                    "authenticated": False,
+                    "expired": True,
+                    "has_refresh_token": True,
+                    "reason": "Google ha rechazado la autorización guardada (revocada o caducada; con la "
+                    "app en «Prueba» dura 7 días): vuelve a autorizar el canal.",
+                }
+            except Exception:  # noqa: BLE001 - sin red: no se puede comprobar, pero no se da por perdida
+                return {**base, "authenticated": True, "expired": True, "unverified": True}
+            self._save_token(creds)
+            self._credentials = creds
+            return {**base, "authenticated": True, "scopes": creds.scopes or [], "expired": False}
         if creds and creds.expired:
             return {
                 **base,
                 "authenticated": False,
                 "expired": True,
-                "has_refresh_token": bool(creds.refresh_token),
+                "has_refresh_token": False,
             }
         return {
             **base,

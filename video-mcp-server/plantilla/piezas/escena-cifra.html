@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Escena `cifra`: adaptación vertical de mk-progress-stat (catálogo). Número enorme en Anton que cuenta
+  desde 0 durante el 60 % del bloque con power2.out y aterriza con golpe de cámara y destello.
+  Sin la barra de progreso ni el texto de ejemplo del original. Fondo transparente: debajo va `fondo`.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        {{FUENTES}}
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+        #{{ID}} .capa { position: absolute; inset: 0; }
+        #{{ID}}-grupo { position: absolute; left: 90px; top: 420px; width: 900px; height: 560px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #{{ID}}-num { font-family: var(--fuente-titulos); font-weight: var(--peso-titulos); line-height: 1; color: var(--acento);
+          font-variant-numeric: tabular-nums; white-space: nowrap; -webkit-text-stroke: 6px var(--contorno); paint-order: stroke fill; text-shadow: 0 18px 50px rgba(0, 0, 0, 0.55); }
+        #{{ID}}-etq { margin-top: 26px; max-width: 900px; font-family: var(--fuente-subtitulos); font-weight: var(--peso-subtitulos); font-size: 54px; line-height: 1.12;
+          color: var(--texto); text-align: center; text-transform: uppercase; -webkit-text-stroke: 5px var(--contorno); paint-order: stroke fill; }
+        #{{ID}}-luz { position: absolute; inset: 0; background: #fff; opacity: 0; }
+      </style>
+      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0">
+        <div id="{{ID}}-fundido" class="capa">
+          <div id="{{ID}}-golpe" class="capa">
+            <div id="{{ID}}-punch" class="capa">
+              <div id="{{ID}}-grupo">
+                <div id="{{ID}}-num" data-layout-allow-occlusion style="font-size: {{TAMANO}}px">{{INICIAL}}</div>
+                <div id="{{ID}}-etq" data-layout-allow-occlusion>{{ETIQUETA}}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="{{ID}}-luz" data-layout-ignore></div>
+      </div>
+      <script id="{{ID}}-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var id = "{{ID}}";
+          var d = JSON.parse(document.getElementById(id + "-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          {{ENVOLTURA}}
+          var num = document.getElementById(id + "-num");
+          var fmt = function (v) {
+            return d.prefijo + v.toLocaleString("en-US", { minimumFractionDigits: d.decimales, maximumFractionDigits: d.decimales }) + d.sufijo;
+          };
+          var cuenta = { _v: 0 };
+          Object.defineProperty(cuenta, "v", { get: function () { return this._v; }, set: function (x) { this._v = x; num.textContent = fmt(x); } });
+          tl.fromTo(cuenta, { v: 0 }, { v: d.valor, duration: d.cuenta, ease: "power2.out" }, d.empieza);
+          tl.fromTo("#" + id + "-grupo", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, d.empieza - 0.1);
+          tl.fromTo("#" + id + "-etq", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, d.aterriza);
+          tl.fromTo("#" + id + "-num", { scale: 1.12 }, { scale: 1, duration: 0.3, ease: "expo.out", immediateRender: false }, d.aterriza);
+          tl.fromTo("#" + id + "-luz", { opacity: 0 }, { opacity: 0.35, duration: 0.03, ease: "none", immediateRender: false }, d.aterriza);
+          tl.fromTo("#" + id + "-luz", { opacity: 0.35 }, { opacity: 0, duration: 0.15, ease: "power2.out", immediateRender: false }, d.aterriza + 0.03);
+          num.textContent = fmt(0);
+          window.__timelines = window.__timelines || {};
+          window.__timelines[id] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

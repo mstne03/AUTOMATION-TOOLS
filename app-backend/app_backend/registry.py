@@ -53,8 +53,9 @@ MAX_STRICT_UNIONS = 16
 
 _EMPTY_DESC = 'Empty string or empty list = not provided (default value, or unchanged on updates).'
 
-# tool -> operacion de la tabla de cuota (QUOTA_COSTS). Sin entrada: coste desconocido/cero.
-QUOTA_OP = {
+# tool -> operación(es) de la tabla de cuota (QUOTA_COSTS); una tupla suma sus costes.
+# Sin entrada: coste desconocido/cero.
+QUOTA_OP: dict[str, str | tuple[str, ...]] = {
     "youtube_upload_video": "video_insert",
     "youtube_update_video": "update",
     "youtube_set_thumbnail": "thumbnail_set",
@@ -66,6 +67,8 @@ QUOTA_OP = {
     "youtube_remove_from_playlist": "delete",
     "youtube_search": "search",
     "youtube_list_captions": "caption_list",
+    # video + es_propio + canal propio (list x3) y la transcripción oficial (list + download).
+    "youtube_retention_moments": ("list", "list", "list", "caption_list", "caption_download"),
 }
 
 
@@ -103,11 +106,11 @@ def risk_of(name: str) -> str:
 
 
 def quota_of(name: str) -> dict | None:
-    op = QUOTA_OP.get(name)
-    if op is None:
+    ops = QUOTA_OP.get(name)
+    if ops is None:
         return None
-    bucket, cost = QUOTA_COSTS[op]
-    return {"bucket": bucket, "cost": cost}
+    costes = [QUOTA_COSTS[op] for op in ((ops,) if isinstance(ops, str) else ops)]
+    return {"bucket": costes[0][0], "cost": sum(c for _, c in costes)}
 
 
 def strict_schema(schema: dict) -> dict:

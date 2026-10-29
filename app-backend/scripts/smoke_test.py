@@ -1,6 +1,6 @@
 """Test de arranque del binario empaquetado (se ejecuta en CI tras PyInstaller).
 
-    uv run python scripts/smoke_test.py [dist/app-backend/app-backend.exe]
+    uv run python scripts/smoke_test.py [dist/app-backend/app-backend.exe] [--video-engine RUTA]
 
 Hace lo mismo que Tauri: lanza el .exe con APP_BACKEND_TOKEN, lee la primera linea de
 stdout (`{"port": N, "token": "..."}`), llama a GET /settings con el token y a
@@ -10,10 +10,21 @@ el proceso. Comprueba tambien que HF_HUB_OFFLINE NO esta en el entorno del hijo:
 estuviera, faster-whisper no podria bajar su modelo en la primera transcripcion (E1 de
 la Fase 5). Estado en un directorio temporal con secretos en fichero: no toca
 el Credential Manager ni LOCALAPPDATA/seo-studio.
+
+Motor de vídeo: sin `<exe>.parent/video-engine/node/node.exe`, comprueba que GET /video/capacidades da 503
+(«módulo de vídeo no instalado»). Si existe (o se pasa `--video-engine RUTA`),
+comprueba GET /video/capacidades contra el motor del bundle: HyperFrames 0.8.206, telemetría
+desactivada, ffmpeg LGPL (sin libx264) y Chrome, ambos del propio bundle. El binario congelado
+no acepta ninguna ruta alternativa para el motor (seguridad): con `--video-engine` se crea una
+unión de directorios (junction) `<exe>.parent/video-engine` -> RUTA solo durante la prueba y se
+borra al acabar (solo la unión, nunca el contenido de RUTA). Si ya hay una carpeta real con ese
+nombre, `--video-engine` falla en vez de ignorarse: se probaría otro motor sin saberlo.
 """
 
+import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,20 +33,102 @@ import urllib.request
 from pathlib import Path
 
 TOKEN = "smoke-test-token"
+HYPERFRAMES = "0.8.206"
+FFMPEG = "n7.1.5"  # el LGPL de la tarea 2; el de winget (8.1) delataría que no se usa el bundle
 
 
-def get(base: str, ruta: str, token: str = TOKEN) -> tuple[int, str]:
+def get(base: str, ruta: str, token: str = TOKEN, timeout: float = 120) -> tuple[int, str]:
     req = urllib.request.Request(base + ruta, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
 
 
+def preparar_motor(motor: Path, ruta: str | None, creado: list[str]) -> bool:
+    """Deja el motor en `motor` si se pidió con --video-engine; anota en `creado` qué hay que retirar.
+
+    Se anota antes de crear nada, para que `retirar_motor` limpie también una copia a medias.
+    """
+    if ruta is None:
+        # Sin VIDEO_ENGINE el release deja video-engine/ con solo un marcador (.vacio): no es un motor.
+        return (motor / "node" / "node.exe").is_file()
+    origen = Path(ruta).resolve()
+    assert (origen / "node" / "node.exe").is_file(), f"--video-engine {origen} no es un motor empaquetado"
+    if motor.is_junction():
+        os.rmdir(motor)  # unión de una ejecución anterior interrumpida: se rehace
+    assert not motor.exists(), (
+        f"Ya hay una carpeta real {motor}: quítala o no pases --video-engine (se usaría esa, no {origen})"
+    )
+    creado.append("union")
+    # mklink /J no pide permisos de administrador (a diferencia de un symlink).
+    r = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(motor), str(origen)],
+        check=False,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if r.returncode == 0 and motor.is_junction():
+        return True
+    print(f"No pude crear la unión ({r.stdout.strip()} {r.stderr.strip()}); copio el motor", file=sys.stderr)
+    creado[-1] = "copia"
+    shutil.copytree(origen, motor)
+    return True
+
+
+def retirar_motor(motor: Path, creado: list[str]) -> None:
+    if not creado:
+        return
+    if creado[-1] == "union":
+        if motor.is_junction():
+            os.rmdir(motor)  # borra la unión, no el destino
+        else:
+            assert not motor.exists(), f"{motor} ya no es una unión: no lo toco"
+    elif motor.exists():  # copia (quizá a medias): es nuestra
+        shutil.rmtree(motor)
+
+
+def comprobar_video(base: str, motor: Path, t0: float) -> None:
+    st, cuerpo = get(base, "/video/capacidades", token="malo")
+    assert st == 401, f"GET /video/capacidades sin token valido deberia dar 401, dio {st}"
+    # Con el estado vacío el motor hace su prueba de GPU (un render corto): puede tardar minutos. El
+    # cliente espera más que el servidor (TIMEOUT_CAPACIDADES, 420 s): si el motor se cuelga, se ve
+    # el 502 del backend con su mensaje y no un timeout mudo del cliente.
+    st, cuerpo = get(base, "/video/capacidades", timeout=480)
+    assert st == 200, f"GET /video/capacidades -> {st}: {cuerpo}"
+    c = json.loads(cuerpo)
+    assert c.get("hyperframes") == HYPERFRAMES, f"hyperframes={c.get('hyperframes')!r}, esperado {HYPERFRAMES}"
+    assert (c.get("telemetria") or "").startswith("desactivada"), f"telemetria={c.get('telemetria')!r}"
+    ffmpeg = c.get("ffmpeg") or ""
+    assert ffmpeg and "--enable-libx264" not in ffmpeg, f"ffmpeg={ffmpeg!r}"
+    assert FFMPEG in ffmpeg, f"ffmpeg={ffmpeg!r}: no es el ffmpeg LGPL del bundle"
+    chrome = c.get("chrome") or ""
+    assert chrome.lower().startswith(str(motor / "browser").lower()), f"chrome={chrome!r}: no es el del bundle"
+    print(f"GET /video/capacidades OK en {time.time() - t0:.1f} s")
+    print(f"  hyperframes {c['hyperframes']} · telemetria {c['telemetria']}")
+    print(f"  {ffmpeg}")
+    print(f"  chrome {chrome}")
+
+
 def main() -> int:
-    exe = Path(sys.argv[1] if len(sys.argv) > 1 else "dist/app-backend/app-backend.exe").resolve()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("exe", nargs="?", default="dist/app-backend/app-backend.exe")
+    ap.add_argument("--video-engine", metavar="RUTA", help="motor empaquetado (prepare-video-engine.sh)")
+    args = ap.parse_args()
+    exe = Path(args.exe).resolve()
     assert exe.is_file(), f"No existe {exe}"
+    motor = exe.parent / "video-engine"
+    creado: list[str] = []
+    try:
+        hay_motor = preparar_motor(motor, args.video_engine, creado)
+        return arrancar_y_comprobar(exe, motor if hay_motor else None)
+    finally:
+        retirar_motor(motor, creado)
+
+
+def arrancar_y_comprobar(exe: Path, motor: Path | None) -> int:
     estado = tempfile.mkdtemp(prefix="app-backend-smoke-")
     env = {
         **os.environ,
@@ -69,6 +162,16 @@ def main() -> int:
         st, cuerpo = get(base, "/kb/buscar?q=retencion%20en%20youtube")
         assert st == 200, f"GET /kb/buscar -> {st}: {cuerpo}"
         print(f"GET /kb/buscar OK en {time.time() - t0:.1f} s (modelo de embeddings cargado sin red)")
+
+        if motor is None:
+            # Release sin VIDEO_ENGINE: el módulo no instalado es un 503 legible, no un 500.
+            st, cuerpo = get(base, "/video/capacidades")
+            assert st == 503 and "no está instalado" in json.loads(cuerpo)["detail"], (
+                f"GET /video/capacidades sin motor -> {st}: {cuerpo}"
+            )
+            print("Sin video-engine junto al binario: GET /video/capacidades da 503 (módulo no instalado)")
+        else:
+            comprobar_video(base, motor, t0)
         return 0
     finally:
         proc.kill()

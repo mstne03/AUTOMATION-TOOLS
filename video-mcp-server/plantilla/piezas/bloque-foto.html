@@ -1,0 +1,60 @@
+<!doctype html>
+<!--
+  Bloque con foto. Capas de fuera adentro: fundido de entrada → golpe de cámara → punch-in → foto con Ken Burns.
+  composicion.ts rellena id, duración, imagen y datos (JSON escapado).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+      <style>
+        #{{ID}} { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+        #{{ID}} .capa { position: absolute; inset: 0; }
+        #{{ID}}-img { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; object-fit: cover; }
+      </style>
+      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0; overflow: hidden">
+        <div id="{{ID}}-fundido" class="capa">
+          <div id="{{ID}}-golpe" class="capa">
+            <div id="{{ID}}-punch" class="capa">
+              <img id="{{ID}}-img" src="assets/{{IMG}}" alt="" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <script id="{{ID}}-datos" type="application/json">{{DATOS}}</script>
+      <script>
+        (function () {
+          var id = "{{ID}}";
+          var d = JSON.parse(document.getElementById(id + "-datos").textContent);
+          var tl = gsap.timeline({ paused: true });
+          if (d.movimiento) {
+            tl.fromTo("#" + id + "-img", { scale: 1, x: 0, y: 0 }, { scale: 1.08, x: d.dx, y: d.dy, duration: d.duracion, ease: "none" }, 0);
+          }
+          if (d.fundido > 0) {
+            tl.fromTo("#" + id + "-fundido", { opacity: 0 }, { opacity: 1, duration: d.fundido, ease: "none" }, 0);
+          }
+          if (d.punch) {
+            tl.fromTo("#" + id + "-punch", { scale: 1.07 }, { scale: 1, duration: 0.45, ease: "expo.out" }, 0);
+          }
+          // Golpe de cámara: cuatro pasos de un fotograma, cada uno con fromTo explícito.
+          var f = 1 / 30;
+          var pasos = [[0, 0], [22, -14], [-16, 10], [8, -4], [0, 0]];
+          (d.golpes || []).forEach(function (t) {
+            for (var i = 0; i < 4; i++) {
+              tl.fromTo(
+                "#" + id + "-golpe",
+                { x: pasos[i][0], y: pasos[i][1] },
+                { x: pasos[i + 1][0], y: pasos[i + 1][1], duration: f, ease: "none", immediateRender: false },
+                t + i * f,
+              );
+            }
+          });
+          window.__timelines = window.__timelines || {};
+          window.__timelines[id] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

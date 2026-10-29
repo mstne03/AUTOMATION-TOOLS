@@ -17,6 +17,7 @@ por arranque.
 
 ```bash
 pnpm install
+mkdir -p src-tauri/binaries/video-engine   # recurso de tauri.conf.json: sin la carpeta, tauri dev no arranca en un clon limpio
 pnpm tauri dev
 ```
 
@@ -71,8 +72,25 @@ El sidecar solo admite CORS desde `http://tauri.localhost`, `https://tauri.local
 | `src/chat/useChat.ts` | Hook: mensajes, envío, aprobaciones, sondeo de progreso de jobs. |
 | `src/chat/*.tsx` | Pantalla de chat, bloque de tool, tarjeta de aprobación, Markdown seguro. |
 | `src/screens/*.tsx` | Ajustes, Onboarding, Publicar, Panel de canal, Base de conocimiento. |
+| `tokens/` | Fuente de verdad del diseño (`tokens.json`) y su generador (`build.mjs`). |
+| `src/styles/` | `tokens.css` (generado, se commitea) y `base.css` (fuentes, reset, foco). |
+| `src/ui/` | Componentes del sistema de diseño (CSS Modules sobre tokens). |
+| `src/shell/`, `src/state/` | Marco con barra lateral y paleta (Ctrl K); estado global con zustand. |
 | `docs/pantallas.md` | **Contrato de layout y estados** que exigen los E2E (no hay Figma). |
 | `e2e/` | Playwright: sidecar real en modo `file` + Anthropic falso (`anthropic-mock.ts`). |
+
+## Sistema de diseño
+
+- **Tokens**: `tokens/tokens.json` (colores claro/oscuro, tipografía, espaciado, radios, tamaños)
+  es la fuente de verdad. `pnpm tokens` ejecuta Style Dictionary y regenera
+  `src/styles/tokens.css` (que se commitea). No edites `tokens.css` a mano.
+- **Reglas**: fuera de `tokens.css` no hay colores hexadecimales ni `px` de espaciado
+  (`margin`, `padding`, `gap`); `pnpm lint` (stylelint) lo comprueba.
+- **Catálogo**: con `pnpm dev`, abre `http://localhost:1420/#/catalogo` para ver todos los
+  componentes de `src/ui` en claro y oscuro. La ruta solo existe en desarrollo.
+- **Fuentes**: Inter y JetBrains Mono van empaquetadas (`@fontsource`); la CSP solo admite
+  `font-src 'self'`.
+- **Tema**: Sistema / Claro / Oscuro desde Ajustes; se aplica como `data-theme` en `<html>`.
 
 ## Instalador (`pnpm tauri build`)
 
@@ -80,14 +98,18 @@ El sidecar solo admite CORS desde `http://tauri.localhost`, `https://tauri.local
 # 1. Sidecar (en ../app-backend; ver su README): fetch_model.py + pyinstaller + smoke_test.py
 # 2. Copiarlo a src-tauri/binaries con el nombre que exige Tauri (sufijo del target triple):
 bash scripts/prepare-sidecar.sh
-# 3. Instalador NSIS firmado para el updater (clave fuera del repo):
+# 3. Motor de vídeo: src-tauri/binaries/video-engine/ TIENE que existir (es un recurso de
+#    tauri.conf.json; sin la carpeta, `tauri build` falla). Una de las dos:
+mkdir -p src-tauri/binaries/video-engine && echo "Módulo de vídeo no incluido." > src-tauri/binaries/video-engine/.vacio   # sin motor (lo normal)
+bash scripts/prepare-video-engine.sh   # con motor (~783 MB; descarga Node, Chrome for Testing y ffmpeg LGPL)
+# 4. Instalador NSIS firmado para el updater (clave fuera del repo):
 TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/seo-studio.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" pnpm tauri build
 # -> src-tauri/target/release/bundle/nsis/SEO Studio_<v>_x64-setup.exe (+ .exe.sig)
 ```
 
 `tauri.conf.json`: `bundle.targets = ["nsis"]`, `externalBin = ["binaries/app-backend"]`
 (el fichero real es `binaries/app-backend-x86_64-pc-windows-msvc.exe`; Tauri le quita el
-sufijo al instalar) y `resources = {"binaries/_internal/": "_internal/"}`. Instalación por
+sufijo al instalar) y `resources = {"binaries/_internal/": "_internal/", "binaries/video-engine/": "video-engine/"}`. Instalación por
 usuario (`installMode: currentUser`, sin UAC) en `%LOCALAPPDATA%\SEO Studio`.
 Compresor NSIS `zlib` (`bundle.windows.nsis.compression`): con el LZMA por defecto `makensis`
 pasó de 45 minutos sin terminar sobre los ~900 MB del sidecar; con zlib tarda ~7 minutos y el
@@ -95,6 +117,22 @@ instalador sale de 414 MB. Para instalar en silencio: `SEO Studio_x_x64-setup.ex
 Git Bash con `MSYS_NO_PATHCONV=1`, o convierte `/S` en una ruta). `prepare-sidecar.sh` borra la copia anterior de `binaries/` y de `target/release` y
 muestra el SHA-256 del `.exe`, para que ningún instalador arrastre un sidecar viejo
 (pitfall conocido de NSIS); el workflow de CI compara ese hash con el del bundle.
+
+### Motor de vídeo (opt-in: `VIDEO_ENGINE`)
+
+`scripts/prepare-video-engine.sh` (Git Bash, desde `app-ui/`) compila `video-mcp-server`, instala sus
+dependencias de producción sin scripts y baja Node, `chrome-headless-shell` (Chrome for Testing) y un
+ffmpeg LGPL con versión y SHA-256 fijados; lo deja en `src-tauri/binaries/video-engine/` (layout en la
+cabecera del script) y Tauri lo copia a `<instalación>\video-engine`. Aborta si un hash no coincide o
+si el ffmpeg es GPL.
+
+**Apagado por defecto.** El workflow de release solo empaqueta el motor con la variable de repositorio
+`VIDEO_ENGINE=1` (Settings → Secrets and variables → Actions → Variables). Sin ella crea
+`video-engine/` con un marcador `.vacio`, el smoke test comprueba que `GET /video/capacidades` da 503
+(«módulo de vídeo no instalado») y la verificación final exige que el bundle **no** lleve `node/`. Se
+queda apagada hasta resolver los bloqueantes de `video-mcp-server/LICENCIAS.md` (redistribución de
+Chrome for Testing, licencia de GSAP, obligaciones LGPL de ffmpeg) y hasta que haya UI: con el motor, el
+updater le baja ~783 MB más a cada usuario.
 
 **Sin firma de código** (decisión de la Fase 4; un certificado EV/OV cuesta 200-400 EUR al año y
 no se compra sin decidirlo). Consecuencia: la primera vez SmartScreen muestra "Windows
@@ -124,7 +162,7 @@ updater (la que la app verifica), no SmartScreen.
 
 1. Subir `version` en `tauri.conf.json` y `Cargo.toml`; commit; `git tag vX.Y.Z; git push --tags`.
 2. `.github/workflows/release.yml` (windows-latest): tests del sidecar, modelo, PyInstaller,
-   smoke test, `prepare-sidecar.sh`, tests de la UI, `tauri-action` (build + firma + release
+   motor de vídeo solo con `VIDEO_ENGINE=1` (si no, el marcador), smoke test, `prepare-sidecar.sh`, tests de la UI, `tauri-action` (build + firma + release
    **en borrador** con `-setup.exe`, `.sig` y `latest.json`) y comprobación del hash del sidecar.
 3. Revisar y publicar el borrador en GitHub.
 4. En el VPS: `GITHUB_REPO=owner/repo bash ~/kb-seo/app/deploy/publish-app.sh vX.Y.Z`
@@ -161,7 +199,13 @@ hash. El flujo real de publicación (subida/borrado en YouTube) no se repitió e
 pnpm test        # vitest: parser SSE, cliente, reducer de turno, hook, Markdown
 pnpm e2e         # Playwright contra el sidecar real (cierra antes tauri dev / pnpm dev)
 pnpm typecheck
+pnpm lint         # stylelint: sin hex ni px de espaciado fuera de tokens.css
+pnpm tokens      # regenera src/styles/tokens.css desde tokens/tokens.json
 ```
+
+`e2e/visual.spec.ts` compara capturas de cada pantalla y del catálogo (claro y oscuro, 1200×800
+y 900×600) con las de `e2e/__capturas__/`. Tras un cambio de diseño intencionado, regenéralas con
+`pnpm e2e visual --update-snapshots` y revisa el diff de las imágenes antes de commitear.
 
 Los E2E arrancan en `globalSetup` un sidecar con `APP_BACKEND_SECRETS=file` en un
 directorio temporal, un Anthropic falso (`ANTHROPIC_BASE_URL`) con guiones elegidos por una

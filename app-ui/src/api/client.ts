@@ -1,15 +1,25 @@
 /** Cliente HTTP tipado del sidecar. Solo habla con 127.0.0.1:<port> y manda el token en
  *  cada petición; el token vive en memoria y no se registra en ningún sitio. */
+import type { Formato, RespuestaRetencion } from "../guiones/modelo";
 import { parseSse } from "./sse";
 import type {
+  KbEstado,
+  KbFuente,
+  KbPrivadaFuente,
+  KbResultado,
+  CanalPanel,
   Approval,
   ChatEvent,
+  ConversacionDetalle,
+  ConversacionResumen,
   Job,
   JobKind,
   Settings,
   SettingsPatch,
+  SettingsTrasProyecto,
   Texto,
   ToolInfo,
+  YouTubeAuthOut,
   YouTubeStatus,
 } from "./types";
 
@@ -23,23 +33,40 @@ export class ApiError extends Error {
 }
 
 export interface Client {
+  /** `sin_kb`: "Usar KB" apagado. `persistir: false`: conversación de trabajo (Publicar) que no se guarda. */
   chat(
-    body: { message: string; conversation_id?: string },
+    body: { message: string; conversation_id?: string; sin_kb?: boolean; persistir?: boolean },
     signal?: AbortSignal,
   ): AsyncGenerator<ChatEvent>;
+  listConversations(): Promise<ConversacionResumen[]>;
+  getConversation(id: string): Promise<ConversacionDetalle>;
+  deleteConversation(id: string): Promise<{ borrada: string }>;
   resolveApproval(id: string, decision: "approve" | "reject", confirmId?: string): Promise<Approval>;
   listJobs(): Promise<Job[]>;
   getJob(id: string): Promise<Job>;
   createJob(kind: JobKind, args: Record<string, unknown>): Promise<Job>;
-  kbEstado(): Promise<Texto>;
+  kbEstado(): Promise<KbEstado>;
+  kbBuscarJson(q: string, plataforma?: string, k?: number): Promise<KbResultado[]>;
+  kbFuentesJson(plataforma?: string): Promise<KbFuente[]>;
+  kbUpdate(): Promise<{ accion: string; version?: string | null }>;
+  kbPrivadaFuentes(): Promise<KbPrivadaFuente[]>;
+  kbPrivadaAnadir(url: string): Promise<{ url: string; chunks: number; skipped: boolean }>;
+  kbPrivadaBorrar(url: string): Promise<{ borrada: string }>;
   kbFuentes(plataforma?: string): Promise<Texto>;
   kbBuscar(q: string, plataforma?: string, k?: number): Promise<Texto>;
   youtubeStatus(): Promise<YouTubeStatus>;
-  youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<unknown>;
+  youtubeAuth(body: { profile?: string; reauthorize?: boolean }): Promise<YouTubeAuthOut>;
+  /** Corta la autorización en curso: la youtubeAuth pendiente falla con "Autorización cancelada". */
+  youtubeAuthCancel(): Promise<{ cancelada: boolean }>;
   youtubeTools(): Promise<ToolInfo[]>;
+  guionesRetencion(videoId: string, format: Formato, language?: string): Promise<RespuestaRetencion>;
+  youtubeChannel(refresh?: boolean): Promise<CanalPanel>;
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
-  importClientSecret(body: { path?: string; json_text?: string }): Promise<Settings>;
+  validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
+  /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
+  importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
+  removeClientSecret(): Promise<SettingsTrasProyecto>;
 }
 
 export function createClient(port: number, token: string, fetchFn: typeof fetch = fetch): Client {
@@ -74,6 +101,9 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
         yield JSON.parse(msg.data) as ChatEvent;
       }
     },
+    listConversations: () => req("/conversations"),
+    getConversation: (id) => req(`/conversations/${encodeURIComponent(id)}`),
+    deleteConversation: (id) => req(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
     resolveApproval: (id, decision, confirmId) =>
       req(`/approvals/${encodeURIComponent(id)}`, {
         method: "POST",
@@ -84,15 +114,26 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     createJob: (kind, args) =>
       req("/jobs", { method: "POST", body: JSON.stringify({ kind, args }) }),
     kbEstado: () => req("/kb/estado"),
+    kbBuscarJson: (qq, plataforma, k) => req(`/kb/buscar${q({ q: qq, plataforma, k, formato: "json" })}`),
+    kbFuentesJson: (plataforma) => req(`/kb/fuentes${q({ plataforma, formato: "json" })}`),
+    kbUpdate: () => req("/kb/update", { method: "POST" }),
+    kbPrivadaFuentes: () => req("/kb/privada/fuentes"),
+    kbPrivadaAnadir: (url) => req("/kb/privada/fuentes", { method: "POST", body: JSON.stringify({ url }) }),
+    kbPrivadaBorrar: (url) => req("/kb/privada/fuentes", { method: "DELETE", body: JSON.stringify({ url }) }),
     kbFuentes: (plataforma) => req(`/kb/fuentes${q({ plataforma })}`),
     kbBuscar: (qq, plataforma, k) => req(`/kb/buscar${q({ q: qq, plataforma, k })}`),
     youtubeStatus: () => req("/youtube/status"),
     youtubeAuth: (body) => req("/youtube/auth", { method: "POST", body: JSON.stringify(body) }),
+    youtubeAuthCancel: () => req("/youtube/auth/cancel", { method: "POST" }),
     youtubeTools: () => req("/youtube/tools"),
+    guionesRetencion: (videoId, format, language) => req(`/guiones/retencion${q({ video_id: videoId, format, language })}`),
+    youtubeChannel: (refresh) => req(`/youtube/channel${refresh ? "?refresh=true" : ""}`),
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+    validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
+    removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
   };
 }
 

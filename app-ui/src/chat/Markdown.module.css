@@ -1,0 +1,127 @@
+.md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  font-size: var(--text-16);
+  line-height: var(--text-16-lh);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md h3,
+.md h4,
+.md h5,
+.md hr,
+.md pre {
+  margin: 0;
+}
+.md h3 {
+  margin-top: var(--space-4);
+  font-size: var(--text-16);
+  font-weight: 600;
+}
+.md h4,
+.md h5 {
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+  font-weight: 600;
+}
+.md ul,
+.md ol {
+  padding-left: var(--space-20);
+}
+.md li + li {
+  margin-top: var(--space-4);
+}
+.md code {
+  padding: calc(var(--space-2) / 2) var(--space-4);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.md blockquote {
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  color: var(--color-text-soft);
+}
+.md hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.codigo {
+  overflow-x: auto;
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--text-13);
+  line-height: var(--text-14-lh);
+  white-space: pre;
+}
+.codigo code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+/* Tablas en caja con scroll horizontal (las del modelo pueden ser anchas). */
+.tabla {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.tabla:focus-visible {
+  outline-offset: calc(var(--focus-offset) * -1);
+}
+.tabla table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+}
+.tabla th {
+  padding: var(--space-8) var(--space-12);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-weight: 500;
+  text-align: left;
+}
+.tabla td {
+  padding: var(--space-8) var(--space-12);
+  border-top: 1px solid var(--color-divider);
+}
+
+.tabla [data-align="center"] {
+  text-align: center;
+}
+.tabla [data-align="right"] {
+  text-align: right;
+}
+
+.enlace {
+  color: var(--color-accent-link);
+}
+/* Cita de fuente: "1 · dominio.com ↗" */
+.cita {
+  display: inline-block;
+  padding: var(--space-2) var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  font-size: var(--text-12);
+  line-height: var(--text-12-lh);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cita:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}

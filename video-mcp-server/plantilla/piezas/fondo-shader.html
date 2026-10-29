@@ -1,0 +1,21 @@
+<!doctype html>
+<!--
+  Fondo WebGPU (aurora, plasma, nebula, mesh-gradient del catálogo) en 1080×1920.
+  La librería shaders.iife.js se copia a assets/vendor/ y los colores salen del tema (data-shader-props).
+  El host lleva data-no-timeline: el shader lo mueve la propia librería con el tiempo del render.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      [data-composition-id="{{ID}}"] canvas[data-shader] { position: absolute; inset: 0; width: 1080px; height: 1920px; display: block; background: #000; }
+    </style>
+  </head>
+  <body>
+    <div id="{{ID}}" data-composition-id="{{ID}}" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920" data-requires-webgpu data-no-timeline
+      style="position: relative; width: 1080px; height: 1920px; overflow: hidden; background: #000">
+      <canvas data-shader="{{SHADER}}" data-shader-props="{{PROPS}}" width="1080" height="1920"></canvas>
+    </div>
+    <script src="assets/vendor/shaders.iife.js"></script>
+  </body>
+</html>

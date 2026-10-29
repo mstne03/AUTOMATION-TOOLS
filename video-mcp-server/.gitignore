@@ -1,0 +1,7 @@
+.env
+node_modules/
+dist/
+logs/
+test/.tmp/
+test/salidas/
+spikes/salidas/

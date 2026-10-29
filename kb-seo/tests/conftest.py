@@ -28,7 +28,7 @@ def _embeddings_up() -> bool:
             return False
         nombres = {m.get("name", "") for m in r.json().get("models", [])}
         return any(n == config.EMBED_MODEL or n.startswith(config.EMBED_MODEL + ":") for n in nombres)
-    except Exception:
+    except Exception:  # noqa: BLE001 - sonda: cualquier fallo es "servicio caído"
         return False
 
 
@@ -36,7 +36,7 @@ def _db_up(dsn: str) -> bool:
     try:
         with psycopg.connect(dsn, connect_timeout=3):
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - sonda: cualquier fallo es "servicio caído"
         return False
 
 
@@ -49,14 +49,14 @@ requires_embeddings = pytest.mark.skipif(
 def _reader_up() -> bool:
     try:
         return _db_up(config.reader_dsn())
-    except Exception:
+    except Exception:  # noqa: BLE001 - sonda: cualquier fallo es "servicio caído"
         return False
 
 
 def _writer_up() -> bool:
     try:
         return _db_up(config.writer_dsn())
-    except Exception:
+    except Exception:  # noqa: BLE001 - sonda: cualquier fallo es "servicio caído"
         return False
 
 

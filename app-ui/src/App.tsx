@@ -1,32 +1,46 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import { createClient, type Client } from "./api/client";
 import { ClientContext } from "./api/context";
 import { useSettings } from "./api/queries";
 import { ChatScreen } from "./chat/ChatScreen";
-import { Layout } from "./Layout";
+
 import { CanalScreen } from "./screens/CanalScreen";
+import { GuionesScreen } from "./screens/GuionesScreen";
 import { KbScreen } from "./screens/KbScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
+import { Estado, Toaster } from "./ui";
+
+// Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
+const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
+
+// Spike D6 (desechable): preview de la composición de vídeo en un iframe aislado. Solo en desarrollo.
+const PreviewSpike = import.meta.env.DEV ? lazy(() => import("./spikes/PreviewSpike").then((m) => ({ default: m.PreviewSpike }))) : null;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
+  // El asistente de bienvenida va a ancho completo, fuera de la barra lateral.
+  { path: "onboarding", element: <OnboardingScreen /> },
+  // Spike D6, también fuera del marco: la captura de fotogramas necesita la preview sin barra lateral encima.
+  ...(PreviewSpike ? [{ path: "spike-preview", element: <Suspense fallback={null}><PreviewSpike /></Suspense> }] : []),
   {
-    element: <Layout />,
+    element: <AppShell />,
     children: [
       { index: true, element: <Inicio /> },
       { path: "chat", element: <ChatScreen /> },
       { path: "publicar", element: <PublicarScreen /> },
+      { path: "guiones", element: <GuionesScreen /> },
       { path: "canal", element: <CanalScreen /> },
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },
-      { path: "onboarding", element: <OnboardingScreen /> },
+      ...(Catalogo ? [{ path: "catalogo", element: <Suspense fallback={null}><Catalogo /></Suspense> }] : []),
     ],
   },
 ]);
@@ -34,8 +48,8 @@ const router = createHashRouter([
 /** Abre en Onboarding si falta la clave o el client_secret; si no, en Chat. */
 function Inicio() {
   const q = useSettings();
-  if (q.isPending) return <p className="estado">Cargando ajustes…</p>;
-  if (q.isError) return <p className="estado">Error: {q.error.message}</p>;
+  if (q.isPending) return <Estado>Cargando ajustes…</Estado>;
+  if (q.isError) return <Estado error>Error: {q.error.message}</Estado>;
   const listo = q.data.has_anthropic_key && q.data.has_client_secret;
   return <Navigate to={listo ? "/chat" : "/onboarding"} replace />;
 }
@@ -52,16 +66,16 @@ export default function App() {
 
   if (error) {
     return (
-      <main className="estado" data-testid="sidecar-error">
+      <Estado as="main" error data-testid="sidecar-error">
         No se pudo arrancar el sidecar: {error}
-      </main>
+      </Estado>
     );
   }
   if (!client) {
     return (
-      <main className="estado" data-testid="sidecar-arrancando">
+      <Estado as="main" data-testid="sidecar-arrancando">
         Arrancando el sidecar…
-      </main>
+      </Estado>
     );
   }
 
@@ -69,6 +83,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ClientContext.Provider value={client}>
         <RouterProvider router={router} />
+        <Toaster />
       </ClientContext.Provider>
     </QueryClientProvider>
   );

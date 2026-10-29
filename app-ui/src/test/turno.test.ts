@@ -64,13 +64,23 @@ describe("reduceTurno", () => {
     expect(t.error).toContain("InternalServerError");
     expect(t.bloques[0]).toEqual({ kind: "text", text: "Un momento" });
   });
+
+  it("si el turno acaba con una aprobación pendiente, queda cancelada (el sidecar ya la canceló)", () => {
+    const hastaLaPropuesta = fx.publicacionRechazada.slice(0, 4); // text, text, tool_use, approval_required
+    const t = reproducir([...hastaLaPropuesta, { type: "error", message: "Se cortó la conexión" }]);
+    expect((t.bloques[1] as BloqueTool).approval?.status).toBe("cancelled");
+    const resuelta = reproducir(fx.publicacionRechazada); // una ya resuelta no cambia
+    expect((resuelta.bloques[1] as BloqueTool).approval?.status).toBe("rejected");
+  });
 });
 
 describe("costeUsd", () => {
   it("cuenta la lectura de caché a precio reducido", () => {
     const c = costeUsd("claude-opus-5-5", fx.usage);
-    // 420*15 + 180*75 + 13861*1.5 = 6300 + 13500 + 20791.5 = 40591.5 / 1e6
-    expect(c).toBeCloseTo(0.0405915, 6);
+    // Opus 5.5 (4/20/0,20 $): 420*4 + 180*20 + 13861*0,2 = 1680 + 3600 + 2772,2 = 8052,2 / 1e6
+    expect(c).toBeCloseTo(0.0080522, 6);
+    // Sonnet 5.5 (2/10/0,20 $): 420*2 + 180*10 + 13861*0,2 = 840 + 1800 + 2772,2 = 5412,2 / 1e6
+    expect(costeUsd("claude-sonnet-5-5", fx.usage)).toBeCloseTo(0.0054122, 6);
     expect(costeUsd("claude-sonnet-5-5", fx.usage)).toBeLessThan(c);
     expect(costeUsd("claude-opus-5-5", null)).toBe(0);
   });

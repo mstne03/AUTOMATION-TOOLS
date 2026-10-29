@@ -1,3 +1,14 @@
 # Los scripts de shell siempre con LF, también en checkouts de Windows (core.autocrlf=true):
 # con CRLF bash lee "pipefail\r" y falla con "set: pipefail: invalid option name".
 *.sh text eol=lf
+
+# Hooks de git: siempre LF (bash)
+.githooks/* text eol=lf
+
+# Motor de vídeo: fuentes y plantillas siempre con LF (core.autocrlf=true las pasaría a CRLF en Windows).
+video-mcp-server/**/*.ts text eol=lf
+video-mcp-server/**/*.html text eol=lf
+video-mcp-server/**/*.js text eol=lf
+video-mcp-server/**/*.json text eol=lf
+video-mcp-server/**/*.md text eol=lf
+video-mcp-server/**/*.txt text eol=lf

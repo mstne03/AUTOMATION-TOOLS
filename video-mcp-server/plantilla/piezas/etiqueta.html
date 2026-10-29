@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Chip de contexto que entra al salir el gancho. Host: top 300 px, 1080 de ancho. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="etiqueta" data-composition-id="etiqueta" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="160">
+      <style>
+        {{FUENTES}}
+        #etiqueta { position: relative; width: 1080px; height: 160px; overflow: visible; }
+        #etiqueta-caja { position: absolute; left: 0; top: 0; width: 1080px; height: 160px; display: flex; justify-content: center; align-items: flex-start; }
+        #etiqueta-txt {
+          font-family: var(--fuente-titulos); font-size: 64px; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase;
+          color: var(--fondo); background: var(--acento); padding: 10px 34px 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+          max-width: 940px; white-space: nowrap;
+        }
+      </style>
+      <div id="etiqueta-caja" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow>
+        <div id="etiqueta-txt" style="font-size: {{TAMANO}}px">{{TEXTO}}</div>
+      </div>
+      <script>
+        (function () {
+          var D = {{DURACION}};
+          var tl = gsap.timeline({ paused: true });
+          tl.fromTo("#etiqueta-txt", { yPercent: 120, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.3, ease: "back.out(2)" }, 0);
+          tl.fromTo("#etiqueta-txt", { yPercent: 0, opacity: 1 }, { yPercent: -60, opacity: 0, duration: 0.2, ease: "power2.in", immediateRender: false }, D - 0.2);
+          window.__timelines = window.__timelines || {};
+          window.__timelines["etiqueta"] = tl;
+        })();
+      </script>
+    </div>
+  </body>
+</html>

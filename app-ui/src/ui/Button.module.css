@@ -1,0 +1,87 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-14);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--text-14);
+  line-height: var(--text-14-lh);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+/* Deshabilitado como en el artboard: superficie apagada y texto gris, no solo menos opacidad. */
+.button:disabled {
+  border-color: var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-disabled);
+  opacity: 1; /* el estado deshabilitado lo da el color, no la opacidad */
+  cursor: not-allowed;
+}
+
+.sm {
+  height: var(--size-control-sm);
+  padding: 0 var(--space-12);
+  font-size: var(--text-13);
+}
+.md {
+  height: var(--size-control-md);
+}
+.lg {
+  height: var(--size-control-lg);
+  padding: 0 var(--space-20);
+  font-size: var(--text-16);
+}
+
+.primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+.primary:hover:not(:disabled) {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+/* Cargando: el primario se oscurece y deja de responder, pero no se ve "apagado". */
+.button[aria-busy="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-hover);
+  color: var(--color-on-accent);
+  opacity: 1;
+  cursor: progress;
+}
+.secondary {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+.secondary:hover:not(:disabled) {
+  border-color: var(--color-subtle);
+}
+.ghost {
+  padding: 0 var(--space-12);
+  background: transparent;
+  color: var(--color-muted);
+}
+.ghost:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+.ghost:disabled {
+  border-color: transparent;
+  background: transparent;
+}
+.danger {
+  border-color: var(--color-risk-destructive);
+  background: var(--color-risk-destructive);
+  color: var(--color-on-accent);
+}
+.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-risk-destructive) 86%, var(--color-text));
+}

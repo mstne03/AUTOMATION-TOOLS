@@ -59,6 +59,9 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+# La longitud de línea la gestiona `ruff format` (Fase 3 del CI), como en app-backend y kb-seo,
+# que no activan E501: el formateador no parte cadenas largas y E501 obligaría a hacerlo a mano.
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

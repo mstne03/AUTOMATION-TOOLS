@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Rechaza commits cuyo autor sea Claude y commits con secretos.
+autor="$(git var GIT_AUTHOR_IDENT)"
+if echo "$autor" | grep -Eiq 'noreply@anthropic\.com|^claude '; then
+  echo "pre-commit: el autor es '$autor'. Configura git user.name/user.email de Marc (ver CLAUDE.md)." >&2
+  exit 1
+fi
+
+# Un secreto que llega a GitHub ya está filtrado aunque el CI lo detecte después: hay que
+# rotarlo. Aquí se para antes de que exista el commit.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml || {
+    echo "pre-commit: gitleaks ha encontrado un posible secreto en lo que vas a commitear." >&2
+    exit 1
+  }
+else
+  echo "pre-commit: aviso, gitleaks no está instalado (winget install Gitleaks.Gitleaks)." >&2
+fi

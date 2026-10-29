@@ -1,0 +1,43 @@
+{
+  "name": "video-mcp-server",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Motor de vídeo de SEO Studio: voz con ElevenLabs, composición y render con HyperFrames.",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "npm run build && vitest run --exclude test/e2e-mock.test.ts --exclude test/matriz.test.ts",
+    "render:mock": "vitest run test/e2e-mock.test.ts",
+    "render:matriz": "vitest run test/matriz.test.ts"
+  },
+  "dependencies": {
+    "@fontsource/anton": "5.3.0",
+    "@fontsource/inter-tight": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "d3-geo": "3.1.1",
+    "dotenv": "18.0.9",
+    "es-atlas": "0.6.0",
+    "gsap": "3.15.0",
+    "hyperframes": "0.8.206",
+    "three": "0.184.0",
+    "three147": "npm:three@0.147.0",
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/d3-geo": "3.1.1",
+    "@types/node": "^22.15.0",
+    "@types/topojson-client": "3.1.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}
