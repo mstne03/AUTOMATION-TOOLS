@@ -44,6 +44,14 @@ export const VARIANTES = {
       "return T0.then(v=>{__q.resueltos=Math.max(__q.resueltos,n);__q.resueltos+__q.rechazados===__q.encolados&&(__q.vaciado=performance.now());return v}," +
       "x=>{__q.rechazados++;throw x})}",
   },
+  // El diff exacto que se propone a W2.6 (INFORME-shader.md §6), sin contadores, para validarlo literalmente.
+  shadersParcheW26: {
+    fichero: "shaders",
+    ancla: OE_ORIGINAL,
+    nuevo:
+      "Ji=YE(),T0=null,hfPendiente=null;function OE(e){hfPendiente=e;return T0||(T0=(async()=>{try{for(;hfPendiente!==null;){let t=hfPendiente;hfPendiente=null;" +
+      "await Ji.renderSyntheticFrame(t-Ji.__testing.getFrameDiagnostics().globalElapsedTime)}}finally{T0=null}})())}",
+  },
   // Pista del informe de preview: play() del adaptador typegpu no pone su tiempo a null.
   runtimeSinNullEnPlay: { fichero: "runtime", ancla: "play:()=>{r(),e=null}", nuevo: "play:()=>{r()}" },
   // seek() del adaptador typegpu despacha siempre (Cs) en vez de deduplicar (_s).
