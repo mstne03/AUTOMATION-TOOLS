@@ -119,6 +119,12 @@ export const FALTA_NAVEGADOR = "Falta el navegador del motor de vídeo: descárg
 
 const NOMBRE_MANIFIESTO = "MANIFIESTO-SHA256.json";
 const EXE_NAVEGADOR = "chrome-headless-shell-win64/chrome-headless-shell.exe";
+/**
+ * Chrome escribe este log junto a su exe en cada ejecución (medido en el render real): es la única
+ * excepción al «exactamente el manifiesto», solo en esa ruta y solo si es un fichero normal (recorrer()
+ * ya rechaza enlaces). No es código: nadie lo carga.
+ */
+const LOG_CHROME = "chrome-headless-shell-win64/debug.log";
 
 /** Quita el prefijo `\\?\` de Windows (rutas largas) para poder comparar rutas. */
 const sinPrefijoLargo = (p: string): string => p.replace(/^\\\\\?\\/, "");
@@ -205,7 +211,7 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
 
   let encontrados: string[];
   try {
-    encontrados = recorrer(raiz).filter((r) => r !== NOMBRE_MANIFIESTO);
+    encontrados = recorrer(raiz).filter((r) => r !== NOMBRE_MANIFIESTO && claveRel(r) !== claveRel(LOG_CHROME));
   } catch (e) {
     throw fallo((e as Error).message);
   }

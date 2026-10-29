@@ -121,6 +121,13 @@ describe("verificarNavegador", () => {
     await expect(verificarNavegador(integrado())).rejects.toThrow(/datos\.json no coincide/);
   });
 
+  it("el debug.log que Chrome escribe junto a su exe se tolera; en otra carpeta, no", async () => {
+    fs.writeFileSync(path.join(RAIZ, "chrome-headless-shell-win64", "debug.log"), "[1029/221208.123:ERROR] x");
+    await expect(verificarNavegador(integrado())).resolves.toBeUndefined();
+    fs.writeFileSync(path.join(RAIZ, "chrome-headless-shell-win64", "locales", "debug.log"), "x");
+    await expect(verificarNavegador(integrado())).rejects.toThrow(/debug\.log no está en el manifiesto/);
+  });
+
   it("una .dll listada y borrada: rechazada", async () => {
     fs.rmSync(path.join(RAIZ, "chrome-headless-shell-win64", "a.dll"));
     await expect(verificarNavegador(integrado())).rejects.toThrow(/falta/);
