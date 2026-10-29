@@ -96,6 +96,21 @@ function archivoFuente(f: string): string {
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 
+/**
+ * Id y tiempos de una pieza (I1): id por regex, inicio y duración números finitos, y dentro del vídeo de `D` s.
+ * Devuelve los tiempos redondeados que van al host y a {{INICIO}}/{{DURACION}}.
+ */
+export function comprobarTiemposPieza(id: string, inicio: number, duracion: number, D: number): { i: number; d: number } {
+  if (!ID_PIEZA_RE.test(id)) throw new Error(`Id de pieza no válido: ${id}`);
+  if (typeof inicio !== "number" || typeof duracion !== "number" || !Number.isFinite(inicio) || !Number.isFinite(duracion)) {
+    throw new Error(`Tiempo no finito en la pieza ${id}: inicio=${inicio}, duración=${duracion}.`);
+  }
+  const i = r3(inicio);
+  const d = r3(duracion);
+  if (i < 0 || d <= 0 || i + d > D + 0.001) throw new Error(`Tiempo fuera de rango en la pieza ${id}: inicio=${i}, duración=${d}, vídeo=${D} s.`);
+  return { i, d };
+}
+
 /** El mayor tamaño en px con el que `texto` cabe en una caja de ancho×alto (Anton, ~0,5 em por carácter). */
 export function tamanoGancho(texto: string, base: number, minimo: number, ancho = 900, alto = 470): number {
   for (let s = base; s > minimo; s -= 4) {
@@ -231,13 +246,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     valores: Record<string, string | number>,
     h: { z: number; extra?: string; alto?: number; top?: number },
   ) => {
-    if (!ID_PIEZA_RE.test(id)) throw new Error(`Id de pieza no válido: ${id}`);
-    if (typeof inicio !== "number" || typeof duracion !== "number" || !Number.isFinite(inicio) || !Number.isFinite(duracion)) {
-      throw new Error(`Tiempo no finito en la pieza ${id}: inicio=${inicio}, duración=${duracion}.`);
-    }
-    const i = r3(inicio);
-    const d = r3(duracion);
-    if (i < 0 || d <= 0 || i + d > D + 0.001) throw new Error(`Tiempo fuera de rango en la pieza ${id}: inicio=${i}, duración=${d}, vídeo=${D} s.`);
+    const { i, d } = comprobarTiemposPieza(id, inicio, duracion, D);
     const { z, extra = "", alto = 1920, top = 0 } = h;
     hosts.push(
       `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${id}.html" data-start="${i}" data-duration="${d}" data-track-index="${z}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,

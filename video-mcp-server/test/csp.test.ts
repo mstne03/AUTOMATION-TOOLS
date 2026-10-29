@@ -4,10 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parsearGuion } from "../src/guion.js";
-import { procesarAlineacion } from "../src/alineacion.js";
-import { cargarTema, PLANTILLA_DIR, planificarComposicion } from "../src/composicion.js";
-import type { ImagenEncontrada } from "../src/paths.js";
+import { PLANTILLA_DIR } from "../src/composicion.js";
+import { plan } from "./ayudas-plan.js";
 
 // Valores exactos medidos (ver el comentario de index.html). Cambiar uno exige medirlo de nuevo.
 const EXACTAS: Record<string, string> = {
@@ -34,24 +32,17 @@ function politica(html: string): Map<string, string[]> {
   expect(metas).toHaveLength(1);
   const p = new Map<string, string[]>();
   for (const parte of decodificar(metas[0][1]).split(";")) {
-    const [nombre, ...fuentes] = parte.trim().split(/\s+/);
-    if (!nombre) continue;
+    const [original, ...fuentes] = parte.trim().split(/\s+/);
+    if (!original) continue;
+    // Los nombres de directiva no distinguen mayúsculas: se normalizan antes de buscar repetidas (LOW-7).
+    const nombre = original.toLowerCase();
     expect(p.has(nombre), `directiva repetida ${nombre}`).toBe(false);
-    p.set(nombre.toLowerCase(), fuentes);
+    p.set(nombre, fuentes);
   }
   return p;
 }
 
-const CUERPO = "[1] Five nations rule football.\n[2] Spain, Italy, Germany.\n[3] Brazil and Argentina.\n[4] Seventeen World Cups between them.\n[5] Nobody comes close.\n[6] Can anyone catch up?\n";
-function indexGenerado(fm: string): string {
-  const g = parsearGuion(`---\ntitulo: T\ngancho: Only five nations matter.\n${fm}\n---\n${CUERPO}`);
-  const chars = [...g.narracion];
-  const al = { characters: chars, character_start_times_seconds: chars.map((_, i) => i * 0.1), character_end_times_seconds: chars.map((_, i) => (i + 1) * 0.1) };
-  const palabras = procesarAlineacion({ narracion: g.narracion, bloques: g.bloques, alineacion: al, hashNarracion: g.hash });
-  const img = (n: number): ImagenEncontrada => ({ n, nombre: `img${n}.jpg`, ruta: `C:\\x\\img${n}.jpg`, extension: ".jpg" });
-  const imagenes = [1, 2, 3, 4, 5, 6].map((n) => (g.opciones.escenas[n] ? undefined : img(n)));
-  return planificarComposicion({ guion: g, palabras, imagenes, tema: cargarTema(), gpu: true }).archivos["index.html"];
-}
+const indexGenerado = (fm: string) => plan(fm, 0.1).p.archivos["index.html"];
 
 const CASOS: [string, () => string][] = [
   ["plantilla/index.html", () => fs.readFileSync(path.join(PLANTILLA_DIR, "index.html"), "utf8")],
