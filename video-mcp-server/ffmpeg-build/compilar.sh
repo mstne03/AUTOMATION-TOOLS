@@ -22,7 +22,7 @@ unir() { local IFS=,; echo "$*"; }
 # Las opciones de configure salen SOLO de componentes.conf (más las fijas de la cruzada).
 opciones_configure() {
   OPC=(
-    --prefix="$PREFIX" --arch=x86_64 --target-os=mingw32 --cross-prefix=$CROSS-
+    --prefix="$PREFIX" --arch=x86_64 --target-os=mingw32 --cross-prefix="$CROSS-"
     --enable-cross-compile --pkg-config=pkg-config --pkg-config-flags=--static
     "${FF_CONFIGURE_ENABLE[@]}"
     --enable-protocol="$(unir "${FF_PROTOCOLS[@]}")"

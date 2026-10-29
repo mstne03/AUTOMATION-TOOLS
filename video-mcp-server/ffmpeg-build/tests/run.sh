@@ -4,7 +4,7 @@
 #   bash tests/run.sh --estricto  además exige que no quede ninguno (cierre de la Tarea 10)
 # Los tests de verificar-binario solo corren con FFMPEG_DIR apuntando a un ffmpeg.exe de Windows.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 export ESTRICTO=0
 [ "${1:-}" = "--estricto" ] && ESTRICTO=1
 

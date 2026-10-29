@@ -1,8 +1,8 @@
+# shellcheck shell=bash disable=SC2034
 # Ayudas mínimas para los tests de ffmpeg-build (se cargan con `source`).
 # Cada test cuenta sus fallos en FALLOS y termina con `fin`, que sale ≠ 0 si hubo alguno.
 FALLOS=0
 DIR_BUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIR_REPO="$(cd "$DIR_BUILD/../.." && pwd)"
 
 ok() { echo "  ok    $1"; }
 mal() { echo "  FALLO $1"; FALLOS=$((FALLOS + 1)); }
