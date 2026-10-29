@@ -27,12 +27,14 @@ function ffmpeg(args, timeoutMs = 60000) {
 }
 
 async function medir(png, ref) {
-  const err = await ffmpeg(["-hide_banner", "-nostats", "-i", png, "-i", ref, "-filter_complex", "[0:v]split[a0][a1];[1:v]split[b0][b1];[a0][b0]ssim;[a1][b1]psnr", "-f", "null", "-"]);
+  const err = await ffmpeg(["-hide_banner", "-nostats", "-protocol_whitelist", "file", "-i", png, "-protocol_whitelist", "file", "-i", ref, "-filter_complex", "[0:v]split[a0][a1];[1:v]split[b0][b1];[a0][b0]ssim;[a1][b1]psnr", "-f", "null", "-"]);
   const ssim = Number(/SSIM .*All:([\d.]+)/.exec(err)?.[1]);
   const psnr = /PSNR .*average:(inf|[\d.]+)/.exec(err)?.[1];
   return { ssim, psnr: psnr === "inf" ? Infinity : Number(psnr) };
 }
 
+for (const n of [a.escenario, a.referencia]) if (!/^[\w-]+$/.test(n ?? "")) throw new Error("--escenario y --referencia: solo [A-Za-z0-9_-]");
+const bajoSalidas = (f) => path.resolve(f).startsWith(path.resolve(SALIDAS) + path.sep);
 const dirEsc = path.join(SALIDAS, a.escenario);
 const dirRef = path.join(SALIDAS, a.referencia, "1");
 const filas = [];
@@ -41,6 +43,8 @@ for (const rep of fs.readdirSync(dirEsc).filter((d) => /^\d+$/.test(d)).sort((x,
   for (const c of res.capturas) {
     const ref = path.join(dirRef, `t${c.t}.png`);
     if (!fs.existsSync(ref) || path.resolve(ref) === path.resolve(c.png)) continue;
+    // Las rutas salen de resultado.json: solo se aceptan PNG bajo spikes/salidas/shader.
+    for (const f of [c.png, ref]) if (!bajoSalidas(f) || path.extname(f) !== ".png") throw new Error(`ruta fuera de salidas: ${f}`);
     const m = await medir(c.png, ref);
     filas.push({ rep: Number(rep), nombre: c.nombre, t: c.t, ...m, igual: m.ssim >= UMBRAL, sha256: c.sha256.slice(0, 12), msHastaListo: c.msHastaListo != null ? Math.round(c.msHastaListo) : null });
   }

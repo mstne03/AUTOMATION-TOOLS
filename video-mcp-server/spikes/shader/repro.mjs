@@ -74,13 +74,14 @@ function procesosBajo(...dirs) {
   const v = out ? JSON.parse(out) : [];
   return (Array.isArray(v) ? v : [v]).filter((p) => ES_CFT || (p.CommandLine ?? "").includes(path.join("shader", "perfil-tmp")));
 }
+// Sin `-p`: TCP y UDP, IPv4 e IPv6. TCP solo en LISTENING; UDP no tiene estado (columna 4 = PID).
 function escuchas() {
-  const out = execFileSync("netstat.exe", ["-ano", "-p", "tcp"], { encoding: "utf8", timeout: 60000 });
+  const out = execFileSync("netstat.exe", ["-ano"], { encoding: "utf8", timeout: 60000 });
   return out
     .split(/\r?\n/)
     .map((l) => l.trim().split(/\s+/))
-    .filter((c) => c[0] === "TCP" && c[3] === "LISTENING")
-    .map((c) => ({ local: c[1], pid: Number(c[4]) }));
+    .filter((c) => (c[0] === "TCP" && c[3] === "LISTENING") || c[0] === "UDP")
+    .map((c) => ({ proto: c[0], local: c[1], pid: Number(c[0] === "TCP" ? c[4] : c[3]) }));
 }
 
 // ---- Lanzamiento ----
@@ -325,14 +326,16 @@ async function comprobarPuertos(s) {
   const delNavegador = todas.filter((e) => pids.has(e.pid));
   const delSpike = todas.filter((e) => e.pid === process.pid);
   const r = { pidsNavegador: [...pids], escuchasNavegador: delNavegador, escuchasSpike: delSpike };
-  if (delNavegador.length) throw new Error(`el navegador escucha en puertos TCP: ${JSON.stringify(delNavegador)}`);
-  if (delSpike.length !== 1 || !delSpike[0].local.startsWith("127.0.0.1:")) throw new Error(`escuchas del spike inesperadas: ${JSON.stringify(delSpike)}`);
+  if (delNavegador.length) throw new Error(`el navegador escucha en puertos TCP/UDP: ${JSON.stringify(delNavegador)}`);
+  if (delSpike.length !== 1 || delSpike[0].proto !== "TCP" || !delSpike[0].local.startsWith("127.0.0.1:")) throw new Error(`escuchas del spike inesperadas: ${JSON.stringify(delSpike)}`);
   return r;
 }
 
 const esc = ESCENARIOS[a.escenario];
 if (!esc) throw new Error(`escenario desconocido: ${a.escenario}`);
-const dirEsc = path.join(SALIDAS, a.escenario + (a.etiqueta ? `-${a.etiqueta}` : ""));
+if (!/^[\w-]*$/.test(a.etiqueta)) throw new Error("--etiqueta solo admite letras, dígitos, _ y -");
+const dirEsc = path.resolve(SALIDAS, a.escenario + (a.etiqueta ? `-${a.etiqueta}` : ""));
+if (path.dirname(dirEsc) !== path.resolve(SALIDAS)) throw new Error("la carpeta de salida no queda bajo spikes/salidas/shader");
 fs.rmSync(dirEsc, { recursive: true, force: true });
 fs.mkdirSync(dirEsc, { recursive: true });
 const resumen = [];

@@ -81,7 +81,9 @@ export async function servir({ dir, variantes = [], csp = "ninguna", reseek = fa
     peticiones.push(reg);
     const fin = (estado, cuerpo = "", cab = {}) => {
       reg.estado = estado;
-      res.writeHead(estado, { "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*", ...cab }).end(cuerpo);
+      // CORS solo para el origen opaco del iframe sandboxed / CSP `sandbox` (Origin: null). No se traslada al producto (I8).
+      const cors = req.headers.origin === "null" ? { "Access-Control-Allow-Origin": "null" } : {};
+      res.writeHead(estado, { "Cache-Control": "no-store", ...cors, ...cab }).end(cuerpo);
     };
     try {
       if (req.method !== "GET") return fin(405);

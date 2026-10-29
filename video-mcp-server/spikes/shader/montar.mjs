@@ -57,6 +57,10 @@ const index = `<!doctype html>
 </html>
 `;
 
+// Solo se borra una carpeta de nombre simple directamente bajo spikes/salidas/shader.
+const SALIDAS = path.join(MOTOR, "spikes", "salidas", "shader");
+a.salida = path.resolve(a.salida);
+if (!/^[\w-]+$/.test(path.basename(a.salida)) || path.dirname(a.salida) !== SALIDAS) throw new Error("--salida debe ser spikes/salidas/shader/<nombre> con nombre [A-Za-z0-9_-]");
 fs.rmSync(a.salida, { recursive: true, force: true });
 fs.mkdirSync(path.join(a.salida, "compositions"), { recursive: true });
 fs.mkdirSync(path.join(a.salida, "assets", "vendor"), { recursive: true });
