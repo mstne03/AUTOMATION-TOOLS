@@ -20,11 +20,14 @@ fi
 
 ejecutar bash "$DIR_BUILD/verificar-binario.sh" "$FFMPEG_DIR"
 if [ "$CODIGO" -ne 0 ]; then ok "BtbN no pasa la verificación (≠ 0)"; else mal "BtbN pasó la verificación"; fi
-for g in listados licencia pe-tamaño protocolos-red; do
+for g in listados licencia pe-tamaño importaciones protocolos-red; do
   if grep -q "^FALLA \[$g\]" <<<"$SALIDA"; then ok "muerde en [$g]"; else mal "no falla [$g] con BtbN"; fi
 done
 afirmar "detecta libopenh264 en los codificadores" grep -q 'libopenh264' <<<"$SALIDA"
 afirmar "detecta la LGPL v3 de BtbN" grep -q '^FALLA \[licencia\] ffmpeg -L' <<<"$SALIDA"
+afirmar "el parser PE lee la tabla de importación (gdi32.dll de BtbN fuera de la lista)" grep -q 'DLL fuera de la lista cerrada:.* gdi32.dll' <<<"$SALIDA"
+afirmar "detecta el dispositivo de salida sdl de BtbN" grep -qE 'sobran: .*sdl' <<<"$SALIDA"
+afirmar "ffconcat sin -f con whitelist: «Format not on whitelist»" grep -q '^OK    \[protocolos\] ffconcat sin -f' <<<"$SALIDA"
 for g in decodificación robustez tubería gpu protocolos rutas pe; do
   if grep -q "^FALLA \[$g\]" <<<"$SALIDA"; then mal "falla [$g] con un ffmpeg completo: $(grep "^FALLA \[$g\]" <<<"$SALIDA" | head -3)"
   elif grep -q "^OK    \[$g\]" <<<"$SALIDA"; then ok "pasa [$g]"; else mal "no hay comprobaciones de [$g]"; fi

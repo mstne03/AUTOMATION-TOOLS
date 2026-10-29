@@ -22,5 +22,10 @@ else mal "diferencia no detectada bien: $SALIDA"; fi
 construccion d x; printf 'otro' >>"$TMP_TEST/d/ffmpeg.exe"
 negar "SHA256SUMS que no cuadra con el .exe → ≠ 0" bash "$C" "$TMP_TEST/a" "$TMP_TEST/d"
 negar "construcción sin SHA256SUMS → ≠ 0" bash "$C" "$TMP_TEST/a" "$TMP_TEST/no-existe"
+# SHA256SUMS que lista otra cosa (R1 LOW-8): uno de más o uno de menos → ≠ 0.
+construccion e x; printf 'z' >"$TMP_TEST/e/otro.dll"; (cd "$TMP_TEST/e" && sha256sum ffmpeg.exe ffprobe.exe otro.dll >SHA256SUMS)
+negar "SHA256SUMS con un fichero de más → ≠ 0" bash "$C" "$TMP_TEST/a" "$TMP_TEST/e"
+construccion g x; (cd "$TMP_TEST/g" && sha256sum ffmpeg.exe >SHA256SUMS)
+negar "SHA256SUMS sin ffprobe.exe → ≠ 0" bash "$C" "$TMP_TEST/g" "$TMP_TEST/a"
 
 fin
