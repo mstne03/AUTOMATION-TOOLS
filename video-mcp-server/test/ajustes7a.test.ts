@@ -114,8 +114,8 @@ describe("taskkill", () => {
     (globalThis as any).__fake = true;
     const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
     const p = real.ejecutar("x", [], { timeoutMs: 10 });
-    await vi.waitFor(() => expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true));
-    const tk = estado.spawns.find((s) => s.cmd === "taskkill")!;
+    await vi.waitFor(() => expect(estado.spawns.some((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")).toBe(true));
+    const tk = estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!;
     tk.hijo.emit("close", codigoTaskkill);
     const res = await p;
     return { res, hijo: estado.spawns[0].hijo };
@@ -134,7 +134,7 @@ describe("taskkill", () => {
       const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
       const p = real.ejecutar("x", [], { timeoutMs: 10 });
       await vi.advanceTimersByTimeAsync(10);
-      estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.emit("error", new Error("ENOENT"));
+      estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!.hijo.emit("error", new Error("ENOENT"));
       expect((await p).timeout).toBe(true);
       expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
@@ -150,10 +150,10 @@ describe("taskkill", () => {
       const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
       const p = real.ejecutar("x", [], { timeoutMs: 10 });
       await vi.advanceTimersByTimeAsync(10);
-      expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true);
+      expect(estado.spawns.some((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")).toBe(true);
       await vi.advanceTimersByTimeAsync(10_000);
       expect((await p).timeout).toBe(true);
-      expect(estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.kill).toHaveBeenCalled();
+      expect(estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!.hijo.kill).toHaveBeenCalled();
       expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
