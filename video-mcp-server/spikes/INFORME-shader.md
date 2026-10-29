@@ -110,22 +110,34 @@ hay cola) en vez de 16 s por detrás.
 
 ```diff
 -Ji=YE(),T0=Promise.resolve();function OE(e){return T0=T0.then(()=>Ji.renderSyntheticFrame(e-Ji.__testing.getFrameDiagnostics().globalElapsedTime)),T0}
-+Ji=YE(),T0=null,hfPendiente=null;function OE(e){hfPendiente=e;return T0||(T0=(async()=>{try{for(;hfPendiente!==null;){let t=hfPendiente;hfPendiente=null;await Ji.renderSyntheticFrame(t-Ji.__testing.getFrameDiagnostics().globalElapsedTime)}}finally{T0=null}})())}
++Ji=YE(),T0=null,hfPendiente=0,hfHay=!1;function OE(e){if(!Number.isFinite(e))return T0||Promise.resolve();hfPendiente=e;hfHay=!0;return T0||(T0=(async()=>{await null;try{for(;hfHay;){hfHay=!1;let t=hfPendiente;await Ji.renderSyntheticFrame(t-Ji.__testing.getFrameDiagnostics().globalElapsedTime)}}finally{T0=null;hfHay&&OE(hfPendiente).catch(()=>{})}})())}
 ```
 
-(El nombre `hfPendiente` no existe en el bundle; `P0`, por ejemplo, sí: el bundle minificado comparte ámbito.) Este texto
-exacto es la variante `shadersParcheW26` y se validó literalmente: **S8 3/3, 12/12 capturas idénticas**, seek 15 ms de
-mediana. Las demás mediciones de S9 se hicieron con `shadersUltimoGana` (misma lógica más contadores).
+(`hfPendiente` y `hfHay` no existen en el bundle; `P0`, por ejemplo, sí: el bundle minificado comparte ámbito.) Es la
+variante `shadersParcheW26`.
 
-Semántica: se guarda solo el último tiempo pedido; un único bucle lo pinta y vuelve a mirar si llegó otro mientras tanto.
-La promesa que reciben `waitUntil` y el arranque (`await OE(...)`) se resuelve cuando ya está pintado el último tiempo
-pedido, así que el render fotograma a fotograma (un seek, espera, captura) no cambia: nunca hay más de un pendiente. El
-`finally` dentro de la función asíncrona libera el bucle en el mismo microtask en que sale, sin hueco para perder un seek;
-un rechazo se propaga a quien espera y no envenena los siguientes. Lo medido es la variante `shadersUltimoGana` de
-`spikes/shader/variantes.mjs` (esta lógica con contadores) y, literal, `shadersParcheW26`.
+Semántica: se guarda solo el último tiempo pedido y un indicador aparte (`hfHay`); un único bucle lo pinta y vuelve a
+mirar si llegó otro mientras tanto. `await null` es la primera sentencia: `T0` queda asignada antes de ejecutar el
+cuerpo, así que un `throw` síncrono (p. ej. de `getFrameDiagnostics()`) no la deja apuntando a una promesa resuelta para
+siempre. Los tiempos no finitos (`null`, `NaN`, `Infinity`) se ignoran. Si un render rechaza y entretanto llegaron
+peticiones nuevas, el `finally` relanza el bucle con la última (quien esperaba recibe el rechazo). La promesa que
+reciben `waitUntil` y el arranque (`await OE(...)`) se resuelve cuando ya está pintado el último tiempo pedido, así que el
+render fotograma a fotograma (un seek, espera, captura) no cambia: nunca hay más de un pendiente.
+
+**Corrección de la ronda 1.** La primera versión del diff usaba `null` como centinela y no tenía `await null`: con
+`OE(null)` (o un `throw` síncrono) el `finally` ponía `T0=null` antes de que se asignara y `T0` quedaba resuelta para
+siempre (fondo congelado; reproducido con `Ji` falso: tras `OE(null)`, `OE(5)` no pinta). La versión de arriba lo
+corrige. **Prueba en Node, sin navegador:** `node spikes/shader/glue.test.mjs` (con un `Ji` falso): no se congela con
+`OE(null)`/`NaN`/`Infinity`, con un `throw` síncrono ni tras un rechazo; tras un rechazo con peticiones nuevas pinta la
+última; 60 llamadas seguidas dejan un solo render en curso y pintan el último valor. W2.6 debe reutilizarla.
+
+**Qué se midió en navegador y qué no.** La lógica «el último gana» se midió con `shadersUltimoGana` (contadores) en S8 y
+todo S9. El texto literal se midió **solo en S8, modo directo, sin CSP** (3/3, 12/12 idénticas, 15 ms), y en su
+**primera versión**; la corregida de la ronda 1 solo tiene la prueba en Node. **W2.6 debe repetir S8 y S9 con el texto
+literal, en modo iframe y con la CSP del producto.**
 
 Lo que W2.6 debe añadir: (1) un test que falle si el glue cambia (ancla exacta, 1 coincidencia) o si desaparece el
-parche; (2) el SHA-256 nuevo en `catalogo/hyperframes.lock.json` y en `LICENCIAS.md` la nota de modificación; (3) **un
+parche, más `glue.test.mjs`; (2) el SHA-256 nuevo en `catalogo/hyperframes.lock.json` y en `LICENCIAS.md` la nota de modificación; (3) **un
 render real** de HyperFrames con el parche comparado con el actual (aquí solo se comprobó el seek fresco, no la CLI de
 render); (4) redactar el issue a HyperFrames.
 
@@ -145,12 +157,17 @@ padre por otra vía que no sea `postMessage`.** El (e) no toca el iframe ni el c
 ## 7. Seguridad
 
 - **I2 (sin red):** 62 ejecuciones (más 3 de `shadersParcheW26`, con el mismo resultado), 442 peticiones al servidor, **0** con `Host` distinto de `127.0.0.1:<puerto>`,
-  **0** peticiones del navegador fuera de la lista blanca (`http://127.0.0.1:<puerto>/`, `data:`, `blob:`). Control
+  **0** peticiones de página fuera de la lista blanca (`http://127.0.0.1:<puerto>/`, `data:`, `blob:`); el tráfico
+  propio del proceso browser (fuera de las páginas) no lo ve `page.on("request")`: lo cubren el proxy y el control
+  positivo. Control
   positivo en **cada** lanzamiento (62/62): `fetch http://203.0.113.1/`, `fetch http://ejemplo.test/` y
   `WebSocket ws://203.0.113.1/` fallan (`net::ERR_PROXY_CONNECTION_FAILED`). El proxy corta antes que
   `--host-resolver-rules`, así que la segunda barrera no queda probada por separado.
 - **M1:** CDP por pipe. S0: el navegador (9 PID con nuestro perfil) **no escucha en ningún puerto TCP**; el único listener
-  del spike es `servir.mjs` en `127.0.0.1`.
+  del spike es `servir.mjs` en `127.0.0.1`. Ronda 1: la comprobación usa `netstat -ano` sin `-p` (TCP en LISTENING y
+  UDP, IPv4 e IPv6, por PID); repetida en S0: 0 escuchas TCP/UDP del navegador, una sola del spike (TCP `127.0.0.1`).
+- **CORS del servidor de prueba:** solo `Access-Control-Allow-Origin: null` cuando la petición llega con `Origin: null`
+  (iframe sandboxed o CSP `sandbox`); nunca `*`. Es andamiaje del spike y **no se traslada al producto** (I8).
 - **M3:** `lanzamiento.json` en cada escenario; `repro.mjs` aborta con `--no-sandbox`, `--single-process`,
   `--in-process-gpu`, `--disable-web-security` o `--use-webgpu-adapter=swiftshader`, y si faltan las dos banderas de red.
   Ninguna escalada usada.
@@ -166,6 +183,11 @@ padre por otra vía que no sea `postMessage`.** El (e) no toca el iframe ni el c
 - **L4:** runtime copiado = origen (`cafd7cc9…607e`); `puppeteer-core` 25.16.0 = lock; `chrome-headless-shell.exe`
   (`909fa4a0…e7e6`) y `ffmpeg.exe` (`3e79ae08…956f`) iguales al ejecutable dentro de los zips de la caché de
   `prepare-video-engine.sh`, cuyos SHA-256 (`5d7df999…275e`, `b7c1c846…4fc0`) coinciden con los fijados en el script.
+- **L3 y L4 automatizados (ronda 1):** `node spikes/shader/verificar.mjs` compara runtime, `shaders.iife.js` (contra
+  `catalogo/hyperframes.lock.json`), `puppeteer-core` (contra el lock), CfT y ffmpeg con sus referencias y cuenta los
+  procesos restantes; sale con 1 si algo no cuadra. Salida actual: todo `ok`, 0 procesos.
+- **Rutas:** `--etiqueta` y `--salida` solo `[A-Za-z0-9_-]` y bajo `spikes/salidas/shader` antes de borrar nada;
+  `comparar.mjs` solo acepta PNG bajo esa carpeta y llama a ffmpeg con `-protocol_whitelist file`.
 - **I9:** `git diff 0353fae -- package.json package-lock.json` vacío; `node_modules` copiado, no instalado.
 - **Ningún parche aplicado:** variantes solo en memoria al servir; SHA-256 de runtime y `shaders.iife.js` iguales antes y
   después.
@@ -182,6 +204,7 @@ CH="/c/Program Files/Google/Chrome/Application/chrome.exe"
 FF=".../video-engine/ffmpeg/ffmpeg.exe"
 node spikes/shader/montar.mjs
 node spikes/shader/variantes.mjs --autotest && node spikes/shader/servir.mjs --autotest
+node spikes/shader/glue.test.mjs && node spikes/shader/verificar.mjs
 node spikes/shader/repro.mjs --navegador "$CH" --headless new --escenario S1 --repeticiones 3 --etiqueta c156
 node spikes/shader/repro.mjs --navegador "$CH" --headless new --esperar-seek no --escenario S2 --repeticiones 3 --etiqueta c156-preview
 node spikes/shader/comparar.mjs --ffmpeg "$FF" --escenario S2-c156-preview --referencia S1-c156

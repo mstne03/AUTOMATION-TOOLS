@@ -44,13 +44,17 @@ export const VARIANTES = {
       "return T0.then(v=>{__q.resueltos=Math.max(__q.resueltos,n);__q.resueltos+__q.rechazados===__q.encolados&&(__q.vaciado=performance.now());return v}," +
       "x=>{__q.rechazados++;throw x})}",
   },
-  // El diff exacto que se propone a W2.6 (INFORME-shader.md §6), sin contadores, para validarlo literalmente.
+  // El diff exacto que se propone a W2.6 (INFORME-shader.md §6), sin contadores. Corrección de la ronda 1:
+  // indicador `hfHay` aparte (null ya no es centinela), tiempos no finitos ignorados, `await null` como primera
+  // sentencia (T0 queda asignada antes de ejecutar el cuerpo, así un throw síncrono no la deja resuelta para siempre)
+  // y, tras un rechazo con peticiones nuevas pendientes, se relanza el bucle. Lo prueba spikes/shader/glue.test.mjs.
   shadersParcheW26: {
     fichero: "shaders",
     ancla: OE_ORIGINAL,
     nuevo:
-      "Ji=YE(),T0=null,hfPendiente=null;function OE(e){hfPendiente=e;return T0||(T0=(async()=>{try{for(;hfPendiente!==null;){let t=hfPendiente;hfPendiente=null;" +
-      "await Ji.renderSyntheticFrame(t-Ji.__testing.getFrameDiagnostics().globalElapsedTime)}}finally{T0=null}})())}",
+      "Ji=YE(),T0=null,hfPendiente=0,hfHay=!1;function OE(e){if(!Number.isFinite(e))return T0||Promise.resolve();hfPendiente=e;hfHay=!0;" +
+      "return T0||(T0=(async()=>{await null;try{for(;hfHay;){hfHay=!1;let t=hfPendiente;" +
+      "await Ji.renderSyntheticFrame(t-Ji.__testing.getFrameDiagnostics().globalElapsedTime)}}finally{T0=null;hfHay&&OE(hfPendiente).catch(()=>{})}})())}",
   },
   // Pista del informe de preview: play() del adaptador typegpu no pone su tiempo a null.
   runtimeSinNullEnPlay: { fichero: "runtime", ancla: "play:()=>{r(),e=null}", nuevo: "play:()=>{r()}" },
