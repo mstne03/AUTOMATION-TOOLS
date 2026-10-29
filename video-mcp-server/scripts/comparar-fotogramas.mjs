@@ -2,6 +2,10 @@
 // compara fotograma a fotograma con el SSIM de ffmpeg. Falla si UN solo fotograma baja del umbral.
 // Uso: node scripts/comparar-fotogramas.mjs <video-engine> <dirRef> <dirCand> <salida> [--umbral 0.99]
 // Requiere `npm run build`. Solo desarrollo: no se empaqueta (prepare-video-engine.sh copia dist, plantilla y catalogo).
+// Control negativo: que el veredicto detecta un fotograma roto lo cubren los tests de `veredicto` en
+// test/arnes.test.ts (un solo fotograma bajo el umbral basta para fallar; sin fotogramas, falla). No hay control con
+// vídeo real porque cuesta dos renders; si hiciera falta, comparar una composición con una copia a la que se le quita
+// un host: tiene que salir ok: false.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,19 +38,23 @@ export function veredicto(filas, umbral) {
   };
 }
 
+/** Lo mínimo que necesita un proceso en Windows: base del entorno cerrado y entorno del Chrome de la sonda. */
+export function entornoMinimo() {
+  const sistema = process.env.SYSTEMROOT ?? process.env.SystemRoot ?? "C:\\Windows";
+  const temp = process.env.TEMP ?? os.tmpdir();
+  return { PATH: path.join(sistema, "System32"), SYSTEMROOT: sistema, TEMP: temp, TMP: process.env.TMP ?? temp };
+}
+
 /**
  * Entorno de la CLI de HyperFrames por lista blanca (I5) con el modo cerrado (I13): ninguna clave del entorno del
  * desarrollador llega a HyperFrames ni a Chrome.
  */
 export function entornoCerrado(motor, home) {
   const ffmpeg = path.join(motor, "ffmpeg");
-  const sistema = process.env.SYSTEMROOT ?? process.env.SystemRoot ?? "C:\\Windows";
-  const temp = process.env.TEMP ?? os.tmpdir();
+  const base = entornoMinimo();
   return {
-    PATH: ffmpeg + path.delimiter + path.join(sistema, "System32"),
-    SYSTEMROOT: sistema,
-    TEMP: temp,
-    TMP: process.env.TMP ?? temp,
+    ...base,
+    PATH: ffmpeg + path.delimiter + base.PATH,
     HOME: home,
     USERPROFILE: home,
     FFMPEG_DIR: ffmpeg,
@@ -67,7 +75,7 @@ export function usaWebgpu(dir) {
 }
 
 /** `check` (errores bloquean, como en el motor) y render de `dir` a `mp4`. */
-export async function renderizar(motor, dir, mp4, home, { comprobar = true } = {}) {
+export async function renderizar(motor, dir, mp4, home, { comprobar = true, timeoutMs = 600_000 } = {}) {
   const { ejecutar } = await dist("proceso.js");
   const { comprobarComposicion, HYPERFRAMES_BIN } = await dist("render.js");
   fs.mkdirSync(home, { recursive: true });
@@ -81,7 +89,8 @@ export async function renderizar(motor, dir, mp4, home, { comprobar = true } = {
   const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
   if (gpu) args.push("--browser-gpu");
   const t0 = Date.now();
-  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env, timeoutMs: 600_000 });
+  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env, timeoutMs });
+  if (r.timeout) throw new Error(`render de ${dir}: superó ${timeoutMs} ms`);
   if (r.code !== 0 || !fs.existsSync(mp4)) throw new Error(`render de ${dir} (código ${r.code}): ${(r.stderr || r.stdout).slice(-1500)}`);
   return { segundos: Math.round((Date.now() - t0) / 1000), check, salida: r.stdout + r.stderr };
 }

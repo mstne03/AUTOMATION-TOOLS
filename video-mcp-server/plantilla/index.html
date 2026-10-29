@@ -5,8 +5,9 @@
   Orden de pintado: bloques y fondos (11-23) → capas (40) → gancho y etiqueta (50) → subtítulos (60) → flash (70).
 
   CSP (I2 a, SEO-111): la composición no usa la red, y lo impone el navegador. Ninguna directiva admite un origen
-  de red; la preview envía la misma política como cabecera con 'self' cambiado por el origen exacto de la preview (127.0.0.1 y su puerto). Relajaciones,
-  cada una medida con scripts/sondear-preview.mjs (política estricta → violaciones) y con el render real:
+  de red; la preview envía la misma política como cabecera, con 'self' cambiado por el origen exacto de la
+  preview (127.0.0.1 y su puerto). Relajaciones, cada una medida con scripts/sondear-preview.mjs (política
+  estricta → violaciones) y con el render real:
   - script-src 'unsafe-inline': el runtime de HyperFrames vuelve a insertar los <script> en línea de cada pieza al
     montarla (26 violaciones script-src-elem con origen el runtime) y la raíz lleva el importmap de three.js en línea;
     sin ello no se anima ninguna pieza. Nonces y hashes no sirven: los datos de cada pieza cambian en cada vídeo y

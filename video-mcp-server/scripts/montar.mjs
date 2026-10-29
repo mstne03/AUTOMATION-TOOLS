@@ -74,6 +74,22 @@ ${CUERPO}`;
 
 const GUIONES = { GUION_TODAS, GUION_TUNEL, GUION_FOTOS };
 
+/** Marcador que deja el arnés en su salida: solo se borra una carpeta que lo tenga (o vacía). */
+export const MARCADOR_SALIDA = ".salida-arnes-seo111";
+
+/** Vacía `salida` para un montaje nuevo. Se niega a borrar una carpeta con contenido que no creó el arnés (LOW-10). */
+export function prepararSalida(salida) {
+  if (fs.existsSync(salida)) {
+    const hay = fs.readdirSync(salida);
+    if (hay.length && !hay.includes(MARCADOR_SALIDA)) {
+      throw new Error(`${salida} existe, no está vacía y no la creó el arnés (falta ${MARCADOR_SALIDA}): no la borro.`);
+    }
+    fs.rmSync(salida, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  }
+  fs.mkdirSync(salida, { recursive: true });
+  fs.writeFileSync(path.join(salida, MARCADOR_SALIDA), "Salida de scripts/montar.mjs (SEO-111): se puede borrar.\n");
+}
+
 /**
  * Monta `<salida>/proyecto/video001/_composicion`. El proceso solo ve el entorno cerrado mientras monta (la prueba de
  * GPU de montarComposicion lanza la CLI con process.env) y lo recupera al terminar.
@@ -85,7 +101,7 @@ export async function montar(motor, salida, guion = GUION_TODAS, { duracionVoz =
   const navegador = path.join(motor, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
   const raiz = path.join(salida, "proyecto");
   const dir = path.join(raiz, "video001");
-  fs.rmSync(salida, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  prepararSalida(salida);
   fs.mkdirSync(dir, { recursive: true });
 
   const previo = { ...process.env };

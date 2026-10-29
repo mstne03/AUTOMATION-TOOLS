@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { entornoCerrado, leerSsim, veredicto } from "../scripts/comparar-fotogramas.mjs";
 import { servirComposicion } from "../scripts/sondear-preview.mjs";
+import { MARCADOR_SALIDA, prepararSalida } from "../scripts/montar.mjs";
 
 const ENTORNO = { ...process.env };
 afterEach(() => {
@@ -122,5 +123,41 @@ describe("servidor de la sonda de preview (L4)", () => {
     } finally {
       await s.cerrar();
     }
+  });
+
+  it("reescribirMeta cambia 'self' por el origen exacto en el <meta>, nunca por * (M1)", async () => {
+    const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "arnes-"));
+    fs.writeFileSync(
+      path.join(raiz, "index.html"),
+      `<!doctype html><html><head><meta charset="UTF-8" />\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; connect-src 'self'" />\n<meta http-equiv="x-dns-prefetch-control" content="off" />\n</head><body></body></html>`,
+    );
+    const s = await servirComposicion({ dir: raiz, reescribirMeta: true, sinDnsPrefetchOff: true });
+    try {
+      const r = await pedir(s.puerto, `/${s.base.split("/")[3]}/index.html`);
+      const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(r.cuerpo)![1];
+      expect(meta).toBe(`default-src 'none'; script-src ${s.origen} 'unsafe-inline'; connect-src ${s.origen}`);
+      expect(meta).not.toMatch(/\*|'self'/);
+      expect(s.origen).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      // sinDnsPrefetchOff (control de la sonda de dns-prefetch) quita solo ese <meta>.
+      expect(r.cuerpo).not.toContain("x-dns-prefetch-control");
+    } finally {
+      await s.cerrar();
+    }
+  });
+});
+
+describe("montar: salida (LOW-10)", () => {
+  it("se niega a borrar una carpeta ajena con contenido y sí borra la suya", () => {
+    const ajena = fs.mkdtempSync(path.join(os.tmpdir(), "arnes-ajena-"));
+    fs.writeFileSync(path.join(ajena, "importante.txt"), "no borrar");
+    expect(() => prepararSalida(ajena)).toThrow(/no la creó el arnés/);
+    expect(fs.existsSync(path.join(ajena, "importante.txt"))).toBe(true);
+
+    const propia = path.join(os.tmpdir(), `arnes-propia-${process.pid}-${Date.now()}`);
+    prepararSalida(propia);
+    expect(fs.existsSync(path.join(propia, MARCADOR_SALIDA))).toBe(true);
+    fs.writeFileSync(path.join(propia, "viejo.txt"), "x");
+    prepararSalida(propia);
+    expect(fs.readdirSync(propia)).toEqual([MARCADOR_SALIDA]);
   });
 });

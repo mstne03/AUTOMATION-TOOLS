@@ -6,10 +6,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
+import { entornoMinimo } from "./comparar-fotogramas.mjs";
 
 const RUNTIME = fileURLToPath(new URL("../node_modules/hyperframes/dist/hyperframe.runtime.iife.js", import.meta.url));
 const TIPOS = {
@@ -39,8 +39,9 @@ export function politicaDeIndex(html) {
  * Servidor de la composición. `sinCsp`: quita el <meta> y no envía la cabecera (control positivo de las sondas).
  * `marcoSinCsp`: el marco no envía su `frame-src` (control de la sonda de navegación). `reescribirMeta`: cambia
  * `'self'` por el origen exacto en el <meta> (salida preaprobada por el orquestador si el iframe opaco no casa `'self'`).
+ * `sinDnsPrefetchOff`: quita el <meta x-dns-prefetch-control> (control positivo de la sonda de dns-prefetch).
  */
-export async function servirComposicion({ dir, sinCsp = false, marcoSinCsp = false, reescribirMeta = false }) {
+export async function servirComposicion({ dir, sinCsp = false, marcoSinCsp = false, reescribirMeta = false, sinDnsPrefetchOff = false }) {
   const raiz = fs.realpathSync(path.resolve(dir));
   const clave = crypto.randomBytes(32).toString("hex");
   let origen = "";
@@ -74,6 +75,7 @@ export async function servirComposicion({ dir, sinCsp = false, marcoSinCsp = fal
     if (rel === "index.html") {
       let html = cuerpo.toString("utf8");
       const runtime = `<script src="/${clave}/__runtime.js"></script>`;
+      if (sinDnsPrefetchOff) html = html.replace(/<meta http-equiv="x-dns-prefetch-control"[^>]*>/i, "");
       if (sinCsp) html = html.replace(META_CSP, "").replace(/<meta charset="UTF-8" \/>/i, (m) => m + runtime);
       else {
         if (reescribirMeta) html = html.replace(META_CSP, (m) => m.replaceAll("&#39;self&#39;", origen).replaceAll("'self'", origen));
@@ -104,14 +106,12 @@ const REGISTRO = `(() => {
 })();`;
 
 /** Abre el marco, espera al runtime en el iframe y evalúa `sonda` (expresión JS, puede ser una promesa) en el iframe. */
-export async function sondearPreview({ navegador, dir, sonda, sinCsp = false, marcoSinCsp = false, reescribirMeta = false, esperarPlayer = true }) {
+/** `argsExtra`: argumentos de Chrome adicionales (p. ej. `--log-net-log=<ruta>` para la sonda de dns-prefetch). */
+export async function sondearPreview({ navegador, dir, sonda, sinCsp = false, marcoSinCsp = false, reescribirMeta = false, sinDnsPrefetchOff = false, esperarPlayer = true, argsExtra = [] }) {
   if (!navegador || !fs.existsSync(navegador)) throw new Error(`Falta el navegador (executablePath obligatorio): ${navegador}`);
-  const s = await servirComposicion({ dir, sinCsp, marcoSinCsp, reescribirMeta });
-  const sistema = process.env.SYSTEMROOT ?? "C:\\Windows";
-  const temp = process.env.TEMP ?? os.tmpdir();
+  const s = await servirComposicion({ dir, sinCsp, marcoSinCsp, reescribirMeta, sinDnsPrefetchOff });
   // Entorno mínimo para Chrome (L4): nada del entorno del desarrollador.
-  const env = { SYSTEMROOT: sistema, TEMP: temp, TMP: temp, PATH: path.join(sistema, "System32") };
-  const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env, args: ["--autoplay-policy=no-user-gesture-required"] });
+  const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), args: ["--autoplay-policy=no-user-gesture-required", ...argsExtra] });
   const erroresPagina = [];
   try {
     const page = await browser.newPage();
