@@ -23,6 +23,11 @@ export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
 export const NODE_MODULES = path.join(SERVER_ROOT, "node_modules");
 export const GSAP_JS = path.join(NODE_MODULES, "gsap", "dist", "gsap.min.js");
 export const SHADERS_JS = path.join(PLANTILLA_DIR, "vendor", "shaders.iife.js");
+/** Motor de tiempo WAAPI de las piezas (SEO-111). Convive con gsap.min.js hasta que W3.1 quite GSAP. */
+export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
+/** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
+const DURACION_MAXIMA = 180;
+const ID_PIEZA_RE = /^[a-z][a-z0-9-]*$/;
 
 const TRANSICION = 0.3;
 const SOLAPE = TRANSICION / 2;
@@ -60,9 +65,15 @@ export function escaparHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-/** JSON seguro para incrustar dentro de un <script>. */
+/**
+ * JSON seguro para incrustar dentro de un <script>. Un número no finito lanza (JSON lo convertiría en `null` y la
+ * pieza se animaría con basura sin error visible: I1, I11).
+ */
 export function jsonParaScript(v: unknown): string {
-  return JSON.stringify(v)
+  return JSON.stringify(v, (clave, valor: unknown) => {
+    if (typeof valor === "number" && !Number.isFinite(valor)) throw new Error(`Número no finito en los datos de la composición (clave «${clave}»): ${valor}`);
+    return valor;
+  })
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026")
@@ -159,6 +170,8 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   const o = guion.opciones;
   const avisos: string[] = [];
   const D = r3(al.duracionAudio + COLA_FINAL);
+  if (typeof al.duracionAudio !== "number" || !Number.isFinite(D)) throw new Error(`Tiempo no finito: la voz dura ${al.duracionAudio} s.`);
+  if (D > DURACION_MAXIMA + COLA_FINAL) throw new Error(`La voz dura ${al.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
   const archivos: Record<string, string> = {};
   const copias: PlanComposicion["copias"] = [];
   const colores = {
@@ -179,7 +192,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   for (const k of ["titulos", "subtitulos", "mono"] as const) {
     if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", archivoFuente(f[k]!.archivo)), destino: `assets/fonts/${archivoFuente(f[k]!.archivo)}` });
   }
-  copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" });
+  copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" }, { origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
 
   // ---- Ventanas de cada bloque ----
   const desde = al.segmentos.map((s, k) => (e.cortes?.[k] !== undefined ? e.cortes[k] : s.mostrarDesde));
@@ -208,10 +221,29 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   }
 
   const hosts: string[] = [];
-  const host = (id: string, src: string, inicio: number, duracion: number, z: number, extra = "", alto = 1920, top = 0) =>
+  // Cada host y su pieza salen de aquí: el {{INICIO}}/{{DURACION}} de la pieza es por construcción el
+  // data-start/data-duration del host (SEO-111). Tiempos calculados por el motor y validados (I1).
+  const anadirPieza = (
+    id: string,
+    plantilla: string,
+    inicio: number,
+    duracion: number,
+    valores: Record<string, string | number>,
+    h: { z: number; extra?: string; alto?: number; top?: number },
+  ) => {
+    if (!ID_PIEZA_RE.test(id)) throw new Error(`Id de pieza no válido: ${id}`);
+    if (typeof inicio !== "number" || typeof duracion !== "number" || !Number.isFinite(inicio) || !Number.isFinite(duracion)) {
+      throw new Error(`Tiempo no finito en la pieza ${id}: inicio=${inicio}, duración=${duracion}.`);
+    }
+    const i = r3(inicio);
+    const d = r3(duracion);
+    if (i < 0 || d <= 0 || i + d > D + 0.001) throw new Error(`Tiempo fuera de rango en la pieza ${id}: inicio=${i}, duración=${d}, vídeo=${D} s.`);
+    const { z, extra = "", alto = 1920, top = 0 } = h;
     hosts.push(
-      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${src}" data-start="${r3(inicio)}" data-duration="${r3(duracion)}" data-track-index="${z}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
+      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${id}.html" data-start="${i}" data-duration="${d}" data-track-index="${z}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
     );
+    archivos[`compositions/${id}.html`] = pieza(plantilla, { ...valores, ID: id, INICIO: i, DURACION: d });
+  };
 
   // ---- Fondo (un único host bajo los bloques) ----
   let usaWebgpu = false;
@@ -227,21 +259,26 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
             : o.fondo === "mesh"
               ? { colorA: colores.fondo, colorB: colores.acento }
               : { colorA: colores.fondo, colorB: colores.secundario, contrast: 0.7, speed: 0.25 };
-      archivos["compositions/fondo.html"] = pieza("fondo-shader.html", { ID: "fondo", DURACION: D, SHADER: SHADERS[o.fondo], PROPS: escaparHtml(JSON.stringify(props)) });
       copias.push({ origen: SHADERS_JS, destino: "assets/vendor/shaders.iife.js" });
-      host("fondo", "fondo.html", 0, D, 10, " data-no-timeline");
+      anadirPieza(
+        "fondo",
+        "fondo-shader.html",
+        0,
+        D,
+        { SHADER: SHADERS[o.fondo], PROPS: escaparHtml(JSON.stringify(props)) },
+        { z: 10, extra: " data-no-timeline" },
+      );
     } else {
       if (conShader) avisos.push(`No hay WebGPU en esta máquina: \`fondo: ${o.fondo}\` se sustituye por un degradado animado con los colores del tema.`);
       const animado = o.fondo !== "ninguno";
-      archivos["compositions/fondo.html"] = pieza("fondo-css.html", {
-        ID: "fondo",
-        DURACION: D,
-        COLOR_A: colores.acento,
-        COLOR_B: colores.secundario,
-        ANIMADO: animado ? "true" : "false",
-        OCULTO: animado ? "" : "display: none",
-      });
-      host("fondo", "fondo.html", 0, D, 10);
+      anadirPieza(
+        "fondo",
+        "fondo-css.html",
+        0,
+        D,
+        { COLOR_A: colores.acento, COLOR_B: colores.secundario, ANIMADO: animado ? "true" : "false", OCULTO: animado ? "" : "display: none" },
+        { z: 10 },
+      );
     }
   }
 
@@ -259,40 +296,36 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       golpe.t = r3(v.inicio + Math.max(golpe.t - v.inicio, empieza + 0.55));
     }
     const env = { fundido: k === 0 ? 0 : TRANSICION, punch: k > 0, golpes: golpe && golpe.n === v.n ? [r3(golpe.t - v.inicio)] : [] };
-    let html: string;
+    let p: PiezaPlan;
     if (!esc) {
       const img = e.imagenes[k];
       if (!img) throw new Error(`Falta la imagen del bloque ${v.n}.`);
       const archivo = `img${v.n}${img.extension}`;
       copias.push({ origen: img.ruta, destino: `assets/${archivo}` });
       const [dx, dy] = DIRECCIONES[k % DIRECCIONES.length];
-      html = pieza("bloque-foto.html", {
-        ID: id,
-        DURACION: v.duracion,
-        IMG: escaparHtml(archivo),
-        DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }),
-      });
+      p = ["bloque-foto.html", { IMG: escaparHtml(archivo), DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }) }];
     } else {
-      const comun = { ID: id, DURACION: v.duracion, FUENTES: fuentesCss, ENVOLTURA: envolturaJs(id, env) };
+      // ENVOLTURA (código GSAP) para las piezas de hoy; ENVOLTURA_DATOS (datos para hf.envoltura) para las migradas.
+      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA: envolturaJs(id, env), ENVOLTURA_DATOS: jsonParaScript(env) };
       switch (esc.tipo) {
         case "cifra":
-          html = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
+          p = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
           break;
         case "cartel":
-          html = piezaCartel(esc, comun, empieza);
+          p = piezaCartel(esc, comun, empieza);
           break;
         case "barras":
-          html = piezaBarras(esc, comun, v, empieza, colores);
+          p = piezaBarras(esc, comun, v, empieza, colores);
           break;
         case "mapa":
-          html = piezaMapa(esc, comun, empieza, colores);
+          p = piezaMapa(esc, comun, empieza, colores);
           break;
         case "titulo3d":
           usa3d = true;
-          html = pieza("escena-titulo3d.html", {
-            ...comun,
-            DATOS: jsonParaScript({ texto: (esc as EscenaTitulo3d).texto, acento: colores.acento, duracion: v.duracion, empieza }),
-          });
+          p = [
+            "escena-titulo3d.html",
+            { ...comun, DATOS: jsonParaScript({ texto: (esc as EscenaTitulo3d).texto, acento: colores.acento, duracion: v.duracion, empieza }) },
+          ];
           break;
         case "tunel": {
           usaTunel = true;
@@ -301,13 +334,12 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
             .filter((x): x is string => !!x);
           e.imagenes.forEach((img, i) => img && copias.push({ origen: img.ruta, destino: `assets/img${i + 1}${img.extension}` }));
           const paleta = (tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto]).filter((c) => COLOR_RE.test(c));
-          html = pieza("escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento });
+          p = ["escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento }];
           break;
         }
       }
     }
-    archivos[`compositions/${id}.html`] = html;
-    host(id, `${id}.html`, v.inicio, v.duracion, 10 + v.n);
+    anadirPieza(id, p[0], v.inicio, v.duracion, p[1], { z: 10 + v.n });
   }
 
   // Reencuadre final de la imagen 1 para que el short haga bucle (solo si el bloque 1 es una foto).
@@ -315,13 +347,17 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   if (!escenas[1] && img1) {
     const archivo = `img1-bucle${img1.extension}`;
     copias.push({ origen: img1.ruta, destino: `assets/${archivo}` });
-    archivos["compositions/bucle.html"] = pieza("bloque-foto.html", {
-      ID: "bucle",
-      DURACION: COLA_FINAL,
-      IMG: escaparHtml(archivo),
-      DATOS: jsonParaScript({ duracion: COLA_FINAL, dx: 0, dy: 0, movimiento: false, fundido: TRANSICION, punch: false, golpes: [] }),
-    });
-    host("bucle", "bucle.html", D - COLA_FINAL, COLA_FINAL, 17);
+    anadirPieza(
+      "bucle",
+      "bloque-foto.html",
+      D - COLA_FINAL,
+      COLA_FINAL,
+      {
+        IMG: escaparHtml(archivo),
+        DATOS: jsonParaScript({ duracion: COLA_FINAL, dx: 0, dy: 0, movimiento: false, fundido: TRANSICION, punch: false, golpes: [] }),
+      },
+      { z: 17 },
+    );
   }
 
   // ---- Capas: degradado, viñeta, destellos y look ----
@@ -348,15 +384,20 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   } else if (o.look === "pelicula") {
     lookHtml = `      <div id="capas-grano" class="clip lleno" data-start="0" data-duration="${D}" data-track-index="3" data-layout-ignore data-layout-allow-occlusion><div class="textura"></div></div>`;
   }
-  archivos["compositions/capas.html"] = pieza("capas.html", {
-    DURACION: D,
-    FUENTES: fuentesCss,
-    VINETA: o.look === "pelicula" ? 0.75 : 0.62,
-    BLOQUES_LUZ: luzHtml,
-    LOOK: lookHtml,
-    DATOS: jsonParaScript({ duracion: D, destellos }),
-  });
-  host("capas", "capas.html", 0, D, 40);
+  anadirPieza(
+    "capas",
+    "capas.html",
+    0,
+    D,
+    {
+      FUENTES: fuentesCss,
+      VINETA: o.look === "pelicula" ? 0.75 : 0.62,
+      BLOQUES_LUZ: luzHtml,
+      LOOK: lookHtml,
+      DATOS: jsonParaScript({ duracion: D, destellos }),
+    },
+    { z: 40 },
+  );
 
   // ---- Gancho y etiqueta ----
   // El gancho y la etiqueta ocupan la mitad superior, igual que el texto de las escenas: no pueden pisarse.
@@ -390,24 +431,29 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     }
   }
   const palabrasGancho = guion.gancho.split(/\s+/).filter(Boolean);
-  archivos["compositions/gancho.html"] = pieza("gancho.html", {
-    DURACION: finGancho,
-    FUENTES: fuentesCss,
-    TAMANO: tamanoGancho(guion.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
-    PALABRAS: palabrasGancho
-      .map((w, i) => `<span class="palabra${i === palabrasGancho.length - 1 ? " acento" : ""}">${escaparHtml(w)}</span>`)
-      .join(""),
-  });
-  host("gancho", "gancho.html", 0, finGancho, 50, "", 620, 200);
-  if (o.etiqueta && etiqueta) {
-    const dur = r3(etiqueta.fin - etiqueta.inicio);
-    archivos["compositions/etiqueta.html"] = pieza("etiqueta.html", {
-      DURACION: dur,
+  anadirPieza(
+    "gancho",
+    "gancho.html",
+    0,
+    finGancho,
+    {
       FUENTES: fuentesCss,
-      TEXTO: escaparHtml(o.etiqueta),
-      TAMANO: Math.min(64, Math.floor(872 / (Math.max(o.etiqueta.length, 1) * 0.56))),
-    });
-    host("etiqueta", "etiqueta.html", etiqueta.inicio, dur, 51, "", 160, etiqueta.top);
+      TAMANO: tamanoGancho(guion.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
+      PALABRAS: palabrasGancho
+        .map((w, i) => `<span class="palabra${i === palabrasGancho.length - 1 ? " acento" : ""}">${escaparHtml(w)}</span>`)
+        .join(""),
+    },
+    { z: 50, alto: 620, top: 200 },
+  );
+  if (o.etiqueta && etiqueta) {
+    anadirPieza(
+      "etiqueta",
+      "etiqueta.html",
+      etiqueta.inicio,
+      r3(etiqueta.fin - etiqueta.inicio),
+      { FUENTES: fuentesCss, TEXTO: escaparHtml(o.etiqueta), TAMANO: Math.min(64, Math.floor(872 / (Math.max(o.etiqueta.length, 1) * 0.56))) },
+      { z: 51, alto: 160, top: etiqueta.top },
+    );
   }
 
   // ---- Subtítulos ----
@@ -452,18 +498,23 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       return `      <div id="${g.id}" class="clip grupo" data-start="${g.inicio}" data-duration="${g.duracion}" data-track-index="0"><div id="${g.id}-txt" class="txt" style="font-size: ${g.tamano}px">${spans}</div></div>`;
     })
     .join("\n");
-  archivos["compositions/subtitulos.html"] = pieza("subtitulos.html", {
-    DURACION: D,
-    ESTILO: estilo,
-    FUENTES: fuentesCss,
-    GRUPOS: gruposHtml,
-    DATOS: jsonParaScript({
-      estilo,
-      colores: { texto: colores.texto, acento: colores.acento },
-      grupos: grupos.map((g) => ({ id: g.id, inicio: g.inicio, palabras: g.palabras.map((p) => ({ id: p.id, inicio: p.inicio, fin: p.fin, enfasis: p.enfasis })) })),
-    }),
-  });
-  host("subtitulos", "subtitulos.html", 0, D, 60, ' data-track-kind="captions"');
+  anadirPieza(
+    "subtitulos",
+    "subtitulos.html",
+    0,
+    D,
+    {
+      ESTILO: estilo,
+      FUENTES: fuentesCss,
+      GRUPOS: gruposHtml,
+      DATOS: jsonParaScript({
+        estilo,
+        colores: { texto: colores.texto, acento: colores.acento },
+        grupos: grupos.map((g) => ({ id: g.id, inicio: g.inicio, palabras: g.palabras.map((p) => ({ id: p.id, inicio: p.inicio, fin: p.fin, enfasis: p.enfasis })) })),
+      }),
+    },
+    { z: 60, extra: ' data-track-kind="captions"' },
+  );
 
   // ---- Destellos blancos: cambio de bloque y golpe ----
   const flash = ventanas.slice(1).map((v) => ({ t: v.corte, opacidad: 0.55, sube: 0.05, baja: 0.2 }));
@@ -471,8 +522,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   flash.sort((a, b) => a.t - b.t);
   // Dos destellos no pueden pisarse: si el golpe cae encima de un corte, gana el más fuerte.
   const flashSinSolape = flash.filter((x, i) => i === 0 || x.t >= flash[i - 1].t + flash[i - 1].sube + flash[i - 1].baja);
-  archivos["compositions/flash.html"] = pieza("flash.html", { DURACION: D, DATOS: jsonParaScript({ destellos: flashSinSolape }) });
-  host("flash", "flash.html", 0, D, 70);
+  anadirPieza("flash", "flash.html", 0, D, { DATOS: jsonParaScript({ destellos: flashSinSolape }) }, { z: 70 });
 
   // ---- Vendor 3D ----
   if (usa3d) {
@@ -523,35 +573,45 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
 
 // ---------- Piezas de escena ----------
 
-type Comun = { ID: string; DURACION: number; FUENTES: string; ENVOLTURA: string };
+type Comun = { ID: string; FUENTES: string; ENVOLTURA: string; ENVOLTURA_DATOS: string };
+/** Plantilla de la pieza y sus valores; ID, INICIO y DURACION los pone anadirPieza. */
+type PiezaPlan = [string, Record<string, string | number>];
 type Ventana = { duracion: number; visible: number };
 
-function piezaCifra(esc: EscenaCifra, comun: Comun, v: Ventana, empieza: number, golpe?: number): string {
+function piezaCifra(esc: EscenaCifra, comun: Comun, v: Ventana, empieza: number, golpe?: number): PiezaPlan {
   const final = esc.prefijo + esc.valor.toLocaleString("en-US", { minimumFractionDigits: esc.decimales, maximumFractionDigits: esc.decimales }) + esc.sufijo;
   const tamano = Math.max(140, Math.min(380, Math.floor(900 / (Math.max(final.length, 1) * 0.5))));
   // La cuenta dura el 60 % del bloque; si el golpe cae en este bloque, aterriza justo en esa palabra.
   const cuenta = golpe !== undefined && golpe > empieza + 0.5 ? r3(golpe - (empieza + 0.1)) : r3(Math.max(0.4, v.visible * 0.6));
-  return pieza("escena-cifra.html", {
-    ...comun,
-    TAMANO: tamano,
-    INICIAL: escaparHtml(esc.prefijo + "0" + esc.sufijo),
-    ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
-    DATOS: jsonParaScript({ valor: esc.valor, prefijo: esc.prefijo, sufijo: esc.sufijo, decimales: esc.decimales, empieza: r3(empieza + 0.1), cuenta, aterriza: r3(empieza + 0.1 + cuenta) }),
-  });
+  return [
+    "escena-cifra.html",
+    {
+      ...comun,
+      TAMANO: tamano,
+      INICIAL: escaparHtml(esc.prefijo + "0" + esc.sufijo),
+      ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
+      DATOS: jsonParaScript({ valor: esc.valor, prefijo: esc.prefijo, sufijo: esc.sufijo, decimales: esc.decimales, empieza: r3(empieza + 0.1), cuenta, aterriza: r3(empieza + 0.1 + cuenta) }),
+    },
+  ];
 }
 
-function piezaCartel(esc: EscenaCartel, comun: Comun, empieza: number): string {
+function piezaCartel(esc: EscenaCartel, comun: Comun, empieza: number): PiezaPlan {
   const palabras = esc.texto.split(/\s+/).filter(Boolean);
-  return pieza("escena-cartel.html", {
-    ...comun,
-    TAMANO: tamanoGancho(esc.texto, 180, 80, 900, esc.subtexto ? 520 : 640),
-    PALABRAS: palabras.map((w, i) => `<span class="w${i === palabras.length - 1 ? " ultima" : ""}" data-layout-allow-occlusion>${escaparHtml(w)}</span>`).join(""),
-    SUBTEXTO: escaparHtml(esc.subtexto ?? ""),
-    DATOS: jsonParaScript({ empieza: r3(empieza) }),
-  });
+  return [
+    "escena-cartel.html",
+    {
+      ...comun,
+      TAMANO: tamanoGancho(esc.texto, 180, 80, 900, esc.subtexto ? 520 : 640),
+      PALABRAS: palabras
+        .map((w, i) => `<span class="w${i === palabras.length - 1 ? " ultima" : ""}" data-layout-allow-occlusion>${escaparHtml(w)}</span>`)
+        .join(""),
+      SUBTEXTO: escaparHtml(esc.subtexto ?? ""),
+      DATOS: jsonParaScript({ empieza: r3(empieza) }),
+    },
+  ];
 }
 
-function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: number, colores: { texto: string; acento: string }): string {
+function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: number, colores: { texto: string; acento: string }): PiezaPlan {
   const filas = esc.series
     .map(
       (s, j) =>
@@ -559,25 +619,28 @@ function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: numbe
     )
     .join("\n");
   const duracionPeriodo = r3(Math.max(0.3, (v.visible - 0.3) / esc.periodos.length));
-  return pieza("escena-barras.html", {
-    ...comun,
-    TITULO: escaparHtml(esc.titulo),
-    PRIMER_PERIODO: escaparHtml(esc.periodos[0] ?? ""),
-    FILAS: filas,
-    FUENTE: esc.fuente ? `Fuente: ${escaparHtml(esc.fuente)}` : "",
-    DATOS: jsonParaScript({
-      periodos: esc.periodos,
-      series: esc.series.map((s) => ({ nombre: s.nombre, valores: s.valores })),
-      prefijo: esc.prefijo,
-      sufijo: esc.sufijo,
-      duracionPeriodo,
-      empieza: r3(empieza + 0.2),
-      colores,
-    }),
-  });
+  return [
+    "escena-barras.html",
+    {
+      ...comun,
+      TITULO: escaparHtml(esc.titulo),
+      PRIMER_PERIODO: escaparHtml(esc.periodos[0] ?? ""),
+      FILAS: filas,
+      FUENTE: esc.fuente ? `Fuente: ${escaparHtml(esc.fuente)}` : "",
+      DATOS: jsonParaScript({
+        periodos: esc.periodos,
+        series: esc.series.map((s) => ({ nombre: s.nombre, valores: s.valores })),
+        prefijo: esc.prefijo,
+        sufijo: esc.sufijo,
+        duracionPeriodo,
+        empieza: r3(empieza + 0.2),
+        colores,
+      }),
+    },
+  ];
 }
 
-function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { texto: string; acento: string }): string {
+function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { texto: string; acento: string }): PiezaPlan {
   // El mapa ocupa de 300 a 920 px: por debajo va la etiqueta (930-1010) y no debe tapar ninguna zona.
   const m = trazarMapa(esc.region, esc.destacar, 1000, 620);
   const trazados = [
@@ -587,23 +650,26 @@ function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { te
     ...m.extra.filter((x) => x.clase === "marco").map((x) => `                <path class="${x.clase}" d="${x.d}" />`),
   ].join("\n");
   const enciende = r3(empieza + 0.35);
-  return pieza("escena-mapa.html", {
-    ...comun,
-    ANCHO: m.ancho,
-    ALTO: m.alto,
-    TITULO: escaparHtml(esc.titulo ?? ""),
-    TRAZADOS: trazados,
-    ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
-    ETQ_VISIBLE: esc.etiqueta ? "" : "display: none",
-    CLASE_SVG: esc.region === "europa" ? "recorte" : "",
-    DATOS: jsonParaScript({
-      destacadas: m.destacadas.map((_, i) => `${comun.ID}-z${i}`),
-      enciende,
-      // La etiqueta entra con la primera zona encendida: en bloques cortos, si espera a todas, apenas se lee.
-      etiqueta: r3(enciende + 0.15),
-      colores,
-    }),
-  });
+  return [
+    "escena-mapa.html",
+    {
+      ...comun,
+      ANCHO: m.ancho,
+      ALTO: m.alto,
+      TITULO: escaparHtml(esc.titulo ?? ""),
+      TRAZADOS: trazados,
+      ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
+      ETQ_VISIBLE: esc.etiqueta ? "" : "display: none",
+      CLASE_SVG: esc.region === "europa" ? "recorte" : "",
+      DATOS: jsonParaScript({
+        destacadas: m.destacadas.map((_, i) => `${comun.ID}-z${i}`),
+        enciende,
+        // La etiqueta entra con la primera zona encendida: en bloques cortos, si espera a todas, apenas se lee.
+        etiqueta: r3(enciende + 0.15),
+        colores,
+      }),
+    },
+  ];
 }
 
 // ---------- Escritura ----------
