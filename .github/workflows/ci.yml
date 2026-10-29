@@ -289,11 +289,11 @@ jobs:
           git log --no-merges --format=%s "$BASE..$HEAD" | awk 'length > 72 { print "::warning::Asunto de más de 72 caracteres: " $0 }'
           exit $fallo
 
-  # Fase 1: informa de las vulnerabilidades conocidas sin bloquear. En la Fase 2, con la línea
-  # base ya actualizada, pasa a ser obligatorio (entra en `ci-ok`).
+  # Obligatorio desde la Fase 2 (entra en `ci-ok`). Un aviso nuevo puede poner en rojo una PR que
+  # no toca dependencias: se arregla subiendo el paquete en el lock. Si no hay versión corregida,
+  # la excepción va aquí, razonada en un comentario (`--ignore-vuln <ID>` en pip-audit).
   dependencias:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -325,7 +325,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, python, app-ui, video, tauri-rust, secretos, workflows-y-scripts, higiene-pr]
+    needs: [changes, python, app-ui, video, tauri-rust, secretos, workflows-y-scripts, higiene-pr, dependencias]
     runs-on: ubuntu-latest
     steps:
       - env:
