@@ -485,6 +485,16 @@ export function ayuda(): Respuesta {
 
 // ---------- video_capacidades ----------
 
+/**
+ * Sin navegador no se sugiere ningún comando al modelo: HyperFrames no descarga nada (I14) y no se cae
+ * a otro navegador (I11). Integrado, lo descarga el usuario desde Ajustes.
+ */
+export function mensajeSinNavegador(): string {
+  return esIntegrado()
+    ? "no descargado: descárgalo desde Ajustes de SEO Studio."
+    : "no configurado: pon en el .env del servidor HYPERFRAMES_BROWSER_PATH=<ruta de chrome-headless-shell.exe>.";
+}
+
 export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boolean }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const c = await capacidades(h, !!args.reprobar, cfg.browserPath);
@@ -494,7 +504,7 @@ export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boo
   const texto = [
     `WebGPU: ${c.gpuForzadaApagada ? "desactivado a la fuerza (VIDEO_FORZAR_SIN_GPU=1)" : gpu}`,
     `HyperFrames ${c.hyperframes} · ${c.ffmpeg ?? "ffmpeg NO encontrado"}`,
-    `Chrome: ${c.chrome ?? "no encontrado (npx hyperframes browser ensure)"}`,
+    `Chrome: ${c.chrome ?? mensajeSinNavegador()}`,
     `Telemetría: ${c.telemetria ?? "desconocida"}`,
     `Fondos: ${c.fondos.disponibles.join(", ")}. Con WebGPU: ${c.fondos.conWebgpu.join(", ")}${c.fondos.usaranFallback.length ? ` (aquí saldrán con el degradado de reserva)` : ""}.`,
   ].join("\n");

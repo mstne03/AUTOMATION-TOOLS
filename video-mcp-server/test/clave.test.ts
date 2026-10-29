@@ -1,7 +1,9 @@
 // La clave de ElevenLabs no llega a los hijos del motor, y el aviso de voz dice lo que falta de verdad.
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLAVES_PERMITIDAS, entornoConFfmpeg } from "../src/proceso.js";
-import { mensajeFaltanParaVoz } from "../src/herramientas.js";
+import { mensajeFaltanParaVoz, mensajeSinNavegador } from "../src/herramientas.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -13,6 +15,23 @@ describe("entornoConFfmpeg", () => {
     // El entorno es la lista blanca de I5: ni lo que pase el llamador ni el PATH del usuario.
     for (const k of Object.keys(env)) expect(CLAVES_PERMITIDAS.has(k), k).toBe(true);
     expect(env.PATH).not.toContain("C:\\ff");
+  });
+});
+
+describe("mensajeSinNavegador (I11, I14)", () => {
+  it("integrado remite a Ajustes y no propone ningún comando ni descarga de HyperFrames", () => {
+    vi.stubEnv("VIDEO_ENGINE_EMBEDDED", "1");
+    const m = mensajeSinNavegador();
+    expect(m).toMatch(/Ajustes de SEO Studio/);
+    expect(m).not.toMatch(/npx|hyperframes|browser ensure/i);
+  });
+  it("suelto tampoco propone descargar con HyperFrames", () => {
+    vi.stubEnv("VIDEO_ENGINE_EMBEDDED", "");
+    expect(mensajeSinNavegador()).not.toMatch(/npx|browser ensure/i);
+  });
+  it("video_capacidades usa ese mensaje (no queda el texto antiguo en el código)", () => {
+    const fuente = fs.readFileSync(path.join(__dirname, "..", "src", "herramientas.ts"), "utf8");
+    expect(fuente).not.toMatch(/browser ensure/);
   });
 });
 
