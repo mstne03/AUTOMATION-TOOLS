@@ -66,6 +66,17 @@ describe("probarGpu", () => {
     expect(leerPruebaGpu()).toBeUndefined();
   });
 
+  it("capacidades registra los codificadores H.264 que funcionan y su adaptador", async () => {
+    const { capacidades, ejecutar } = await cargar();
+    ejecutar.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.includes("-encoders")) return { code: 0, stdout: " V....D h264_nvenc  NVIDIA\n V....D h264_mf  MF\n", stderr: "" };
+      if (args.includes("-c:v")) return { code: args.includes("h264_mf") ? 0 : 1, stdout: "", stderr: "" };
+      return { code: 1, stdout: "", stderr: "" };
+    });
+    const c = await capacidades(H, false);
+    expect(c.codificadores).toEqual([{ codificador: "h264_mf", adaptador: "Media Foundation (Windows)" }]);
+  });
+
   it("un render negro sí se cachea como webgpu=false", async () => {
     const { probarGpu, leerPruebaGpu, ejecutar } = await cargar();
     ejecutar.mockImplementation(renderOk(0));

@@ -130,6 +130,8 @@ export interface Capacidades {
   ffmpeg?: string;
   chrome?: string;
   telemetria?: string;
+  /** Codificadores H.264 que funcionan aquí y el adaptador (fabricante) de cada uno; undefined si no se pudo sondear. */
+  codificadores?: { codificador: string; adaptador: string }[];
   fondos: { disponibles: string[]; conWebgpu: string[]; usaranFallback: string[] };
 }
 
@@ -151,8 +153,21 @@ export async function capacidades(h: Herramientas | null, reprobar: boolean, bro
   const origenTel = /Source:\s*(\S+)/.exec(salidaTel ?? "")?.[1];
   const telemetria = estadoTel ? `${estadoTel === "disabled" ? "desactivada" : estadoTel}${origenTel ? ` (${origenTel})` : ""}` : undefined;
   const conGpu = !!gpu?.webgpu && !gpuForzadaApagada();
+  // Adaptadores de codificación: el sondeo del render (cacheado en el proceso). Import dinámico: render.ts
+  // ya importa este módulo.
+  let codificadores: Capacidades["codificadores"];
+  if (h) {
+    const { sondearCodificadores, FABRICANTE } = await import("./render.js");
+    codificadores = await sondearCodificadores(h)
+      .then((l) => l.map((c) => ({ codificador: c, adaptador: FABRICANTE[c] })))
+      .catch((e: Error) => {
+        log.warn(`Sondeo de codificadores: ${e.message}`);
+        return undefined;
+      });
+  }
   return {
     gpu,
+    codificadores,
     gpuForzadaApagada: gpuForzadaApagada(),
     hyperframes: pkg.version,
     ffmpeg,
