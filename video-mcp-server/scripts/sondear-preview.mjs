@@ -61,7 +61,7 @@ export async function servirComposicion({ dir, sinCsp = false, marcoSinCsp = fal
     const comunes = { "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
     if (rel === "__marco.html") {
       const c = marcoSinCsp ? comunes : { ...comunes, "Content-Security-Policy": `default-src 'none'; frame-src ${origen}` };
-      return enviar(200, { ...c, "Content-Type": TIPOS[".html"] }, `<!doctype html><html><body style="margin:0"><iframe sandbox="allow-scripts" src="/${clave}/index.html" width="1080" height="1920" style="border:0"></iframe></body></html>`);
+      return enviar(200, { ...c, "Content-Type": TIPOS[".html"] }, `<!doctype html><html><body><iframe sandbox="allow-scripts" src="/${clave}/index.html" width="1080" height="1920"></iframe></body></html>`);
     }
     // El origen del iframe es opaco: fetch de subcomposiciones y fuentes es CORS (decisión del spike de preview).
     const cabeceras = { ...comunes, "Access-Control-Allow-Origin": "*" };
