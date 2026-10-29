@@ -101,7 +101,7 @@ bash scripts/prepare-sidecar.sh
 # 3. Motor de vídeo: src-tauri/binaries/video-engine/ TIENE que existir (es un recurso de
 #    tauri.conf.json; sin la carpeta, `tauri build` falla). Una de las dos:
 mkdir -p src-tauri/binaries/video-engine && echo "Módulo de vídeo no incluido." > src-tauri/binaries/video-engine/.vacio   # sin motor (lo normal)
-bash scripts/prepare-video-engine.sh   # con motor (~783 MB; descarga Node, Chrome for Testing y ffmpeg LGPL)
+bash scripts/prepare-video-engine.sh   # con motor (descarga Node y ffmpeg LGPL; el navegador no va en el instalador)
 # 4. Instalador NSIS firmado para el updater (clave fuera del repo):
 TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/seo-studio.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" pnpm tauri build
 # -> src-tauri/target/release/bundle/nsis/SEO Studio_<v>_x64-setup.exe (+ .exe.sig)
@@ -121,18 +121,32 @@ muestra el SHA-256 del `.exe`, para que ningún instalador arrastre un sidecar v
 ### Motor de vídeo (opt-in: `VIDEO_ENGINE`)
 
 `scripts/prepare-video-engine.sh` (Git Bash, desde `app-ui/`) compila `video-mcp-server`, instala sus
-dependencias de producción sin scripts y baja Node, `chrome-headless-shell` (Chrome for Testing) y un
-ffmpeg LGPL con versión y SHA-256 fijados; lo deja en `src-tauri/binaries/video-engine/` (layout en la
-cabecera del script) y Tauri lo copia a `<instalación>\video-engine`. Aborta si un hash no coincide o
-si el ffmpeg es GPL.
+dependencias de producción sin scripts y baja Node y un ffmpeg LGPL con versión y SHA-256 fijados; lo
+deja en `src-tauri/binaries/video-engine/` (layout en la cabecera del script) y Tauri lo copia a
+`<instalación>\video-engine`. Aborta si un hash no coincide, si el ffmpeg es GPL o si el bundle lleva
+un navegador (I12).
+
+**Navegador del render (SEO-108).** El instalador **no** lleva Chrome. El backend descarga
+`chrome-headless-shell` de Chrome for Testing **156.0.8078.73** (~120 MB, 282 MB extraído) cuando el
+usuario lo pide (`POST /video/navegador/descarga`; estado y progreso en `GET /video/navegador`), nunca
+el modelo, a una ruta fija: `%LOCALAPPDATA%\seo-studio\video\navegador\156.0.8078.73\`. URL, SHA-256,
+tamaño, topes y el hash del manifiesto están en `app-backend/app_backend/config.py` (`NAVEGADOR_*`), sin
+override por entorno. El motor recibe siempre esa ruta y su `MANIFIESTO-SHA256.json`, exista o no: sin
+navegador descargado no busca otro. En desarrollo, sin red, se instala desde un zip local por el mismo
+camino y con el mismo hash: `cd app-backend && uv run python -m app_backend.navegador --zip RUTA`.
+Subir de versión = cambiar versión, URL, SHA-256, tamaño, topes y `NAVEGADOR_MANIFIESTO_SHA256` en
+`config.py`, repitiendo la comparación de `video-mcp-server/spikes/INFORME-chromium.md`. Una
+instalación antigua puede conservar `video-engine/browser/` tras actualizar: ya no se usa.
 
 **Apagado por defecto.** El workflow de release solo empaqueta el motor con la variable de repositorio
 `VIDEO_ENGINE=1` (Settings → Secrets and variables → Actions → Variables). Sin ella crea
 `video-engine/` con un marcador `.vacio`, el smoke test comprueba que `GET /video/capacidades` da 503
-(«módulo de vídeo no instalado») y la verificación final exige que el bundle **no** lleve `node/`. Se
-queda apagada hasta resolver los bloqueantes de `video-mcp-server/LICENCIAS.md` (redistribución de
-Chrome for Testing, licencia de GSAP, obligaciones LGPL de ffmpeg) y hasta que haya UI: con el motor, el
-updater le baja ~783 MB más a cada usuario.
+(«módulo de vídeo no instalado») y la verificación final exige que el bundle **no** lleve `node/`. Con
+ella, el smoke test descarga de verdad el navegador (`--cft-descargar`) y la verificación exige que el
+bundle no lleve `browser/`. Se queda apagada hasta resolver los bloqueantes de
+`video-mcp-server/LICENCIAS.md` (licencia de GSAP, obligaciones LGPL de ffmpeg), hasta que haya UI y
+hasta que el parche de HyperFrames de W1.3 vaya en el bundle (W2.8) y la comprobación del manifiesto
+del motor (W1.6) esté integrada.
 
 **Sin firma de código** (decisión de la Fase 4; un certificado EV/OV cuesta 200-400 EUR al año y
 no se compra sin decidirlo). Consecuencia: la primera vez SmartScreen muestra "Windows
