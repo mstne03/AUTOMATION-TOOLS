@@ -99,6 +99,10 @@ describe.each(CASOS)("CSP de %s (I2 a)", (_, leer) => {
     }
   });
 
+  it("no contiene URLs de red, ni en comentarios (urlsDeRed la rechazaría al montar, I2 c)", () => {
+    expect(leer()).not.toMatch(/https?:\/\/(?!www\.w3\.org\/)/);
+  });
+
   it("apaga el DNS prefetch (M2)", () => {
     expect(leer()).toMatch(/<meta\s+http-equiv="x-dns-prefetch-control"\s+content="off"\s*\/?>/i);
   });

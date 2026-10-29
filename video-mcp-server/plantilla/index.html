@@ -5,13 +5,13 @@
   Orden de pintado: bloques y fondos (11-23) → capas (40) → gancho y etiqueta (50) → subtítulos (60) → flash (70).
 
   CSP (I2 a, SEO-111): la composición no usa la red, y lo impone el navegador. Ninguna directiva admite un origen
-  de red; la preview envía la misma política como cabecera con 'self' → http://127.0.0.1:<puerto>. Relajaciones,
+  de red; la preview envía la misma política como cabecera con 'self' cambiado por el origen exacto de la preview (127.0.0.1 y su puerto). Relajaciones,
   cada una medida con scripts/sondear-preview.mjs (política estricta → violaciones) y con el render real:
   - script-src 'unsafe-inline': el runtime de HyperFrames vuelve a insertar los <script> en línea de cada pieza al
     montarla (26 violaciones script-src-elem con origen el runtime) y la raíz lleva el importmap de three.js en línea;
     sin ello no se anima ninguna pieza. Nonces y hashes no sirven: los datos de cada pieza cambian en cada vídeo y
     HyperFrames reescribe e incrusta las piezas.
-  - style-src 'unsafe-inline': el <style> de esta raíz ({{TEMA_CSS}}) y el de cada pieza, los style="" de los hosts
+  - style-src 'unsafe-inline': el <style> de esta raíz (variables del tema) y el de cada pieza, los style="" de los hosts
     y los estilos que pone el runtime (154 violaciones style-src-elem/style-src-attr).
   - font-src data: (no 'unsafe-inline'): `hyperframes check` y el render incrustan las fuentes de @font-face como
     data:font/woff2;base64 (10 errores console_error de check con font-src 'self', que bloquean el render).
