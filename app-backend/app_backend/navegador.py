@@ -30,6 +30,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import zipfile  # siempre por el módulo: los tests espían `navegador.zipfile.ZipFile`
 import zlib
 from collections.abc import Callable, Iterator
@@ -63,6 +64,14 @@ MENSAJE_CORRUPTO = "El navegador del render no supera la verificación ({detalle
 MENSAJE_ESPACIO = "No hay espacio suficiente para el navegador del render (hacen falta {mb} MB libres)."
 MENSAJE_DISCO = "No se pudo instalar el navegador del render ({detalle}): no se ha instalado nada. Vuelve a intentarlo."
 MENSAJE_ENLACE = "La carpeta del navegador es un enlace o punto de reanálisis ({ruta}): no se usa."
+MENSAJE_CODIFICACION = (
+    "El servidor de descarga respondió con una codificación inesperada ({codificacion}): "
+    "no se ha instalado nada."
+)
+MENSAJE_PLAZO = (
+    "La descarga del navegador ha tardado más de 30 minutos: se ha cancelado y no se ha instalado nada. "
+    "Vuelve a intentarlo."
+)
 MENSAJE_OCUPADO = "Otra instancia de SEO Studio está instalando el navegador: espera a que termine."
 
 BLOQUE = 1 << 20
@@ -131,10 +140,13 @@ def _borrar(ruta: Path) -> None:
     except FileNotFoundError:
         return
     if es_enlace(ruta):
-        try:
+        # Se quita solo el enlace: de directorio (junction, symlink de carpeta) con rmdir, de
+        # fichero con unlink. Ninguno de los dos sigue el enlace.
+        atributos = getattr(st, "st_file_attributes", 0)
+        if stat.S_ISDIR(st.st_mode) or atributos & stat.FILE_ATTRIBUTE_DIRECTORY:
+            os.rmdir(ruta)
+        else:
             os.unlink(ruta)
-        except OSError:
-            os.rmdir(ruta)  # junction o symlink de directorio
         return
     if stat.S_ISDIR(st.st_mode):
         with os.scandir(ruta) as it:
@@ -288,6 +300,13 @@ def _ancestros() -> tuple[Path, ...]:
     return (config.STATE_DIR, config.STATE_DIR / "video", config.NAVEGADOR_DIR)
 
 
+def comprobar_ancestros() -> None:
+    """`NavegadorError(MENSAJE_ENLACE)` si `<estado>`, `<estado>/video` o `NAVEGADOR_DIR` es un enlace."""
+    for p in _ancestros():
+        if es_enlace(p):
+            raise NavegadorError(MENSAJE_ENLACE.format(ruta=p))
+
+
 def instalado() -> tuple[Path, Path] | None:
     """`(exe, manifiesto)` de la versión fijada si está publicada en la ruta fija; **sin hashear**."""
     carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
@@ -305,17 +324,13 @@ def instalado() -> tuple[Path, Path] | None:
 
 def _preparar_base() -> Path:
     """Crea `NAVEGADOR_DIR` comprobando que ni él ni sus ancestros son enlaces, y el espacio libre."""
-    for p in _ancestros():
-        if es_enlace(p):
-            raise NavegadorError(MENSAJE_ENLACE.format(ruta=p))
+    comprobar_ancestros()
     base = config.NAVEGADOR_DIR
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         raise NavegadorError(MENSAJE_DISCO.format(detalle=e.strerror or type(e).__name__)) from None
-    for p in _ancestros():  # otra vez: lo recién creado podría haberse cambiado por un enlace
-        if es_enlace(p):
-            raise NavegadorError(MENSAJE_ENLACE.format(ruta=p))
+    comprobar_ancestros()  # otra vez: lo recién creado podría haberse cambiado por un enlace
     necesario = (config.NAVEGADOR_MAX_DESCARGA + config.NAVEGADOR_MAX_EXTRAIDO) * 11 // 10
     if shutil.disk_usage(base).free < necesario:
         raise NavegadorError(MENSAJE_ESPACIO.format(mb=necesario // 1_000_000 + 1))
@@ -328,7 +343,10 @@ def _candado() -> Iterator[None]:
     ruta = config.NAVEGADOR_DIR / BLOQUEO
     if es_enlace(ruta):
         raise NavegadorError(MENSAJE_ENLACE.format(ruta=ruta))
-    fd = os.open(ruta, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        fd = os.open(ruta, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    except OSError as e:
+        raise NavegadorError(MENSAJE_DISCO.format(detalle=e.strerror or type(e).__name__)) from None
     try:
         try:
             if sys.platform == "win32":
@@ -442,6 +460,7 @@ def instalar_desde_zip(zip_path: Path, al_cambiar_fase: Callable[[str], None] = 
 # Guard de la constante: la URL fijada tiene que ser HTTPS de storage.googleapis.com (solo los tests
 # la cambian). Ninguna redirección se sigue (ni siquiera al mismo host): no hace falta ninguna.
 PREFIJO_URL = "https://storage.googleapis.com/"
+PLAZO_DESCARGA = 30 * 60  # segundos; además de los timeouts de conexión y lectura por trozo
 
 
 def _cliente(transporte: httpx.BaseTransport | None) -> httpx.Client:
@@ -460,9 +479,16 @@ def descargar(cliente: httpx.Client, al_avanzar: Callable[[int], None]) -> Path:
     ruta = Path(nombre)
     try:
         h = hashlib.sha256()
-        with os.fdopen(fd, "wb") as f, cliente.stream("GET", url) as r:
+        inicio = time.monotonic()
+        # identity + iter_raw: se hashea exactamente lo que llega por la red, sin que httpx
+        # descomprima nada (una bomba gzip no pasa del tope porque no se descomprime).
+        cabeceras = {"Accept-Encoding": "identity"}
+        with os.fdopen(fd, "wb") as f, cliente.stream("GET", url, headers=cabeceras) as r:
             if r.status_code != 200:
                 raise NavegadorError(MENSAJE_HTTP.format(codigo=r.status_code))
+            codificacion = r.headers.get("content-encoding", "identity").strip().lower()
+            if codificacion != "identity":
+                raise NavegadorError(MENSAJE_CODIFICACION.format(codificacion=_corto(codificacion)))
             try:
                 anunciado = int(r.headers.get("content-length", "0"))
             except ValueError:
@@ -470,7 +496,9 @@ def descargar(cliente: httpx.Client, al_avanzar: Callable[[int], None]) -> Path:
             if anunciado > config.NAVEGADOR_MAX_DESCARGA:
                 raise NavegadorError(MENSAJE_GRANDE)
             n = 0
-            for trozo in r.iter_bytes():  # según llegan: el progreso avanza con la red
+            for trozo in r.iter_raw():  # según llegan: el progreso avanza con la red
+                if time.monotonic() - inicio > PLAZO_DESCARGA:
+                    raise NavegadorError(MENSAJE_PLAZO)
                 n += len(trozo)
                 if n > config.NAVEGADOR_MAX_DESCARGA:
                     raise NavegadorError(MENSAJE_GRANDE)

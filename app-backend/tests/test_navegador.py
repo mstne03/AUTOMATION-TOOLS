@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import hashlib
 import http.server
+import io
 import ipaddress
 import json
 import os
@@ -244,16 +245,19 @@ def test_extraer_tope_de_tamano(tmp_path, monkeypatch):
         extraer(zf, destino)
 
 
-def test_extraer_tope_de_tamano_con_cabecera_mentirosa(tmp_path, monkeypatch):
-    """La cabecera dice 1 byte y el contenido real son 11: cuentan los bytes reales."""
+def test_extraer_cuenta_los_bytes_reales(tmp_path, monkeypatch):
+    """Las cabeceras suman 8 (bajo el tope de 10) y los flujos entregan 6 + 6: cuentan los bytes
+    reales leídos, no los de la cabecera. `zipfile` ya corta en `file_size`, así que el flujo se
+    sustituye por uno que miente (otra implementación, un fallo) para ejercitar el contador."""
     monkeypatch.setattr(config, "NAVEGADOR_MAX_EXTRAIDO", 10)
-    zp = _zip(tmp_path / "a.zip", {EXE: b"x" * 11})
+    zp = _zip(tmp_path / "a.zip", {EXE: b"x" * 4, "chrome-headless-shell-win64/b.dll": b"y" * 4})
     destino = tmp_path / "d"
     destino.mkdir()
     with zipfile.ZipFile(zp) as zf:
-        zf.infolist()[0].file_size = 1
-        with pytest.raises(NavegadorError):
+        zf.open = lambda info, *a, **k: io.BytesIO(b"z" * 6)
+        with pytest.raises(NavegadorError) as e:
             extraer(zf, destino)
+    assert str(e.value) == navegador.MENSAJE_TOPES
 
 
 def test_extraer_exige_destino_vacio(tmp_path):
@@ -542,6 +546,25 @@ def test_publicar_reintenta_si_el_antivirus_bloquea(cft_falso, monkeypatch):
     assert fallos == [] and navegador.verificar(_version()) == exe
 
 
+def test_si_no_verifica_tras_publicar_se_borra(cft_falso, monkeypatch):
+    """Tras el renombrado se verifica la carpeta publicada; si falla, se borra y se da el error."""
+    ruta, _ = cft_falso
+    original = navegador.verificar
+    llamadas = []
+
+    def falla_la_segunda(carpeta):
+        llamadas.append(carpeta)
+        if len(llamadas) == 2:
+            raise navegador._corrupto("cambiado tras publicar")
+        return original(carpeta)
+
+    monkeypatch.setattr(navegador, "verificar", falla_la_segunda)
+    with pytest.raises(NavegadorError, match="cambiado tras publicar"):
+        navegador.instalar_desde_zip(ruta)
+    assert llamadas[1] == _version()
+    assert navegador.instalado() is None and _restos() == []
+
+
 def test_sin_espacio_error_legible(cft_falso, monkeypatch):
     ruta, _ = cft_falso
     monkeypatch.setattr(navegador.shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))
@@ -571,6 +594,28 @@ def test_limpiar_restos_respeta_el_candado(cft_falso):
     with navegador._candado():
         navegador.limpiar_restos()
     assert _restos() == [".descarga-a.zip"]
+
+
+def test_candado_que_no_se_puede_abrir_es_error_legible(cft_falso, monkeypatch):
+    config.NAVEGADOR_DIR.mkdir(parents=True)
+
+    def os_open(*a, **k):
+        raise PermissionError(13, "Acceso denegado")
+
+    monkeypatch.setattr(navegador.os, "open", os_open)
+    with pytest.raises(NavegadorError, match="Acceso denegado"), navegador._candado():
+        pass
+
+
+@solo_windows
+def test_borrar_junction_da_error_claro_si_falla(tmp_path, monkeypatch):
+    """Una junction se quita con rmdir; si rmdir falla, el error es ese y no uno confuso de unlink."""
+    (tmp_path / "centinela").mkdir()
+    _junction(tmp_path / "j", tmp_path / "centinela")
+    llamadas = []
+    monkeypatch.setattr(navegador.os, "unlink", lambda p: llamadas.append(("unlink", p)))
+    navegador._borrar(tmp_path / "j")
+    assert llamadas == [] and not (tmp_path / "j").exists() and (tmp_path / "centinela").is_dir()
 
 
 def test_instalar_con_candado_ocupado_error_legible(cft_falso):
@@ -682,6 +727,43 @@ def test_content_length_excesivo_no_se_lee(cft_falso):
     d.ejecutar()
     assert d.estado()["error"] == navegador.MENSAJE_GRANDE
     assert _restos() == []
+
+
+def test_descarga_pide_identity_y_rechaza_content_encoding(cft_falso):
+    _, datos = cft_falso
+    t = _Transporte(lambda r: httpx.Response(200, headers={"Content-Encoding": "gzip"}, content=iter([datos])))
+    d = navegador.Descargador(t)
+    d.reservar()
+    d.ejecutar()
+    assert t.peticiones[0].headers["accept-encoding"] == "identity"
+    assert d.estado()["estado"] == "error" and "gzip" in d.estado()["error"]
+    assert _restos() == []
+
+
+def test_descarga_lee_los_bytes_sin_descomprimir(cft_falso, monkeypatch):
+    """`iter_raw`: lo que se hashea es lo que llegó por la red, nunca una descompresión de httpx."""
+    _, datos = cft_falso
+    monkeypatch.setattr(
+        httpx.Response, "iter_bytes", lambda self, *a, **k: (_ for _ in ()).throw(AssertionError("iter_bytes"))
+    )
+    d = navegador.Descargador(_sirve(datos))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["estado"] == "listo"
+
+
+def test_descarga_con_plazo_total_vencido(cft_falso, monkeypatch):
+    _, datos = cft_falso
+    monkeypatch.setattr(navegador, "PLAZO_DESCARGA", -1.0)
+    d = navegador.Descargador(_sirve(datos))
+    d.reservar()
+    d.ejecutar()
+    assert d.estado()["error"] == navegador.MENSAJE_PLAZO
+    assert _restos() == []
+
+
+def test_plazo_total_de_media_hora():
+    assert navegador.PLAZO_DESCARGA == 30 * 60
 
 
 def test_descarga_hash_distinto_no_extrae(cft_falso, monkeypatch):
@@ -919,7 +1001,7 @@ async def test_post_mientras_descarga_409(cft_falso, tmp_path, fake_anthropic):
 
     def lenta(request):
         soltar.wait(10)
-        return httpx.Response(200, content=datos)
+        return httpx.Response(200, content=iter([datos]))
 
     t = _Transporte(lenta)
     async with _app(tmp_path, fake_anthropic, t) as (_, c):
@@ -939,7 +1021,7 @@ async def test_post_tras_error_reintenta(cft_falso, tmp_path, fake_anthropic):
         intentos.append(1)
         if len(intentos) == 1:
             raise httpx.ConnectError("sin red", request=request)
-        return httpx.Response(200, content=datos)
+        return httpx.Response(200, content=iter([datos]))
 
     async with _app(tmp_path, fake_anthropic, _Transporte(primero_falla)) as (_, c):
         await c.post("/video/navegador/descarga", headers=AUTH)
@@ -1041,15 +1123,22 @@ def _rutas_fijas() -> tuple[str, str]:
 
 
 @pytest.mark.parametrize("congelado", [True, False])
-def test_entorno_sin_cft_pasa_la_ruta_fija_inexistente(cft_falso, tmp_path, monkeypatch, congelado):
-    """HIGH-1 (I11, I13, I14): sin CfT el motor recibe igualmente la ruta fija, que no existe, y
-    nunca un navegador del bundle, del entorno o de una caché."""
+def test_entorno_sin_cft(cft_falso, tmp_path, monkeypatch, congelado):
+    """Sin CfT: en el binario congelado el motor no arranca (MEDIUM-1, fallo cerrado hasta integrar
+    W1.3 y W1.6); en desarrollo recibe la ruta fija, que no existe. Nunca un navegador del bundle,
+    del entorno o de una caché (I11, I13, I14)."""
     d = _bundle_con_navegadores(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", congelado)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
     otro = str(d / "browser" / "x" / "chrome.exe")
     for var in ("HYPERFRAMES_BROWSER_PATH", "PUPPETEER_EXECUTABLE_PATH", "CHROME_PATH", "VIDEO_NAVEGADOR_MANIFIESTO"):
         monkeypatch.setenv(var, otro)
+    if congelado:
+        with pytest.raises(video.MotorNoDisponible) as e:
+            video.entorno_motor(_Store())
+        assert str(e.value) == video.MENSAJE_SIN_NAVEGADOR
+        assert str(e.value).startswith("Descarga el navegador del render")
+        return
     env = video.entorno_motor(_Store())
     exe, manifiesto = _rutas_fijas()
     assert env["HYPERFRAMES_BROWSER_PATH"] == exe and not Path(exe).exists()
@@ -1086,32 +1175,103 @@ def test_entorno_navegador_a_medias_es_motor_no_disponible(cft_falso):
         video.entorno_motor(_Store())
 
 
+@solo_windows
+@pytest.mark.parametrize("cual", ["navegador", "video", "estado"])
+@pytest.mark.parametrize("congelado", [True, False])
+def test_entorno_con_ancestro_enlazado_es_motor_no_disponible(cft_falso, tmp_path, monkeypatch, cual, congelado):
+    """LOW-1: si `<estado>`, `<estado>/video` o la carpeta del navegador es un enlace, no se usa."""
+    centinela = tmp_path / "centinela"
+    centinela.mkdir()
+    monkeypatch.setattr(config, "FROZEN", congelado)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", _bundle_con_navegadores(tmp_path / "video-engine"))
+    enlace = {"navegador": config.NAVEGADOR_DIR, "video": config.STATE_DIR / "video", "estado": config.STATE_DIR}[cual]
+    enlace.parent.mkdir(parents=True, exist_ok=True)
+    _junction(enlace, centinela)
+    with pytest.raises(video.MotorNoDisponible, match="enlace"):
+        video.entorno_motor(_Store())
+
+
 def test_video_ya_no_busca_navegadores():
     """C6: nada de `rglob` ni de `browser/` en video.py."""
     fuente = Path(video.__file__).read_text(encoding="utf-8")
     assert "rglob" not in fuente and "_navegador_bundle" not in fuente and '"browser"' not in fuente
 
 
-def _referencias_a_navegador(ruta: Path) -> set[str]:
-    """Nombres de `navegador` que usa un módulo (`navegador.X` o `from app_backend.navegador import X`)."""
-    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+def _referencias_a_navegador(fuente: str) -> set[str]:
+    """Nombres de `navegador` que usa un módulo de `app_backend`, resolviendo alias e imports
+    relativos: `navegador.X`, `nv.X` (con `as`), `app_backend.navegador.X`, `from .navegador import X`…
+    Cualquier enlace al propio módulo añade «<módulo>»."""
+    arbol = ast.parse(fuente)
     nombres: set[str] = set()
+    alias_modulo: set[str] = set()  # nombres locales ligados al módulo navegador
+    via_paquete = False  # `import app_backend.navegador` sin alias: se usa como app_backend.navegador.X
+
+    def paquete(n: ast.ImportFrom) -> str:
+        # `from . import x` dentro de app_backend → «app_backend»; `from .navegador import x` → «app_backend.navegador».
+        if n.level:
+            return "app_backend" + (f".{n.module}" if n.module else "")
+        return n.module or ""
+
     for n in ast.walk(arbol):
-        if isinstance(n, ast.ImportFrom) and n.module == "app_backend.navegador":
-            nombres |= {a.name for a in n.names}
-        elif isinstance(n, ast.ImportFrom) and n.module == "app_backend":
-            nombres |= {"<módulo>" for a in n.names if a.name == "navegador"}
+        if isinstance(n, ast.ImportFrom):
+            origen = paquete(n)
+            if origen == "app_backend.navegador":
+                nombres |= {a.name for a in n.names}
+            elif origen == "app_backend":
+                for a in n.names:
+                    if a.name == "navegador":
+                        nombres.add("<módulo>")
+                        alias_modulo.add(a.asname or a.name)
         elif isinstance(n, ast.Import):
-            nombres |= {"<módulo>" for a in n.names if a.name == "app_backend.navegador"}
-        elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "navegador":
+            for a in n.names:
+                if a.name == "app_backend.navegador":
+                    nombres.add("<módulo>")
+                    if a.asname:
+                        alias_modulo.add(a.asname)
+                    else:
+                        via_paquete = True
+    for n in ast.walk(arbol):
+        if not isinstance(n, ast.Attribute):
+            continue
+        v = n.value
+        por_alias = isinstance(v, ast.Name) and v.id in alias_modulo
+        por_paquete = (
+            via_paquete
+            and isinstance(v, ast.Attribute)
+            and v.attr == "navegador"
+            and isinstance(v.value, ast.Name)
+            and v.value.id == "app_backend"
+        )
+        if por_alias or por_paquete:
             nombres.add(n.attr)
     return nombres
+
+
+@pytest.mark.parametrize(
+    "fuente",
+    [
+        "from app_backend import navegador\nnavegador.Descargador()",
+        "from . import navegador\nnavegador.Descargador()",
+        "from .navegador import Descargador",
+        "from app_backend.navegador import Descargador as D",
+        "from app_backend import navegador as nv\nnv.Descargador()",
+        "from . import navegador as nv\nnv.Descargador()",
+        "import app_backend.navegador as nv\nnv.Descargador",
+        "import app_backend.navegador\napp_backend.navegador.Descargador()",
+    ],
+)
+def test_el_detector_de_usos_ve_alias_e_imports_relativos(fuente):
+    assert "Descargador" in _referencias_a_navegador(fuente)
 
 
 def test_quien_puede_usar_el_navegador():
     """I10: solo main.py descarga; video.py solo consulta; nada más (registry, tools) lo importa."""
     carpeta = Path(navegador.__file__).parent
-    usos = {p.name: _referencias_a_navegador(p) for p in carpeta.glob("*.py") if p.name != "navegador.py"}
+    usos = {
+        p.name: _referencias_a_navegador(p.read_text(encoding="utf-8"))
+        for p in carpeta.glob("*.py")
+        if p.name != "navegador.py"
+    }
     assert usos.pop("main.py") - {"<módulo>"} <= {"Descargador", "limpiar_restos"}
-    assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "NavegadorError"}
+    assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "comprobar_ancestros", "NavegadorError"}
     assert {m: u for m, u in usos.items() if u} == {}

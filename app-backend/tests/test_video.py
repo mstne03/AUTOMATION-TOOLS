@@ -217,6 +217,10 @@ def test_entorno_congelado_siempre_con_las_piezas_del_bundle(tmp_path, monkeypat
     d = _bundle(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", True)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    # Congelado sin CfT descargado no arranca (lo cubre test_navegador.py): aquí, uno «instalado».
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
+    (tmp_path / "navegador" / config.NAVEGADOR_VERSION).mkdir(parents=True)
+    monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
     env = entorno_motor(StoreFalso())
     assert env["FFMPEG_DIR"] == str(d / "ffmpeg")
 

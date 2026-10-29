@@ -49,6 +49,10 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 # guardar la prueba y la ruta fallaría siempre en máquinas lentas.
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
+# Binario congelado sin CfT descargado: el motor no arranca (fallo cerrado, MEDIUM-1 de la R1).
+MENSAJE_SIN_NAVEGADOR = (
+    "Descarga el navegador del render (Ajustes > Vídeo) para usar el módulo de vídeo."
+)
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -347,18 +351,22 @@ def entorno_motor(store) -> dict[str, str]:
         env["FFMPEG_DIR"] = str(ffmpeg)
     elif (ffmpeg / "ffmpeg.exe").exists():
         env["FFMPEG_DIR"] = str(ffmpeg)
-    # Navegador: la ruta fija SIEMPRE, también sin CfT descargado (fallo cerrado, I11/I13/I14): el
-    # motor arranca, y antes de cada invocación de HyperFrames exige el exe y comprueba el manifiesto
-    # (W1.6); sin ellos da su error legible y nunca busca otro Chrome. Si la carpeta existe, tiene
-    # que verificar entera (manifiesto anclado, sin enlaces ni ficheros de más).
+    # Navegador: siempre la ruta fija y su manifiesto, nunca otro Chrome (I11/I13/I14). Si la carpeta
+    # existe, tiene que verificar entera (manifiesto anclado, sin enlaces ni ficheros de más).
     carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
     env["HYPERFRAMES_BROWSER_PATH"] = str(carpeta / config.NAVEGADOR_EXE)
     env["VIDEO_NAVEGADOR_MANIFIESTO"] = str(carpeta / config.NAVEGADOR_MANIFIESTO)
-    if os.path.lexists(carpeta):
-        try:
+    try:
+        navegador.comprobar_ancestros()
+        if os.path.lexists(carpeta):
             navegador.verificar(carpeta)
-        except navegador.NavegadorError as e:
-            raise MotorNoDisponible(str(e)) from None
+    except navegador.NavegadorError as e:
+        raise MotorNoDisponible(str(e)) from None
+    if config.FROZEN and not os.path.lexists(carpeta):
+        # Fallo cerrado mientras HyperFrames sin el parche de W1.3 pueda buscar otro Chrome si la
+        # ruta no existe. W1.6b lo relajará al integrar W1.3 + W1.6 (el motor arrancará sin CfT y
+        # exigirá el navegador solo antes de cada invocación de HyperFrames, Ruling C3).
+        raise MotorNoDisponible(MENSAJE_SIN_NAVEGADOR)
     clave = config.elevenlabs_api_key(store)
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave

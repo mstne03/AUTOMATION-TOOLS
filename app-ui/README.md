@@ -131,8 +131,9 @@ un navegador (I12).
 usuario lo pide (`POST /video/navegador/descarga`; estado y progreso en `GET /video/navegador`), nunca
 el modelo, a una ruta fija: `%LOCALAPPDATA%\seo-studio\video\navegador\156.0.8078.73\`. URL, SHA-256,
 tamaño, topes y el hash del manifiesto están en `app-backend/app_backend/config.py` (`NAVEGADOR_*`), sin
-override por entorno. El motor recibe siempre esa ruta y su `MANIFIESTO-SHA256.json`, exista o no: sin
-navegador descargado no busca otro. En desarrollo, sin red, se instala desde un zip local por el mismo
+override por entorno. El motor recibe siempre esa ruta y su `MANIFIESTO-SHA256.json` y nunca busca otro
+navegador; en la app instalada, sin el navegador descargado el motor no arranca («Descarga el navegador
+del render…») hasta que W1.6b lo relaje al integrar W1.3 + W1.6. En desarrollo, sin red, se instala desde un zip local por el mismo
 camino y con el mismo hash: `cd app-backend && uv run python -m app_backend.navegador --zip RUTA`.
 Subir de versión = cambiar versión, URL, SHA-256, tamaño, topes y `NAVEGADOR_MANIFIESTO_SHA256` en
 `config.py`, repitiendo la comparación de `video-mcp-server/spikes/INFORME-chromium.md`. Una
