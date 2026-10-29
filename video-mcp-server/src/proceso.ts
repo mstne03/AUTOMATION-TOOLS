@@ -1,5 +1,6 @@
 // Lanzar procesos sin shell, con entorno por lista blanca, y localizar ffmpeg/ffprobe.
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -116,10 +117,109 @@ export class ErrorNavegador extends Error {}
 
 export const FALTA_NAVEGADOR = "Falta el navegador del motor de vídeo: descárgalo en Ajustes.";
 
-/** Antes de cada invocación de la CLI (nunca al arrancar: el motor arranca sin CfT descargado). */
+const NOMBRE_MANIFIESTO = "MANIFIESTO-SHA256.json";
+const EXE_NAVEGADOR = "chrome-headless-shell-win64/chrome-headless-shell.exe";
+
+/** Quita el prefijo `\\?\` de Windows (rutas largas) para poder comparar rutas. */
+const sinPrefijoLargo = (p: string): string => p.replace(/^\\\\\?\\/, "");
+
+/** Clave de comparación de una ruta relativa del manifiesto (NTFS no distingue mayúsculas). */
+const claveRel = (rel: string): string => (process.platform === "win32" ? rel.toLowerCase() : rel);
+
+function sha256(fichero: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(fichero)
+      .on("error", reject)
+      .on("data", (d) => hash.update(d))
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+/** Ficheros regulares bajo `raiz` (rutas relativas con `/`); lanza ante enlaces, uniones u otros tipos. */
+function recorrer(raiz: string, rel = ""): string[] {
+  const salida: string[] = [];
+  for (const e of fs.readdirSync(path.join(raiz, rel), { withFileTypes: true })) {
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    // En Windows las uniones (junctions) también se ven como enlaces simbólicos.
+    if (e.isSymbolicLink()) throw new Error(`${r} es un enlace`);
+    if (e.isDirectory()) salida.push(...recorrer(raiz, r));
+    else if (e.isFile()) salida.push(r);
+    else throw new Error(`${r} no es un fichero normal`);
+  }
+  return salida;
+}
+
+/**
+ * I4 (parte motor), antes de cada invocación de la CLI y nunca al arrancar (el motor arranca sin CfT
+ * descargado). Integrado exige HYPERFRAMES_BROWSER_PATH y VIDEO_NAVEGADOR_MANIFIESTO (interfaz fijada
+ * con el backend). Con manifiesto, el conjunto de ficheros bajo su carpeta tiene que ser exactamente
+ * el del manifiesto y cada SHA-256 coincidir; sin enlaces y en la ruta fija. En desarrollo sin
+ * manifiesto, basta con que el navegador exista.
+ */
 export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const navegador = env.HYPERFRAMES_BROWSER_PATH?.trim();
-  if (!navegador || !existe(navegador)) throw new ErrorNavegador(FALTA_NAVEGADOR);
+  const manifiesto = env.VIDEO_NAVEGADOR_MANIFIESTO?.trim();
+  if (!navegador || !existe(navegador) || (esIntegrado(env) && !manifiesto)) throw new ErrorNavegador(FALTA_NAVEGADOR);
+  if (!manifiesto) return;
+  if (!existe(manifiesto)) throw new ErrorNavegador(FALTA_NAVEGADOR);
+  const fallo = (motivo: string) =>
+    new ErrorNavegador(`El navegador del motor de vídeo no supera la comprobación (${motivo}): vuelve a descargarlo en Ajustes.`);
+
+  let m: { version?: unknown; ficheros?: unknown };
+  try {
+    m = JSON.parse(fs.readFileSync(manifiesto, "utf8")) as typeof m;
+  } catch {
+    throw fallo("el manifiesto no es JSON válido");
+  }
+  if (typeof m.version !== "string" || !m.version.trim()) throw fallo("el manifiesto no tiene versión");
+  if (!m.ficheros || typeof m.ficheros !== "object" || Array.isArray(m.ficheros) || !Object.keys(m.ficheros).length) {
+    throw fallo("el manifiesto no lista ficheros");
+  }
+  const esperados = new Map<string, { rel: string; hash: string }>();
+  for (const [rel, hash] of Object.entries(m.ficheros as Record<string, unknown>)) {
+    if (!rel || rel.includes("\\") || rel.includes(":") || rel.startsWith("/") || rel.split("/").some((p) => p === ".." || p === "." || p === "")) {
+      throw fallo(`ruta no válida en el manifiesto: ${rel}`);
+    }
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw fallo(`hash no válido para ${rel}`);
+    if (esperados.has(claveRel(rel))) throw fallo(`${rel} aparece dos veces en el manifiesto`);
+    esperados.set(claveRel(rel), { rel, hash });
+  }
+
+  // Ruta fija: sin enlaces en el camino, en <estado>/video/navegador/<versión> (integrado) y con el
+  // exe exactamente en su sitio.
+  const raiz = path.dirname(path.resolve(manifiesto));
+  let real: string;
+  try {
+    real = sinPrefijoLargo(fs.realpathSync.native(raiz));
+  } catch {
+    throw fallo("no puedo resolver la carpeta del navegador");
+  }
+  if (!mismaRuta(real, raiz)) throw fallo("la carpeta del navegador pasa por un enlace");
+  if (esIntegrado(env) && !mismaRuta(path.dirname(raiz), path.resolve(STATE_DIR, "..", "navegador"))) {
+    throw fallo("la carpeta del navegador no está donde la instala SEO Studio");
+  }
+  if (path.basename(raiz) !== m.version) throw fallo(`la carpeta no corresponde a la versión ${m.version}`);
+  const relExe = path.relative(raiz, path.resolve(navegador)).split(path.sep).join("/");
+  if (relExe !== EXE_NAVEGADOR) throw fallo("el ejecutable del navegador no está en su sitio");
+
+  let encontrados: string[];
+  try {
+    encontrados = recorrer(raiz).filter((r) => r !== NOMBRE_MANIFIESTO);
+  } catch (e) {
+    throw fallo((e as Error).message);
+  }
+  const vistos = new Set<string>();
+  for (const rel of encontrados) {
+    const esperado = esperados.get(claveRel(rel));
+    if (!esperado) throw fallo(`${rel} no está en el manifiesto`);
+    vistos.add(claveRel(rel));
+  }
+  for (const [clave, { rel }] of esperados) if (!vistos.has(clave)) throw fallo(`falta ${rel}`);
+  for (const rel of encontrados) {
+    const { hash } = esperados.get(claveRel(rel))!;
+    if ((await sha256(path.join(raiz, ...rel.split("/")))) !== hash) throw fallo(`${rel} no coincide con el manifiesto`);
+  }
 }
 
 // ---------- Lanzar procesos ----------
