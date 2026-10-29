@@ -35,6 +35,7 @@ jobs:
       ui: ${{ steps.d.outputs.ui }}
       rust: ${{ steps.d.outputs.rust }}
       video: ${{ steps.d.outputs.video }}
+      backend: ${{ steps.d.outputs.backend }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -55,7 +56,7 @@ jobs:
           py=()
           toca '^youtube-mcp-server/' && py+=('"youtube-mcp-server"')
           toca '^kb-seo/' && py+=('"kb-seo"')
-          toca '^(app-backend|kb-seo|youtube-mcp-server)/' && py+=('"app-backend"')
+          toca '^(app-backend|kb-seo|youtube-mcp-server)/' && py+=('"app-backend"') && echo backend=true >> "$GITHUB_OUTPUT"
           echo "python=[$(IFS=,; echo "${py[*]}")]" >> "$GITHUB_OUTPUT"
           toca '^app-ui/' && echo ui=true >> "$GITHUB_OUTPUT"
           toca '^app-ui/src-tauri/' && echo rust=true >> "$GITHUB_OUTPUT"
@@ -180,6 +181,29 @@ jobs:
           echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm test
+
+  # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
+  # las rutas del navegador del render (SEO-108) y del motor de vídeo solo cuentan aquí; en el job
+  # `python` (ubuntu) los de junctions se saltan.
+  backend-windows:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: app-backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.0"
+          enable-cache: true
+          cache-dependency-glob: app-backend/uv.lock
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync --extra dev pytest -q -rs tests/test_navegador.py tests/test_video.py
 
   # Windows: el shell enlaza win32job y windows-sys, y es la única plataforma que se publica.
   tauri-rust:
@@ -325,7 +349,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, python, app-ui, video, tauri-rust, secretos, workflows-y-scripts, higiene-pr, dependencias]
+    needs: [changes, python, app-ui, video, backend-windows, tauri-rust, secretos, workflows-y-scripts, higiene-pr, dependencias]
     runs-on: ubuntu-latest
     steps:
       - env:

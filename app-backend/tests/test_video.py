@@ -198,15 +198,14 @@ def test_entorno_motor():
     assert "ELEVENLABS_API_KEY" not in entorno_motor(StoreFalso({config.ELEVENLABS_KEY: ""}))
 
 
-def _bundle(d: Path, *, node=True, ffmpeg=True, navegador=True) -> Path:
-    """Esqueleto de `video-engine/` con ficheros vacíos (solo cuenta que existan)."""
+def _bundle(d: Path, *, node=True, ffmpeg=True) -> Path:
+    """Esqueleto de `video-engine/` con ficheros vacíos (solo cuenta que existan). Sin navegador: el
+    CfT no va en el instalador (SEO-108; lo cubre tests/test_navegador.py)."""
     piezas = []
     if node:
         piezas.append("node/node.exe")
     if ffmpeg:
         piezas += ["ffmpeg/ffmpeg.exe", "ffmpeg/ffprobe.exe"]
-    if navegador:
-        piezas.append("browser/chrome-headless-shell-win64/chrome-headless-shell.exe")
     d.mkdir(parents=True, exist_ok=True)
     for p in piezas:
         (d / p).parent.mkdir(parents=True, exist_ok=True)
@@ -218,11 +217,12 @@ def test_entorno_congelado_siempre_con_las_piezas_del_bundle(tmp_path, monkeypat
     d = _bundle(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", True)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    # Congelado sin CfT descargado no arranca (lo cubre test_navegador.py): aquí, uno «instalado».
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
+    (tmp_path / "navegador" / config.NAVEGADOR_VERSION).mkdir(parents=True)
+    monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
     env = entorno_motor(StoreFalso())
     assert env["FFMPEG_DIR"] == str(d / "ffmpeg")
-    assert env["HYPERFRAMES_BROWSER_PATH"] == str(
-        d / "browser" / "chrome-headless-shell-win64" / "chrome-headless-shell.exe"
-    )
 
 
 def test_entorno_congelado_sin_motor_es_modulo_no_instalado(tmp_path, monkeypatch):
@@ -235,9 +235,7 @@ def test_entorno_congelado_sin_motor_es_modulo_no_instalado(tmp_path, monkeypatc
         entorno_motor(StoreFalso())
 
 
-@pytest.mark.parametrize(
-    ("falta", "texto"), [({"ffmpeg": False}, "ffmpeg"), ({"navegador": False}, "navegador")]
-)
+@pytest.mark.parametrize(("falta", "texto"), [({"ffmpeg": False}, "ffmpeg")])
 def test_entorno_congelado_sin_una_pieza_pide_reinstalar(tmp_path, monkeypatch, falta, texto):
     d = _bundle(tmp_path / "video-engine", **falta)
     monkeypatch.setattr(config, "FROZEN", True)
