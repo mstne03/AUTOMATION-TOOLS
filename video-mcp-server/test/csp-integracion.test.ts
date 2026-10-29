@@ -15,7 +15,8 @@ import { sondearPreview } from "../scripts/sondear-preview.mjs";
 import { renderizar } from "../scripts/comparar-fotogramas.mjs";
 
 const motor = process.env.VIDEO_ENGINE_DIR;
-if (!motor) console.warn("I2 (a) NO verificada en ejecución: csp-integracion.test.ts se salta porque falta VIDEO_ENGINE_DIR (carpeta video-engine con Chrome y ffmpeg).");
+// M4: el salto tiene que verse en la salida (vitest oculta la consola de los archivos que se saltan enteros).
+if (!motor) process.stderr.write("\n[AVISO] I2 (a) NO verificada en ejecución: csp-integracion.test.ts se salta porque falta VIDEO_ENGINE_DIR (carpeta video-engine con Chrome y ffmpeg).\n");
 
 type Canal = "red" | "especulacion" | "preconexion" | "navegacion" | "rtc";
 type Cuenta = Record<Canal, number>;
