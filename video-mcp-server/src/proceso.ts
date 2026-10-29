@@ -303,20 +303,31 @@ let colaCli: Promise<unknown> = Promise.resolve();
  * cerrado y HOME/cwd en hf-home (I13), navegador comprobado antes de lanzar (I4) y en serie.
  */
 export function ejecutar(comando: string, args: string[], opciones: OpcionesEjecutar = {}): Promise<Resultado> {
-  if (!esLlamadaCli(comando, args)) return lanzar(comando, args, opciones);
+  if (!esLlamadaCli(comando, args)) return lanzar(comando, args, opciones, false);
   if (!mismaRuta(comando, process.execPath)) {
     return Promise.reject(new Error(`La CLI de HyperFrames solo se lanza con el Node del motor (${process.execPath}), no con ${comando}.`));
   }
   const turno = colaCli.then(async () => {
     await verificarNavegador();
     // cwd fijo: la CLI aplica el .env de su cwd a su entorno (cli.js), y busca ffmpeg en él.
-    return lanzar(comando, args, { ...opciones, cwd: hfHome() });
+    return lanzar(comando, args, { ...opciones, cwd: hfHome() }, true);
   });
   colaCli = turno.catch(() => undefined);
   return turno;
 }
 
-function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
+/**
+ * Lanza y, si venció el timeout (cualquier comando) o la CLI terminó mal, barre los procesos que
+ * hayan quedado bajo el navegador o el ffmpeg del motor (I7). Nadie puede desactivar el barrido desde
+ * fuera: solo lo evitan las llamadas internas del propio barrido.
+ */
+async function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar, cli: boolean, barrer = true): Promise<Resultado> {
+  const r = await lanzarUno(comando, args, opciones);
+  if (barrer && (r.timeout || (cli && r.code !== 0))) await barrerProcesos(carpetasDelBundle(herramientasFfmpeg(process.env.FFMPEG_DIR)));
+  return r;
+}
+
+function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
   const { onLinea, timeoutMs, env: _descartado, ...spawnOpts } = opciones;
   return new Promise((resolve, reject) => {
     // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
@@ -378,6 +389,159 @@ function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar): Pr
       resolve({ code, stdout, stderr });
     });
   });
+}
+
+// ---------- Barrido de procesos por ruta de imagen (I7) ----------
+
+/** Qué se barre: carpetas enteras (navegador con manifiesto) y ejecutables exactos (ffmpeg, ffprobe). */
+export interface ObjetivoBarrido {
+  arboles: string[];
+  exactos: string[];
+}
+
+export interface ProcesoVivo {
+  pid: number;
+  ruta: string;
+}
+
+const TIMEOUT_LISTAR_MS = 30_000;
+
+const normalizar = (p: string): string => {
+  const r = path.resolve(sinPrefijoLargo(p));
+  return process.platform === "win32" ? r.toLowerCase() : r;
+};
+
+function realOResuelta(p: string): string {
+  try {
+    return sinPrefijoLargo(fs.realpathSync.native(p));
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/**
+ * Lo que pertenece al motor: ffmpeg y ffprobe exactos (su carpeta puede tener otras cosas) y, del
+ * navegador, la carpeta entera de la versión si hay manifiesto o, si no (desarrollo), solo su exe:
+ * nunca la carpeta de un Chrome del usuario.
+ */
+export function carpetasDelBundle(h: Herramientas | null, env: NodeJS.ProcessEnv = process.env): ObjetivoBarrido {
+  const exactos = h ? [realOResuelta(h.ffmpeg), realOResuelta(h.ffprobe)] : [];
+  const arboles: string[] = [];
+  const manifiesto = env.VIDEO_NAVEGADOR_MANIFIESTO?.trim();
+  const navegador = env.HYPERFRAMES_BROWSER_PATH?.trim();
+  if (manifiesto) arboles.push(realOResuelta(path.dirname(path.resolve(manifiesto))));
+  else if (navegador) exactos.push(realOResuelta(navegador));
+  return { arboles, exactos };
+}
+
+/** Filtra una lista de procesos por ruta de imagen (sin distinguir mayúsculas en Windows y sin `\\?\`). */
+export function filtrarProcesos(lista: ProcesoVivo[], o: ObjetivoBarrido): ProcesoVivo[] {
+  const arboles = o.arboles.map((c) => normalizar(c).replace(/[\\/]+$/, "") + path.sep);
+  const exactos = new Set(o.exactos.map(normalizar));
+  return lista.filter((p) => {
+    if (!p.ruta) return false;
+    const r = normalizar(p.ruta);
+    return exactos.has(r) || arboles.some((a) => r.startsWith(a));
+  });
+}
+
+/** PowerShell por ruta fija, con el script codificado (sin comillas que escapar) y salida en UTF-8. */
+function powershell(script: string): Promise<Resultado> {
+  const exe = path.join(system32(), "WindowsPowerShell", "v1.0", "powershell.exe");
+  const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${script}`, "utf16le").toString("base64");
+  return lanzar(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", codificado], { timeoutMs: TIMEOUT_LISTAR_MS }, false, false);
+}
+
+/** Procesos vivos cuya imagen es del motor. Lanza si no se puede listar (código, timeout o salida ilegible). */
+export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
+  const todos: ProcesoVivo[] = [];
+  if (process.platform === "win32") {
+    const r = await powershell('Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ExecutablePath)" }');
+    if (r.timeout || r.code !== 0) throw new Error(`No pude listar los procesos (código ${r.code}${r.timeout ? ", timeout" : ""}).`);
+    for (const linea of r.stdout.split(/\r?\n/)) {
+      if (!linea.trim()) continue;
+      const m = /^(\d+)\t(.*)$/.exec(linea);
+      if (!m) throw new Error(`Salida ilegible al listar procesos: ${linea.slice(0, 100)}`);
+      todos.push({ pid: Number(m[1]), ruta: m[2].trim() });
+    }
+    if (!todos.length) throw new Error("La lista de procesos salió vacía.");
+  } else if (process.platform === "linux") {
+    for (const d of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        todos.push({ pid: Number(d), ruta: fs.readlinkSync(`/proc/${d}/exe`) });
+      } catch {
+        /* proceso ajeno o ya muerto */
+      }
+    }
+  } else {
+    // ponytail: macOS no es objetivo de la fase 1; ahí el barrido no ve nada.
+    log.warn("El barrido de procesos no está implementado en este sistema.");
+  }
+  return filtrarProcesos(todos, o);
+}
+
+/** Mata filtrando otra vez por pid Y ruta: un pid reutilizado por otro programa no se toca. */
+export async function matarProcesos(vivos: ProcesoVivo[]): Promise<void> {
+  if (!vivos.length) return;
+  if (process.platform === "win32") {
+    const tabla = vivos.map((p) => `${p.pid} = '${p.ruta.replace(/'/g, "''")}'`).join("; ");
+    await powershell(
+      `$o = @{ ${tabla} }\n` +
+        "Get-CimInstance Win32_Process | Where-Object { $o.ContainsKey([int]$_.ProcessId) -and $_.ExecutablePath -eq $o[[int]$_.ProcessId] } | " +
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+    );
+    return;
+  }
+  for (const p of vivos) {
+    try {
+      process.kill(p.pid, "SIGKILL");
+    } catch {
+      /* ya muerto */
+    }
+  }
+}
+
+export interface DepsBarrido {
+  listar: (o: ObjetivoBarrido) => Promise<ProcesoVivo[]>;
+  matar: (vivos: ProcesoVivo[]) => Promise<void>;
+  /** Si quedan procesos que no se pueden matar: el backend relanza el motor en la siguiente llamada. */
+  reiniciar: () => void;
+}
+
+const DEPS_BARRIDO: DepsBarrido = {
+  listar: procesosBajo,
+  matar: matarProcesos,
+  reiniciar: () => {
+    log.error("Reinicio el motor de vídeo: quedan procesos del navegador o de ffmpeg que no puedo matar.");
+    process.exit(70);
+  },
+};
+
+/**
+ * Tras un timeout, taskkill /T no alcanza a los procesos cuyo padre ya murió (Chrome relanzado,
+ * vigilantes desligados). Se buscan por ruta de imagen, se matan y se comprueba; si no se puede
+ * listar o matar, se reinicia el motor antes que dejarlos vivos.
+ */
+export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO): Promise<void> {
+  if (!o.arboles.length && !o.exactos.length) return;
+  const ajenos = (l: ProcesoVivo[]) => l.filter((p) => p.pid !== process.pid);
+  try {
+    let vivos = ajenos(await deps.listar(o));
+    for (let intento = 0; vivos.length && intento < 3; intento++) {
+      log.warn(`Barrido: mato ${vivos.length} proceso(s) del motor que seguían vivos (pids ${vivos.map((p) => p.pid).join(", ")}).`);
+      await deps.matar(vivos);
+      await new Promise((r) => setTimeout(r, 200));
+      vivos = ajenos(await deps.listar(o));
+    }
+    if (vivos.length) {
+      log.error(`Barrido: no pude matar los pids ${vivos.map((p) => p.pid).join(", ")}.`);
+      deps.reiniciar();
+    }
+  } catch (e) {
+    log.error(`Barrido: ${(e as Error).message}`);
+    deps.reiniciar();
+  }
 }
 
 // ---------- ffmpeg ----------
