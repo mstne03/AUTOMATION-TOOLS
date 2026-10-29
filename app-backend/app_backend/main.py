@@ -33,7 +33,7 @@ from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, registry, video
+from app_backend import config, navegador, registry, video
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -95,6 +95,7 @@ def create_app(
     canal_fuentes: Fuentes | None = None,
     conversaciones_dir: str | Path | None = None,
     elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
+    navegador_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -122,6 +123,13 @@ def create_app(
         # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
         argv, cwd = video.comando_motor()
         app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
+        # Navegador del render (SEO-108): al arrancar solo se borran restos; nunca se descarga nada
+        # sin que el usuario lo pida (I14).
+        try:
+            await asyncio.to_thread(navegador.limpiar_restos)
+        except Exception as e:  # noqa: BLE001 - limpiar es una cortesía: no impide arrancar
+            log.warning("Navegador: no se pudieron limpiar restos: %s", e)
+        app.state.navegador = navegador.Descargador(navegador_transport)
         tareas = []
         if kb_auto_update:
             tareas.append(asyncio.create_task(_arranque_kb(app.state.kb_updater)))
@@ -430,6 +438,27 @@ def create_app(
         if not isinstance(r.datos, dict):
             raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
         return r.datos
+
+    # Navegador del render (Chrome for Testing) en el primer uso. Lo inicia el usuario desde la UI;
+    # el modelo no tiene tool ni tipo de job para esto (D2, I10, I14). La UI sondea el GET (barato).
+    tareas_navegador: set[asyncio.Task] = set()
+
+    @app.get("/video/navegador", dependencies=protegido)
+    async def video_navegador():
+        return app.state.navegador.estado()
+
+    @app.post("/video/navegador/descarga", dependencies=protegido, status_code=202)
+    async def video_navegador_descarga():
+        # Instalación sin motor de vídeo: bajar ~120 MB no serviría de nada.
+        if config.FROZEN and not (config.VIDEO_ENGINE_DIR / "node" / "node.exe").is_file():
+            raise HTTPException(status_code=503, detail=video.MENSAJE_NO_INSTALADO)
+        d: navegador.Descargador = app.state.navegador
+        if not d.reservar():
+            raise HTTPException(status_code=409, detail="Ya hay una descarga del navegador en curso.")
+        tarea = asyncio.create_task(asyncio.to_thread(d.ejecutar))
+        tareas_navegador.add(tarea)  # que el GC no recoja la tarea
+        tarea.add_done_callback(tareas_navegador.discard)
+        return d.estado()
 
     # ---------------------------------------------------------------- youtube
 

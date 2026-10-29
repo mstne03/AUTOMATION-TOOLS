@@ -4,6 +4,8 @@ Ningún test toca la red: zips fabricados aquí, `httpx.MockTransport` o un serv
 """
 
 import ast
+import asyncio
+import contextlib
 import hashlib
 import http.server
 import ipaddress
@@ -14,14 +16,19 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import zipfile
 from pathlib import Path
 
 import httpx
 import pytest
 
-from app_backend import config, kb_update, navegador
+from app_backend import config, kb_update, navegador, registry, video
+from app_backend.main import create_app
 from app_backend.navegador import NavegadorError, es_enlace, extraer, nombre_valido
+
+TOKEN = "token-de-prueba"
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 solo_windows = pytest.mark.skipif(sys.platform != "win32", reason="junctions: solo Windows")
 
@@ -850,3 +857,183 @@ def test_error_inesperado_es_legible(cft_falso, monkeypatch):
     d.reservar()
     d.ejecutar()
     assert d.estado()["error"] == "Error inesperado al instalar el navegador: ZeroDivisionError"
+
+
+# ------------------------------------------------------------------ Tarea 5: rutas REST
+
+
+@contextlib.asynccontextmanager
+async def _app(tmp_path, fake_anthropic, transporte=None):
+    app = create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+        navegador_transport=transporte,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c,
+    ):
+        yield app, c
+
+
+async def _hasta_fin(c) -> dict:
+    for _ in range(200):
+        e = (await c.get("/video/navegador", headers=AUTH)).json()
+        if e["estado"] in ("listo", "error"):
+            return e
+        await asyncio.sleep(0.025)
+    raise AssertionError(f"la descarga no terminó: {e}")
+
+
+async def test_get_navegador_ausente(cft_falso, tmp_path, fake_anthropic):
+    _, datos = cft_falso
+    async with _app(tmp_path, fake_anthropic) as (_, c):
+        r = await c.get("/video/navegador", headers=AUTH)
+    assert r.status_code == 200
+    assert r.json() == {
+        "version": "156.0.8078.73",
+        "tamano": len(datos),
+        "estado": "ausente",
+        "descargado": 0,
+        "error": None,
+    }
+
+
+async def test_post_descarga_202_y_llega_a_listo(cft_falso, tmp_path, fake_anthropic):
+    _, datos = cft_falso
+    t = _sirve(datos)
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        r = await c.post("/video/navegador/descarga", headers=AUTH)
+        assert r.status_code == 202 and r.json()["estado"] == "descargando"
+        e = await _hasta_fin(c)
+    assert e["estado"] == "listo" and e["descargado"] == len(datos)
+    assert len(t.peticiones) == 1 and navegador.instalado() is not None
+
+
+async def test_post_mientras_descarga_409(cft_falso, tmp_path, fake_anthropic):
+    _, datos = cft_falso
+    soltar = threading.Event()
+
+    def lenta(request):
+        soltar.wait(10)
+        return httpx.Response(200, content=datos)
+
+    t = _Transporte(lenta)
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        assert (await c.post("/video/navegador/descarga", headers=AUTH)).status_code == 202
+        r = await c.post("/video/navegador/descarga", headers=AUTH)
+        assert r.status_code == 409 and "en curso" in r.json()["detail"]
+        soltar.set()
+        assert (await _hasta_fin(c))["estado"] == "listo"
+    assert len(t.peticiones) == 1
+
+
+async def test_post_tras_error_reintenta(cft_falso, tmp_path, fake_anthropic):
+    _, datos = cft_falso
+    intentos = []
+
+    def primero_falla(request):
+        intentos.append(1)
+        if len(intentos) == 1:
+            raise httpx.ConnectError("sin red", request=request)
+        return httpx.Response(200, content=datos)
+
+    async with _app(tmp_path, fake_anthropic, _Transporte(primero_falla)) as (_, c):
+        await c.post("/video/navegador/descarga", headers=AUTH)
+        e = await _hasta_fin(c)
+        assert e["estado"] == "error" and e["error"] == navegador.MENSAJE_SIN_RED
+        assert (await c.post("/video/navegador/descarga", headers=AUTH)).status_code == 202
+        assert (await _hasta_fin(c))["estado"] == "listo"
+
+
+async def test_rutas_del_navegador_exigen_token(cft_falso, tmp_path, fake_anthropic):
+    t = _sirve(b"")
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        assert (await c.get("/video/navegador")).status_code == 401
+        assert (await c.post("/video/navegador/descarga")).status_code == 401
+        malo = {"Authorization": "Bearer otro"}
+        assert (await c.post("/video/navegador/descarga", headers=malo)).status_code == 401
+    assert t.peticiones == []
+
+
+async def test_el_modelo_no_puede_descargar_el_navegador(cft_falso, tmp_path, fake_anthropic):
+    """D2/I10/I14: ni tool ni tipo de job; la descarga solo la inicia el usuario por REST."""
+    for s in registry.build():
+        texto = f"{s.name} {s.description}".lower()
+        assert not any(p in texto for p in ("navegador", "chrome", "cft")), s.name
+    assert "navegador" not in registry.JOB_KINDS.values()
+    t = _sirve(b"")
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        r = await c.post("/jobs", json={"kind": "navegador", "args": {}}, headers=AUTH)
+        assert r.status_code == 400
+    assert t.peticiones == []
+
+
+async def test_post_sin_modulo_instalado_503(cft_falso, tmp_path, fake_anthropic, monkeypatch):
+    d = tmp_path / "video-engine"
+    d.mkdir()
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    t = _sirve(b"")
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        r = await c.post("/video/navegador/descarga", headers=AUTH)
+        assert r.status_code == 503 and r.json()["detail"] == video.MENSAJE_NO_INSTALADO
+        assert (await c.get("/video/navegador", headers=AUTH)).json()["estado"] == "ausente"
+    assert t.peticiones == []
+
+
+async def test_arranque_limpia_restos_sin_descargar(cft_falso, tmp_path, fake_anthropic):
+    """I14: arrancar el backend no toca la red; solo borra restos de una ejecución anterior."""
+    config.NAVEGADOR_DIR.mkdir(parents=True)
+    (config.NAVEGADOR_DIR / ".descarga-x.zip").write_bytes(b"x")
+    t = _sirve(b"")
+    async with _app(tmp_path, fake_anthropic, t) as (_, c):
+        assert (await c.get("/video/navegador", headers=AUTH)).json()["estado"] == "ausente"
+    assert _restos() == [] and t.peticiones == []
+
+
+async def test_entorno_del_motor_fuera_del_bucle_de_eventos(cft_falso, tmp_path, fake_anthropic, monkeypatch):
+    """M5: `entorno_motor` hashea ~295 MB; mientras, el resto de rutas siguen respondiendo."""
+    monkeypatch.setenv("APP_BACKEND_VIDEO_CMD", f'["{(tmp_path / "no-existe.exe").as_posix()}"]')
+
+    def lento(store):
+        time.sleep(1)
+        return {}
+
+    monkeypatch.setattr(video, "entorno_motor", lento)
+    async with _app(tmp_path, fake_anthropic) as (_, c):
+        capacidades = asyncio.create_task(c.get("/video/capacidades", headers=AUTH))
+        await asyncio.sleep(0.1)
+        t0 = time.perf_counter()
+        r = await c.get("/video/navegador", headers=AUTH)
+        dt = time.perf_counter() - t0
+        assert r.status_code == 200 and dt < 0.2, dt
+        assert (await capacidades).status_code == 503
+
+
+def _referencias_a_navegador(ruta: Path) -> set[str]:
+    """Nombres de `navegador` que usa un módulo (`navegador.X` o `from app_backend.navegador import X`)."""
+    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+    nombres: set[str] = set()
+    for n in ast.walk(arbol):
+        if isinstance(n, ast.ImportFrom) and n.module == "app_backend.navegador":
+            nombres |= {a.name for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module == "app_backend":
+            nombres |= {"<módulo>" for a in n.names if a.name == "navegador"}
+        elif isinstance(n, ast.Import):
+            nombres |= {"<módulo>" for a in n.names if a.name == "app_backend.navegador"}
+        elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "navegador":
+            nombres.add(n.attr)
+    return nombres
+
+
+def test_quien_puede_usar_el_navegador():
+    """I10: solo main.py descarga; video.py solo consulta; nada más (registry, tools) lo importa."""
+    carpeta = Path(navegador.__file__).parent
+    usos = {p.name: _referencias_a_navegador(p) for p in carpeta.glob("*.py") if p.name != "navegador.py"}
+    assert usos.pop("main.py") - {"<módulo>"} <= {"Descargador", "limpiar_restos"}
+    assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "NavegadorError"}
+    assert {m: u for m, u in usos.items() if u} == {}

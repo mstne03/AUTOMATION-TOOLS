@@ -209,7 +209,9 @@ class MotorVideo:
                 if s is None or not s.viva():
                     if s is not None:
                         await self._descartar(s)
-                    s = self._lanzar()
+                    # El entorno verifica el navegador (hashea ~295 MB): fuera del bucle de eventos.
+                    env = await asyncio.to_thread(self._env)
+                    s = self._lanzar(env)
                     self._sesion = s
                 # Escudo: si la petición que arranca se cancela, el arranque sigue en la tarea
                 # propietaria y queda registrado para la siguiente llamada o para cerrar().
@@ -224,9 +226,8 @@ class MotorVideo:
                     ) from None
         return s, s.listo.result()
 
-    def _lanzar(self) -> _Sesion:
+    def _lanzar(self, env: dict[str, str]) -> _Sesion:
         s = _Sesion()
-        env = self._env()
         s.clave = env.get("ELEVENLABS_API_KEY") or None
         params = StdioServerParameters(
             command=self._comando[0], args=self._comando[1:], env=env, cwd=self._cwd
