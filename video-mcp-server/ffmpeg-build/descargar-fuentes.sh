@@ -146,7 +146,7 @@ verificar_firma() { # <nombre> <fichero> <asc> <huella o ->
 # snapshot, encadenado al InRelease anclado: InRelease (SHA-256 del lock) → Sources.xz (SHA-256
 # del InRelease) → .dsc y debian.tar.* (SHA-256 de Sources) → debian/upstream/signing-key.asc.
 verificar_anclaje_debian() { # <nombre> <paquete> <huella>
-  local d base fila dir sha nombre_f f deb="" dsc="" claves
+  local d base dir sha nombre_f f deb="" dsc="" claves
   d=$(mktemp -d -p "$TRABAJO")
   base=${INRELEASE_URL%/dists/*}
   obtener "$INRELEASE_URL" "$d/InRelease"

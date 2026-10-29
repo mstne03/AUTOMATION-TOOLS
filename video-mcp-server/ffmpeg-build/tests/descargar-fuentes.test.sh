@@ -38,7 +38,7 @@ claves kr "$KR"
 
 # --- Material de Debian para el canal debian:paq (R1 LOW-3) ------------------------------------
 debian() { # debian <dir> <huella de la clave que va en signing-key.asc>
-  local d=$T/$1 sk; mkdir -p "$d/m/debian/upstream"
+  local d=$T/$1; mkdir -p "$d/m/debian/upstream"
   gpg --batch --armor --export "$2" >"$d/m/debian/upstream/signing-key.asc"
   tar -C "$d/m" -cJf "$d/paq_1.0-1.debian.tar.xz" debian; echo "Source: paq" >"$d/paq_1.0-1.dsc"
   sk() { echo " $(sha256sum <"$d/$1" | cut -d' ' -f1) $(wc -c <"$d/$1") $1"; }

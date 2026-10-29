@@ -62,29 +62,50 @@ listas que no genera él, y toda invocación sobre bytes no generados por nosotr
 `trampa.ffconcat` (UNC y `..\`): con `-f mp3 -format_whitelist …` falla; sin whitelist, deja en el
 resumen qué pasó (con el `safe=1` por defecto del demuxer concat, BtbN la rechaza).
 
-NVENC y AMF cargan su DLL en tiempo de ejecución: `compilar.sh` exige que sea por `win32_dlopen`
-(solo System32 y la carpeta del `.exe`). Por eso la carpeta del ffmpeg instalado no debe admitir
-DLL ajenas (ver riesgos).
+NVENC y AMF cargan su DLL en tiempo de ejecución: `compilar.sh` exige que sea por `win32_dlopen`,
+que llama a `LoadLibraryExW` con `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`.
+Con esas banderas **la carpeta del `.exe` se busca antes que System32**: una `nvEncodeAPI64.dll` o
+`amfrt64.dll` plantada junto a `ffmpeg.exe` se cargaría en lugar de la del driver. Nunca se usan
+el cwd ni el PATH. Lo que lo cierra es requisito de W3.2: el ffmpeg vive en una carpeta propia de
+la instalación con un manifiesto cerrado de ficheros (SHA-256 de `ffmpeg.exe`/`ffprobe.exe` y
+nada más), y el motor rechaza cualquier `.dll` extra en ella antes de invocarlo, como hace con el
+navegador (I4). `verificar-binario.sh` comprueba además que la tabla de importación solo nombra
+DLL de System32 de una lista cerrada.
 
 ## Cadena de suministro
 
 - **Fuentes**: versión exacta, HTTPS (`--proto =https --tlsv1.2`, sin redirecciones, tamaño
-  máximo), SHA-256 y, si el proyecto firma, GPG en un `GNUPGHOME` temporal exigiendo `VALIDSIG`
-  con la huella primaria exacta y rechazando `EXPKEYSIG`/`REVKEYSIG`/`BADSIG`/`ERRSIG` (no hay
-  excepciones escritas; añadir una exige cambiar el script). La huella debe estar anclada en dos
-  canales de hosts distintos al de descarga (`debian:<paquete>` = su `signing-key.asc` en el mismo
-  snapshot, o una página HTTPS del proyecto); nunca un keyserver ni el propio `.asc` (R0 H1).
+  máximo; URL sin usuario ni puerto, host normalizado). Si el proyecto firma, GPG en un
+  `GNUPGHOME` temporal: `claves/<nombre>.asc` con exactamente una clave primaria, la de la columna
+  `huella`; gpg debe salir con 0; se rechazan `EXPKEYSIG`/`REVKEYSIG`/`BADSIG`/`ERRSIG`/`EXPSIG`
+  (gpg sale con 0 con clave caducada o revocada: esa línea es la única barrera, y el test lo
+  demuestra quitándola); `VALIDSIG` de esa primaria y con SHA-256/384/512. No hay excepciones
+  escritas; añadir una exige cambiar el script.
+- **Anclaje de huellas (R0 H1, R1 LOW-2/3)**: dos canales de **operadores** distintos entre sí y
+  del de la descarga y la firma, según la tabla cerrada `OPERADORES` de `descargar-fuentes.sh`
+  (p. ej. `zlib.net` y `madler.net` son el mismo; `downloads.`/`code.videolan.org` también); nunca
+  un keyserver ni el propio `.asc`. El PKGBUILD de Arch va citado por URL fijada a un commit.
+  **La columna `anclaje` es declarativa** (la rellena y revisa un humano en la Tarea 10) **salvo
+  el canal `debian:<paquete>`**, que el script verifica de verdad: InRelease anclado →
+  `Sources.xz` → `.dsc` y `debian.tar.*` por SHA-256 → `debian/upstream/signing-key.asc` debe
+  contener la huella.
 - **git** (nv-codec-headers, AMF): commit de 40 hex, la etiqueta debe apuntar a él, SHA-256 del
-  `git archive` (con `core.autocrlf=false`, calculado en la imagen fijada) y el espejo de `canal2`
-  debe dar lo mismo (L1). AMF: solo el subárbol `amf/public/include`.
+  `git archive` (con `core.autocrlf=false`) y `canal2` debe ser otro repositorio `.git` de otro
+  operador que dé el mismo commit y archive (L1). El SHA del `git archive` que se commitea se
+  recalcula **dentro de la imagen fijada** (con su git) antes de escribirlo en el lock. AMF: solo
+  el subárbol `amf/public/include`; necesita un espejo comparable para `canal2` (Tarea 10).
+  Un tarball sin firma necesita `canal2` con un `.sha256` de otro operador que contenga el hash.
 - **Imagen**: base por digest; apt solo de `snapshot.debian.org` con marca de tiempo fija, cada
-  paquete con `=versión` y el InRelease anclado por SHA-256 (fija también las dependencias). Única
-  excepción a HTTPS: `ca-certificates`, que la imagen slim no trae, se instala por HTTP; la
-  integridad la dan la firma de apt y el InRelease anclado, y después todo va por HTTPS.
+  paquete con `=versión` y el InRelease anclado por SHA-256 (fija también las dependencias);
+  `apt-get update --error-on=any` sin redirecciones, y nada de `trusted=yes` ni repositorios
+  inseguros. Única excepción a HTTPS: `ca-certificates`, que la imagen slim no trae, se instala
+  por HTTP; la integridad la dan la firma de apt y el InRelease anclado, y después todo va por
+  HTTPS. `.dockerignore` deja en el contexto solo lo que copia el Dockerfile.
 - **Contenedores**: descarga y compilación separadas; la compilación con `--network none`;
   ambos con `--cap-drop ALL`, `no-new-privileges`, raíz de solo lectura, el usuario del host,
   `ffmpeg-build/` y (al compilar) `fuentes/` en solo lectura, sin socket de Docker. Sin caché de
-  capas (`--no-cache`).
+  capas (`--no-cache`). `construir.sh` es el único sitio con órdenes `docker`; con
+  `--sin-descarga` recompila unas fuentes ya presentes (las del tarball de fuente).
 - **Determinismo**: `SOURCE_DATE_EPOCH` del lock, `TZ=UTC`, `LC_ALL=C`, `umask 022`,
   `-ffile-prefix-map`, `-fno-ident`, `--no-insert-timestamp`, `--build-id=none`, `strip --strip-all`.
   Endurecimiento: ASLR de 64 bits, DEP, `-fstack-protector-strong`, enlace estático.
@@ -96,16 +117,21 @@ DLL ajenas (ver riesgos).
 
 ```bash
 bash video-mcp-server/ffmpeg-build/tests/run.sh             # sin red ni Docker
-bash video-mcp-server/ffmpeg-build/tests/run.sh --estricto  # además: ningún PENDIENTE-TAREA-10
+bash video-mcp-server/ffmpeg-build/tests/run.sh --estricto  # los tests de pendientes, Dockerfile y
+                                                            # workflow dejan de tolerar el marcador
 FFMPEG_DIR=/ruta/con/ffmpeg.exe bash video-mcp-server/ffmpeg-build/tests/run.sh   # + verificar-binario
 bash video-mcp-server/ffmpeg-build/construir.sh --fuentes <dir vacío> --salida <dir vacío>  # con red
 ```
 
 ## Publicación (R0 H2)
 
-Workflow `.github/workflows/ffmpeg-lgpl.yml`: `pruebas` → `construir` (a y b) → `verificar`
-(Windows; `SIN_MF` solo como entrada explícita) → `empaquetar` → `publicar` (manual). Pensado para
-vivir en el **repositorio público** de la oferta de código fuente (R7, pendiente de Marc), sin PAT:
+Workflow `.github/workflows/ffmpeg-lgpl.yml`. En `push` (solo a `main`) corre únicamente
+`pruebas`; `construir` (a y b) → `verificar` (Windows; `SIN_MF` solo como entrada explícita) →
+`empaquetar` → `publicar` van solo con `workflow_dispatch`. `verificar` calcula el SHA-256 de lo
+descargado antes de ejecutarlo y lanza `verificar-binario.sh` sin `GITHUB_ENV/OUTPUT/PATH`;
+`empaquetar` revalida las fuentes contra `fuentes.lock` y expone el SHA-256 del tarball; `publicar`
+compara ambos. Pensado para vivir en el **repositorio público** de la oferta de código fuente (R7,
+pendiente de Marc), sin PAT:
 
 - Variable de repositorio `REPO_FUENTE` = `owner/repo` público; `publicar` falla si no es este repo.
 - Environment `release` con revisores obligatorios y *deployment branches* = solo `main`.
@@ -120,8 +146,10 @@ vivir en el **repositorio público** de la oferta de código fuente (R7, pendien
 **Permiso A (portátil de Marc, ≈ 20 MB):**
 
 1. `bash descargar-fuentes.sh --arranque` → SHA-256 de los tarballs y commit + SHA-256 del
-   `git archive` de las fuentes git. Contrastar con un canal independiente (dav1d `.sha256`,
-   zlib.net, página de la etiqueta en GitHub).
+   `git archive` de las fuentes git; si `claves/<nombre>.asc` ya está, verifica la firma e
+   imprime la huella que firma. Contrastar con un canal independiente (dav1d `.sha256`, página de
+   la etiqueta en GitHub). El SHA del `git archive` que se escribe en el lock es el calculado
+   **dentro de la imagen fijada** (`docker run … descargar-fuentes.sh --arranque`), no en Windows.
 2. AMF: leer en el `configure` de 7.1.5 la versión mínima (`grep -n "AMF_VERSION" configure`),
    fijar en `version` la etiqueta mínima que la cumpla (candidata `v1.4.36`) y repetir el paso 1
    para esa fila. Comprobar también el mínimo de nv-codec-headers (`n12.1.14.0`).
@@ -154,7 +182,7 @@ vivir en el **repositorio público** de la oferta de código fuente (R7, pendien
 | 4 | `zlib-1.3.2.tar.xz` + `.asc` | https://zlib.net/ | ~1,3 MB | A |
 | 5 | nv-codec-headers `n12.1.14.0` (clon parcial) | GitHub FFmpeg/nv-codec-headers y git.videolan.org | ~1 MB ×2 | A |
 | 6 | AMF headers (clon parcial, solo `amf/public/include`) | GitHub GPUOpen-LibrariesAndSDKs/AMF | ~1–5 MB | A |
-| 7 | Anclajes: `signing-key.asc` de ffmpeg, dav1d y zlib en Debian; PKGBUILD de Arch; madler.net | snapshot.debian.org, gitlab.archlinux.org, madler.net | < 50 KB | A |
+| 7 | Anclajes: `InRelease`, `Sources.xz`, `.dsc` y `debian.tar.*` de ffmpeg, dav1d y zlib del snapshot (los baja y verifica el propio script); PKGBUILD de Arch fijados a commit | snapshot.debian.org, gitlab.archlinux.org | ~3 MB | A |
 | 8 | Imagen `debian:trixie-slim` | Docker Hub (por digest) | ~30 MB | B |
 | 9 | Paquetes de Debian (MinGW-w64, nasm, meson, ninja, pkgconf, gpg, git, curl…) | snapshot.debian.org | ~400–600 MB, ~1,2 GB instalados | B |
 | 10 | Ejecución del workflow (repite 1–9 en el runner) | GitHub Actions | — | B |

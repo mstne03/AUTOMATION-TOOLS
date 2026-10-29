@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Ejecuta todos los tests de ffmpeg-build (sin red y sin Docker). Sale ≠ 0 si alguno falla.
 #   bash tests/run.sh             tests normales: los marcadores PENDIENTE-TAREA-10 se toleran
-#   bash tests/run.sh --estricto  además exige que no quede ninguno (cierre de la Tarea 10)
-# Los tests de verificar-binario solo corren con FFMPEG_DIR apuntando a un ffmpeg.exe de Windows.
+#   bash tests/run.sh --estricto  ESTRICTO=1: pendientes, dockerfile y workflow dejan de tolerar el
+#                                 marcador en fuentes.lock, Dockerfile y acciones (cierre de la
+#                                 Tarea 10). autoseleccionados.txt lo vigila verificar-binario.sh.
+# La parte de verificar-binario que ejecuta el .exe solo corre con FFMPEG_DIR (ffmpeg.exe de Windows).
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 export ESTRICTO=0

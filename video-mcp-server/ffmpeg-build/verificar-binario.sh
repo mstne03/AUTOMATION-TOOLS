@@ -187,8 +187,8 @@ RESUMEN+=("REGISTRO: ffconcat sin -f ni whitelist → código $rc: $(tail -1 "$T
 
 # --- Rutas con espacios y ñ (foco 3) --------------------------------------------------------
 rutas() {
-  local d="$T/Vídeo ñandú"; mkdir -p "$d"; cp "$M/foto.png" "$d/foto ñ.png"
-  ff -i "$d/foto ñ.png" "$d/salida ñ.png" && [ -s "$d/salida ñ.png" ]
+  local dr="$T/Vídeo ñandú"; mkdir -p "$dr"; cp "$M/foto.png" "$dr/foto ñ.png"
+  ff -i "$dr/foto ñ.png" "$dr/salida ñ.png" && [ -s "$dr/salida ñ.png" ]
 }
 comprobar rutas "lee y escribe en «Vídeo ñandú/foto ñ.png»" rutas
 

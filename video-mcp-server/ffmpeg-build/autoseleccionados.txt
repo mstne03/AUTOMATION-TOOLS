@@ -1,12 +1,14 @@
-# Componentes que configure activa por su cuenta aunque no estén en componentes.conf (dependencias
-# `_select` o API interna). verificar-binario.sh exige que cada listado del binario sea EXACTAMENTE
-# componentes.conf ∪ esta lista (R0 M3), así que todo lo que aparezca de más hay que revisarlo y
-# anotarlo aquí a mano, con motivo. Formato: <tipo> <nombre> <motivo…>
-# Tipos: protocol demuxer muxer decoder encoder bsf filter indev.
+# Componentes que configure activa por su cuenta aunque no estén en FF_LISTAS de componentes.conf
+# (dependencias `_select` o API interna). verificar-binario.sh exige que los listados del binario
+# que ffmpeg sabe imprimir (-protocols -demuxers -muxers -decoders -encoders -bsfs -filters y los
+# dispositivos de -devices) sean EXACTAMENTE FF_LISTAS ∪ esta lista (R0 M3); los parsers no tienen
+# listado y los vigila compilar.sh en config_components.h. Lo que aparezca de más se revisa y se
+# anota aquí a mano, con motivo. Formato: <tipo> <nombre> <motivo…>
+# Tipos: protocol demuxer muxer decoder encoder bsf filter indev outdev.
 #
-# PENDIENTE-TAREA-10: lista deducida del configure de ffmpeg 7.1 sin la fuente delante. Se revisa a
-# mano contra los listados del primer build real y entonces se quita esta línea; mientras esté,
-# verificar-binario.sh falla.
+# PENDIENTE-TAREA-10: lista deducida del configure de ffmpeg 7.1 sin la fuente delante (sobre todo
+# la línea rtp es una conjetura). Se revisa contra los listados del primer build real y entonces
+# se quita esta línea; mientras esté, verificar-binario.sh falla.
 filter abuffer API de libavfilter (entrada de audio de todo grafo), siempre presente
 filter buffer API de libavfilter (entrada de vídeo de todo grafo), siempre presente
 filter abuffersink API de libavfilter (salida de audio de todo grafo), siempre presente
