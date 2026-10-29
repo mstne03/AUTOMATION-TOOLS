@@ -28,6 +28,22 @@ export const VARIANTES = {
       ".then(v=>{__q.resueltos++;__q.resueltos+__q.rechazados===__q.encolados&&(__q.vaciado=performance.now());return v}," +
       "x=>{__q.rechazados++;__q.resueltos+__q.rechazados===__q.encolados&&(__q.vaciado=performance.now());throw x}),T0}",
   },
+  // Arreglo candidato (equivalente en memoria del parche que se describe para W2.6): «el último gana». En vez de
+  // encadenar un renderSyntheticFrame por cada hf-seek, guarda solo el último tiempo pedido y un único bucle lo
+  // renderiza; la promesa de cada llamada se resuelve cuando ya está pintado un tiempo igual o posterior en la cola.
+  // Lleva los mismos contadores que instrumentarShaders (q.renders = renders hechos) para poder medir.
+  shadersUltimoGana: {
+    fichero: "shaders",
+    ancla: OE_ORIGINAL,
+    nuevo:
+      "Ji=YE(),T0=null,__p=null;var __q={encolados:0,resueltos:0,rechazados:0,renders:0,ultimoPedido:null,vaciado:null,deltas:[]};" +
+      "window.__dbgShader={Ji:Ji,q:__q,diag:()=>Ji.__testing.getFrameDiagnostics()};" +
+      "function OE(e){__q.encolados++;__q.ultimoPedido=e;__p=e;T0||(T0=(async()=>{try{for(;__p!==null;){let t=__p;__p=null;" +
+      "let d=t-Ji.__testing.getFrameDiagnostics().globalElapsedTime;__q.deltas.length<20000&&__q.deltas.push([performance.now(),t,d]);" +
+      "await Ji.renderSyntheticFrame(d);__q.renders++}}finally{T0=null}})());let n=__q.encolados;" +
+      "return T0.then(v=>{__q.resueltos=Math.max(__q.resueltos,n);__q.resueltos+__q.rechazados===__q.encolados&&(__q.vaciado=performance.now());return v}," +
+      "x=>{__q.rechazados++;throw x})}",
+  },
   // Pista del informe de preview: play() del adaptador typegpu no pone su tiempo a null.
   runtimeSinNullEnPlay: { fichero: "runtime", ancla: "play:()=>{r(),e=null}", nuevo: "play:()=>{r()}" },
   // seek() del adaptador typegpu despacha siempre (Cs) en vez de deduplicar (_s).

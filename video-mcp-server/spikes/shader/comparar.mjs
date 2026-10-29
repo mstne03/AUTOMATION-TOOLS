@@ -48,4 +48,5 @@ for (const rep of fs.readdirSync(dirEsc).filter((d) => /^\d+$/.test(d)).sort((x,
 fs.writeFileSync(path.join(dirEsc, "comparacion.json"), JSON.stringify({ referencia: a.referencia, umbral: UMBRAL, filas }, null, 2));
 console.table(filas.map((f) => ({ ...f, ssim: f.ssim.toFixed(4), psnr: Number.isFinite(f.psnr) ? f.psnr.toFixed(1) : "inf" })));
 const malas = filas.filter((f) => !f.igual);
-console.log(`${a.escenario}: ${filas.length - malas.length}/${filas.length} capturas ≥ ${UMBRAL} contra ${a.referencia}`);
+const ms = filas.map((f) => f.msHastaListo).filter((x) => x != null).sort((x, y) => x - y);
+console.log(`${a.escenario}: ${filas.length - malas.length}/${filas.length} capturas ≥ ${UMBRAL} contra ${a.referencia}; SSIM mín ${Math.min(...filas.map((f) => f.ssim)).toFixed(4)}; ms hasta listo mediana ${ms[ms.length >> 1]} máx ${ms.at(-1)}`);

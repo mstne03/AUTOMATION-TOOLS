@@ -180,7 +180,7 @@ async function sesion(browser, srv, dirRep, extra) {
   await f.waitForFunction(() => document.querySelector("canvas[data-shader]"), { timeout: 60000 });
   await esperar(1000);
   const capturas = [];
-  const instrumentado = variantes.includes("instrumentarShaders");
+  const instrumentado = variantes.includes("instrumentarShaders") || variantes.includes("shadersUltimoGana");
   const diag = () => f.evaluate(DIAG);
 
   const esperarCola = async (tope = 120000) => {
@@ -311,7 +311,7 @@ const ESCENARIOS = {
       await esperar(Math.max(0, (i + 1) * 16 - (Date.now() - t0)));
     }
     extra.msBarrido = Date.now() - t0;
-    if (variantes.includes("instrumentarShaders")) extra.msVaciarCola = await s.esperarCola(30000);
+    if (variantes.includes("instrumentarShaders") || variantes.includes("shadersUltimoGana")) extra.msVaciarCola = await s.esperarCola(30000);
     extra.trasBarrido = await s.diag();
     for (const t of INSTANTES) await s.seekYCapturar(t);
   },
