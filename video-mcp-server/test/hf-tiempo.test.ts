@@ -65,6 +65,31 @@ describe("hf-tiempo.js", () => {
     expect(llamadas[0].kf[1]).toEqual({ translate: "calc(10px) calc(-5px)", scale: "1.2", rotate: "3deg" });
   });
 
+  it("xPercent+yPercent y x+xPercent se combinan en translate (M5)", () => {
+    const { HF, llamadas } = entorno();
+    const c = HF.contexto("b1", 0);
+    c.tween("#a", { xPercent: 0, yPercent: 0 }, { xPercent: -50, yPercent: 25 }, 0, 1, "none");
+    c.tween("#b", { x: 0, xPercent: 0 }, { x: 10, xPercent: -50 }, 0, 1, "none");
+    expect(llamadas[0].kf[1]).toEqual({ translate: "calc(-50%) calc(25%)" });
+    expect(llamadas[1].kf[1]).toEqual({ translate: "calc(-50% + 10px) calc(0px)" });
+  });
+
+  it("cualquier número no finito en desde/hasta lanza, no solo las transformadas (LOW-6)", () => {
+    const { HF, llamadas } = entorno();
+    const c = HF.contexto("b1", 0);
+    expect(() => c.tween("#t", { opacity: 0 }, { opacity: NaN }, 0, 1, "none")).toThrow(/opacity no finito/);
+    expect(() => c.tween("#t", { opacity: Infinity }, { opacity: 1 }, 0, 1, "none")).toThrow(/opacity no finito/);
+    expect(llamadas).toHaveLength(0);
+  });
+
+  it("las propiedades heredadas del prototipo no cuentan como x/y (LOW-6)", () => {
+    const { HF, llamadas } = entorno();
+    const desde = Object.create({ x: 5 }) as Record<string, number>;
+    desde.opacity = 0;
+    HF.contexto("b1", 0).tween("#t", desde, { opacity: 1 }, 0, 1, "none");
+    expect(llamadas[0].kf[0]).toEqual({ opacity: 0 });
+  });
+
   it("mezclar tweens de x e y por separado en el mismo elemento lanza", () => {
     const { HF } = entorno();
     const c = HF.contexto("b1", 0);
@@ -145,6 +170,7 @@ describe("hf-tiempo.js", () => {
     const c = HF.contexto("b1", 0);
     expect(() => c.envoltura({ fundido: 0, punch: false, golpes: [null] })).toThrow(/envoltura/);
     expect(() => c.envoltura({ golpes: ["1"] })).toThrow(/envoltura/);
+    expect(() => c.envoltura({ fundido: 0, punch: false, golpes: ["1"] })).toThrow(/envoltura/); // aislado (LOW-5)
     expect(() => c.envoltura({ fundido: NaN, punch: false, golpes: [] })).toThrow(/envoltura/);
     expect(() => c.envoltura({ fundido: -1, punch: false, golpes: [] })).toThrow(/envoltura/);
     expect(() => c.envoltura({ fundido: 0, punch: "sí", golpes: [] })).toThrow(/envoltura/);

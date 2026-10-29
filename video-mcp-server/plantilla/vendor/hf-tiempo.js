@@ -5,7 +5,11 @@
 //  - reloj: para lo que WAAPI no anima (texto, three.js): fn(tLocal) en cada evento `hf-seek`.
 //  - envoltura: fundido, punch y golpe de las escenas (traducción exacta de envolturaJs de composicion.ts).
 // Las curvas son las fórmulas de GSAP 3.15, muestreadas a `linear()` de CSS para que WAAPI las reproduzca.
-// Ante un dato no válido (curva, selector, id, tiempo) lanza: nunca anima con basura en silencio (I1, I11).
+// Ante un dato no válido (curva, selector, id, tiempo, número no finito) lanza: nunca anima con basura en silencio
+// (I1, I11).
+// Envoltura: las escenas la reciben en {{ENVOLTURA_DATOS}}; las fotos (bloque-foto, también el bucle) la llevan dentro
+// de su {{DATOS}} ({duracion, dx, dy, movimiento, fundido, punch, golpes}) y la pieza migrada llama a
+// hf.envoltura(DATOS): solo lee fundido, punch y golpes.
 (function () {
   "use strict";
   var ID_RE = /^[a-z][a-z0-9-]*$/;
@@ -57,19 +61,28 @@
   // Propiedades de GSAP → CSS. x/y y los % comparten `translate`: un tween no puede mover solo una de las dos si
   // otro tween mueve la otra en el mismo elemento (con GSAP sí se podía); se detecta y se lanza un error.
   var TRANSFORMADAS = ["x", "y", "xPercent", "yPercent", "scale", "rotation"];
+  // Solo cuentan las propiedades propias (no las del prototipo).
+  function propia(p, k) {
+    return Object.prototype.hasOwnProperty.call(p, k);
+  }
   function aCss(p) {
     var css = {};
-    TRANSFORMADAS.forEach(function (k) {
-      if (k in p && !finito(p[k])) throw new Error("hf-tiempo: " + k + " no finito: " + String(p[k]));
+    Object.keys(p).forEach(function (k) {
+      // Las transformadas tienen que ser números finitos; cualquier otro valor numérico (opacity…), también.
+      if ((TRANSFORMADAS.indexOf(k) >= 0 || typeof p[k] === "number") && !finito(p[k])) {
+        throw new Error("hf-tiempo: " + k + " no finito: " + String(p[k]));
+      }
     });
-    if ("x" in p || "y" in p || "xPercent" in p || "yPercent" in p) {
-      var x = ("xPercent" in p ? p.xPercent + "%" : "") + ("x" in p ? ("xPercent" in p ? " + " : "") + p.x + "px" : "");
-      var y = ("yPercent" in p ? p.yPercent + "%" : "") + ("y" in p ? ("yPercent" in p ? " + " : "") + p.y + "px" : "");
+    if (propia(p, "x") || propia(p, "y") || propia(p, "xPercent") || propia(p, "yPercent")) {
+      var x = (propia(p, "xPercent") ? p.xPercent + "%" : "") + (propia(p, "x") ? (propia(p, "xPercent") ? " + " : "") + p.x + "px" : "");
+      var y = (propia(p, "yPercent") ? p.yPercent + "%" : "") + (propia(p, "y") ? (propia(p, "yPercent") ? " + " : "") + p.y + "px" : "");
       css.translate = "calc(" + (x || "0px") + ") calc(" + (y || "0px") + ")";
     }
-    if ("scale" in p) css.scale = String(p.scale);
-    if ("rotation" in p) css.rotate = p.rotation + "deg";
-    for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k) && TRANSFORMADAS.indexOf(k) < 0) css[k] = p[k];
+    if (propia(p, "scale")) css.scale = String(p.scale);
+    if (propia(p, "rotation")) css.rotate = p.rotation + "deg";
+    Object.keys(p).forEach(function (k) {
+      if (TRANSFORMADAS.indexOf(k) < 0) css[k] = p[k];
+    });
     return css;
   }
 
@@ -96,7 +109,7 @@
       var kf = [aCss(desde), aCss(hasta)];
       var opciones = { delay: (base + t) * 1000, duration: Math.max(d, 0.001) * 1000, easing: linear(nombre), fill: antes ? "both" : "forwards" };
       elementos(sel).forEach(function (el) {
-        var ejesTween = ("x" in desde || "xPercent" in desde ? "x" : "") + ("y" in desde || "yPercent" in desde ? "y" : "");
+        var ejesTween = (propia(desde, "x") || propia(desde, "xPercent") ? "x" : "") + (propia(desde, "y") || propia(desde, "yPercent") ? "y" : "");
         if (ejesTween) {
           var previo = ejes.get(el);
           if (previo && previo !== ejesTween) throw new Error("hf-tiempo: " + el.id + " mezcla tweens de x e y por separado");
