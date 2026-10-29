@@ -1,7 +1,7 @@
 // W1.1 (SEO-114): conductor de los escenarios S0–S9 del fallo de fase del fondo shader en la preview.
 // Uso: node spikes/shader/repro.mjs --navegador <exe> --escenario S2 [--repeticiones 3] [--variantes a,b]
 //        [--arreglo ninguno|reseek|calentamiento|cola] [--modo directo|iframe] [--csp ninguna|producto]
-//        [--instantes 1,10,25,45] [--play 50.4] [--etiqueta x] [--headless shell|new|no]
+//        [--esperar-seek si|no] [--instantes 1,10,25,45] [--play 50.4] [--etiqueta x] [--headless shell|new|no]
 // Antes: node spikes/shader/montar.mjs. Salidas en spikes/salidas/shader/<escenario><etiqueta>/ (ignorada por git).
 // Seguridad (I2, R0): CDP por pipe (sin puerto), sandbox por defecto, banderas prohibidas → aborta, cierre de red
 // por proxy y host-resolver-rules con control positivo en cada lanzamiento, lista blanca de peticiones.
@@ -20,6 +20,7 @@ const { values: a } = parseArgs({
   options: {
     navegador: { type: "string" },
     escenario: { type: "string", default: "S0" },
+    "esperar-seek": { type: "string", default: "si" }, // si (plan: tras __hfWaitForSeekCompletion) | no (como la preview)
     repeticiones: { type: "string", default: "1" },
     variantes: { type: "string", default: "" },
     arreglo: { type: "string", default: "ninguno" },
@@ -36,6 +37,7 @@ if (!a.navegador || !fs.existsSync(a.navegador)) throw new Error("--navegador de
 if (!["ninguno", "reseek", "calentamiento", "cola"].includes(a.arreglo)) throw new Error("--arreglo no válido");
 if (!["directo", "iframe"].includes(a.modo)) throw new Error("--modo no válido");
 if (!["ninguna", "producto"].includes(a.csp)) throw new Error("--csp no válida");
+if (!["si", "no"].includes(a["esperar-seek"])) throw new Error("--esperar-seek no válido");
 const variantes = a.variantes ? a.variantes.split(",") : [];
 if (a.arreglo === "cola" && !variantes.includes("instrumentarShaders")) variantes.push("instrumentarShaders");
 const INSTANTES = a.instantes.split(",").map(Number);
@@ -201,10 +203,12 @@ async function sesion(browser, srv, dirRep, extra) {
     const t0 = performance.now();
     if (a.arreglo === "calentamiento") {
       await seekCrudo(t + 0.5 <= PLAY ? t + 0.5 : t - 0.5);
-      await f.evaluate(() => window.__hfWaitForSeekCompletion && window.__hfWaitForSeekCompletion());
+      if (a["esperar-seek"] === "si") await f.evaluate(() => window.__hfWaitForSeekCompletion && window.__hfWaitForSeekCompletion());
+      else await f.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))));
     }
     const resp = await seekCrudo(t);
-    await f.evaluate(() => window.__hfWaitForSeekCompletion && window.__hfWaitForSeekCompletion());
+    // --esperar-seek no reproduce la preview real: CONTROL_JS responde tras seek + dos rAF, sin esperar al shader.
+    if (a["esperar-seek"] === "si") await f.evaluate(() => window.__hfWaitForSeekCompletion && window.__hfWaitForSeekCompletion());
     let msCola = null;
     if (a.arreglo === "cola") msCola = await esperarCola();
     await f.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))));
@@ -353,7 +357,7 @@ for (let n = 1; n <= N; n++) {
   const restos = procesosBajo(DIR_NAV);
   const r = {
     escenario: a.escenario, repeticion: n, variantes, arreglo: a.arreglo, modo: a.modo, csp: a.csp, play: PLAY,
-    error: error ? String(error.message) : null, capturas: s?.capturas ?? [], ...extra, externas: undefined,
+    esperarSeek: a["esperar-seek"], error: error ? String(error.message) : null, capturas: s?.capturas ?? [], ...extra, externas: undefined,
     peticionesServidor: srv.peticiones.length,
     peticionesNoLocalesServidor: srv.peticiones.filter((p) => p.host !== `127.0.0.1:${srv.puerto}`).length,
     externasFueraDeControl: externas.filter((e) => !e.control), externasDelControl: externas.filter((e) => e.control).map((e) => e.url),
