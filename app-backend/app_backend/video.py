@@ -15,6 +15,8 @@ Ciclo de vida:
   del sidecar: muere con la app aunque el backend no llegue a llamar a `cerrar()`.
 - El hijo hereda solo el entorno mínimo de `get_default_environment()` más `entorno_motor()`:
   ningún secreto del backend llega al motor salvo la clave de ElevenLabs, y solo si existe.
+- Navegador del render: siempre la ruta fija de `navegador` (el CfT que el backend descarga en el
+  primer uso) y su manifiesto, exista o no; nunca uno del bundle, del entorno ni de una caché.
 - `stderr` del hijo → logger `app_backend.video`, con la clave de ElevenLabs ocultada.
 """
 
@@ -34,7 +36,7 @@ import mcp.client.stdio as _stdio
 from mcp import ClientSession, MCPError, StdioServerParameters, stdio_client
 from mcp_types import CONNECTION_CLOSED, ImageContent, TextContent
 
-from app_backend import config
+from app_backend import config, navegador
 
 log = logging.getLogger("app_backend.video")
 
@@ -323,17 +325,6 @@ def comando_motor() -> tuple[list[str], Path]:
     return ["node", str(d / "dist" / "index.js")], d
 
 
-def _navegador_bundle(d: Path) -> Path | None:
-    carpeta = d / "browser"
-    if not carpeta.is_dir():
-        return None
-    for nombre in ("chrome-headless-shell.exe", "chrome.exe"):
-        encontrados = sorted(carpeta.rglob(nombre))
-        if encontrados:
-            return encontrados[0]
-    return None
-
-
 def entorno_motor(store) -> dict[str, str]:
     """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado)."""
     estado = config.STATE_DIR / "video"
@@ -346,31 +337,28 @@ def entorno_motor(store) -> dict[str, str]:
     }
     d = config.VIDEO_ENGINE_DIR
     ffmpeg = d / "ffmpeg"
-    navegador = _navegador_bundle(d)
     if config.FROZEN:
         # Instalado: solo las piezas del bundle, siempre. Sin ellas el motor caería en un ffmpeg del
-        # PATH (quizá GPL, con libx264) o en un Chrome de ~/.cache (escribible, no verificado).
+        # PATH (quizá GPL, con libx264).
         if not (d / "node" / "node.exe").is_file():
             raise MotorNoDisponible(MENSAJE_NO_INSTALADO)
-        faltan = [
-            nombre
-            for nombre, ok in (
-                ("ffmpeg", (ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()),
-                ("navegador", navegador is not None),
-            )
-            if not ok
-        ]
-        if faltan:
-            raise MotorNoDisponible(
-                f"A la instalación del motor de vídeo le falta {' y '.join(faltan)}: reinstala SEO Studio."
-            )
+        if not ((ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()):
+            raise MotorNoDisponible("A la instalación del motor de vídeo le falta ffmpeg: reinstala SEO Studio.")
         env["FFMPEG_DIR"] = str(ffmpeg)
-        env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
-    else:
-        if (ffmpeg / "ffmpeg.exe").exists():
-            env["FFMPEG_DIR"] = str(ffmpeg)
-        if navegador is not None:
-            env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
+    elif (ffmpeg / "ffmpeg.exe").exists():
+        env["FFMPEG_DIR"] = str(ffmpeg)
+    # Navegador: la ruta fija SIEMPRE, también sin CfT descargado (fallo cerrado, I11/I13/I14): el
+    # motor arranca, y antes de cada invocación de HyperFrames exige el exe y comprueba el manifiesto
+    # (W1.6); sin ellos da su error legible y nunca busca otro Chrome. Si la carpeta existe, tiene
+    # que verificar entera (manifiesto anclado, sin enlaces ni ficheros de más).
+    carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
+    env["HYPERFRAMES_BROWSER_PATH"] = str(carpeta / config.NAVEGADOR_EXE)
+    env["VIDEO_NAVEGADOR_MANIFIESTO"] = str(carpeta / config.NAVEGADOR_MANIFIESTO)
+    if os.path.lexists(carpeta):
+        try:
+            navegador.verificar(carpeta)
+        except navegador.NavegadorError as e:
+            raise MotorNoDisponible(str(e)) from None
     clave = config.elevenlabs_api_key(store)
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave

@@ -1014,6 +1014,84 @@ async def test_entorno_del_motor_fuera_del_bucle_de_eventos(cft_falso, tmp_path,
         assert (await capacidades).status_code == 503
 
 
+# ------------------------------------------------------------------ Tarea 6: entorno del motor
+
+
+class _Store:
+    def get(self, clave):
+        return None
+
+
+def _bundle_con_navegadores(d: Path) -> Path:
+    """`video-engine/` de una instalación antigua: Node, ffmpeg y dos Chrome bajo `browser/`."""
+    for p in (
+        "node/node.exe",
+        "ffmpeg/ffmpeg.exe",
+        "ffmpeg/ffprobe.exe",
+        "browser/x/chrome.exe",
+        "browser/chrome-headless-shell-win64/chrome-headless-shell.exe",
+    ):
+        (d / p).parent.mkdir(parents=True, exist_ok=True)
+        (d / p).write_bytes(b"")
+    return d
+
+
+def _rutas_fijas() -> tuple[str, str]:
+    return str(_version() / config.NAVEGADOR_EXE), str(_version() / "MANIFIESTO-SHA256.json")
+
+
+@pytest.mark.parametrize("congelado", [True, False])
+def test_entorno_sin_cft_pasa_la_ruta_fija_inexistente(cft_falso, tmp_path, monkeypatch, congelado):
+    """HIGH-1 (I11, I13, I14): sin CfT el motor recibe igualmente la ruta fija, que no existe, y
+    nunca un navegador del bundle, del entorno o de una caché."""
+    d = _bundle_con_navegadores(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", congelado)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    otro = str(d / "browser" / "x" / "chrome.exe")
+    for var in ("HYPERFRAMES_BROWSER_PATH", "PUPPETEER_EXECUTABLE_PATH", "CHROME_PATH", "VIDEO_NAVEGADOR_MANIFIESTO"):
+        monkeypatch.setenv(var, otro)
+    env = video.entorno_motor(_Store())
+    exe, manifiesto = _rutas_fijas()
+    assert env["HYPERFRAMES_BROWSER_PATH"] == exe and not Path(exe).exists()
+    assert env["VIDEO_NAVEGADOR_MANIFIESTO"] == manifiesto
+    for valor in env.values():
+        assert not any(t in valor.lower() for t in ("browser", ".cache", "program files")), valor
+
+
+def test_entorno_usa_solo_la_ruta_fija(cft_falso, tmp_path, monkeypatch):
+    ruta, _ = cft_falso
+    d = _bundle_con_navegadores(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    monkeypatch.setenv("HYPERFRAMES_BROWSER_PATH", str(d / "browser" / "x" / "chrome.exe"))
+    navegador.instalar_desde_zip(ruta)
+    env = video.entorno_motor(_Store())
+    assert (env["HYPERFRAMES_BROWSER_PATH"], env["VIDEO_NAVEGADOR_MANIFIESTO"]) == _rutas_fijas()
+    assert Path(env["HYPERFRAMES_BROWSER_PATH"]).is_file()
+    assert env["FFMPEG_DIR"] == str(d / "ffmpeg")
+
+
+def test_entorno_navegador_corrupto_es_motor_no_disponible(cft_falso):
+    ruta, _ = cft_falso
+    navegador.instalar_desde_zip(ruta)
+    (_version() / "chrome-headless-shell-win64" / "evil.dll").write_bytes(b"mal")
+    with pytest.raises(video.MotorNoDisponible, match="vuelve a descargarlo"):
+        video.entorno_motor(_Store())
+
+
+def test_entorno_navegador_a_medias_es_motor_no_disponible(cft_falso):
+    """Una carpeta de versión sin manifiesto (o que sea un enlace) no se pasa al motor como buena."""
+    _version().mkdir(parents=True)
+    with pytest.raises(video.MotorNoDisponible, match="vuelve a descargarlo"):
+        video.entorno_motor(_Store())
+
+
+def test_video_ya_no_busca_navegadores():
+    """C6: nada de `rglob` ni de `browser/` en video.py."""
+    fuente = Path(video.__file__).read_text(encoding="utf-8")
+    assert "rglob" not in fuente and "_navegador_bundle" not in fuente and '"browser"' not in fuente
+
+
 def _referencias_a_navegador(ruta: Path) -> set[str]:
     """Nombres de `navegador` que usa un módulo (`navegador.X` o `from app_backend.navegador import X`)."""
     arbol = ast.parse(ruta.read_text(encoding="utf-8"))
