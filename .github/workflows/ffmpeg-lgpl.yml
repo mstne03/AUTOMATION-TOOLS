@@ -18,7 +18,7 @@
 #     son los bytes que verificó `verificar`, atesta y crea la release.
 #   - Con `permissions: {}` el checkout solo funciona si el repositorio es público: este workflow
 #     está pensado para vivir en el repositorio público de la oferta de código fuente (R7).
-# Marcadores PENDIENTE-TAREA-10: la puerta de `construir` falla mientras quede alguno, antes de
+# Marcadores de la Tarea 10: la puerta de `construir` falla mientras quede alguno, antes de
 # descargar nada (incluidos los SHA de dos acciones, que se fijan en la Tarea 10).
 name: ffmpeg-lgpl
 
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Puerta - ningún PENDIENTE-TAREA-10 (antes de cualquier descarga)
+      - name: Puerta - ningún marcador de la Tarea 10 (antes de cualquier descarga)
         run: bash video-mcp-server/ffmpeg-build/comprobar-pendientes.sh
       - name: Construir (descarga verificada y compilación sin red)
         run: bash video-mcp-server/ffmpeg-build/construir.sh --fuentes "$RUNNER_TEMP/fuentes" --salida "$RUNNER_TEMP/build"

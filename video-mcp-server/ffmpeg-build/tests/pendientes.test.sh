@@ -12,6 +12,11 @@ if [ "$CODIGO" -ne 0 ] && grep -q 'con.lock:2' <<<"$SALIDA"; then ok "marcador �
 afirmar "sin marcadores → 0" bash "$P" "$TMP_TEST/sin.lock"
 negar "fichero de entrada ausente → ≠ 0" bash "$P" "$TMP_TEST/no-existe"
 
+# Un comentario con el marcador literal no se podría «rellenar»: la puerta no se cerraría nunca.
+comentarios=$(grep -nE '^[[:space:]]*#.*PENDIENTE-TAREA-10' "$DIR_BUILD/fuentes.lock" "$DIR_BUILD/Dockerfile" \
+  "$DIR_BUILD/componentes.conf" "$DIR_BUILD/../../.github/workflows/ffmpeg-lgpl.yml" || true)
+if [ -z "$comentarios" ]; then ok "ningún comentario lleva el marcador literal"; else mal "comentarios con el marcador: $comentarios"; fi
+
 # El fuentes.lock real tiene la forma correcta; lo único que le puede faltar son los PENDIENTE.
 ejecutar bash "$DIR_BUILD/descargar-fuentes.sh" --solo-validar
 if [ "${ESTRICTO:-0}" = 1 ]; then

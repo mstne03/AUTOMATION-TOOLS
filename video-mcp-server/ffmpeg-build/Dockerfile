@@ -7,7 +7,7 @@
 # ca-certificates no viene en la imagen slim: es lo único que se instala por http (la integridad
 # la dan la firma de apt y el InRelease anclado); después la fuente pasa a https y se vuelve a
 # comprobar el InRelease antes de instalar el resto.
-# Los valores PENDIENTE-TAREA-10 se rellenan en la Tarea 10; con ellos `docker build` falla al
+# Los valores marcados para la Tarea 10 se rellenan en la Tarea 10; con ellos `docker build` falla al
 # leer el FROM (referencia no válida) sin bajar nada, y construir.sh ni siquiera llega a lanzarlo.
 FROM docker.io/library/debian:trixie-slim@sha256:PENDIENTE-TAREA-10
 

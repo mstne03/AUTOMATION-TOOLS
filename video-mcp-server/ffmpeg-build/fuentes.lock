@@ -1,5 +1,5 @@
 # Fuentes fijadas del ffmpeg LGPL (I9). TSV con 11 columnas; «-» = no aplica.
-# Las celdas PENDIENTE-TAREA-10 solo se rellenan en la Tarea 10 (con permiso de Marc para
+# Las celdas con el marcador de la Tarea 10 solo se rellenan en la Tarea 10 (con permiso de Marc para
 # descargar) y descargar-fuentes.sh rechaza cualquier fila que aún lleve una.
 #
 # tipo   tar: tarball firmado (firma_url + huella + anclaje con ≥ 2 canales, R0 H1)
