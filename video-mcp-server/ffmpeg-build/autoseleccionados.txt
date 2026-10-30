@@ -6,9 +6,10 @@
 # anota aquí a mano, con motivo. Formato: <tipo> <nombre> <motivo…>
 # Tipos: protocol demuxer muxer decoder encoder bsf filter indev outdev.
 #
-# PENDIENTE-TAREA-10: lista deducida del configure de ffmpeg 7.1 sin la fuente delante (sobre todo
-# la línea rtp es una conjetura). Se revisa contra los listados del primer build real y entonces
-# se quita esta línea; mientras esté, verificar-binario.sh falla.
+# PENDIENTE-TAREA-10: revisada contra el configure de 7.1.5 (cierre de _select de ffmpeg y de la lista
+# declarada: hflip vflip transpose rotate, bsf vp9_superframe; el parser ac3 no tiene listado;
+# `rtpenc_chain` no es un muxer, así que no hay `rtp`). Falta cotejarla con los listados del primer
+# build real; entonces se quita esta línea. Mientras esté, verificar-binario.sh falla.
 filter abuffer API de libavfilter (entrada de audio de todo grafo), siempre presente
 filter buffer API de libavfilter (entrada de vídeo de todo grafo), siempre presente
 filter abuffersink API de libavfilter (salida de audio de todo grafo), siempre presente
@@ -16,5 +17,5 @@ filter buffersink API de libavfilter (salida de vídeo de todo grafo), siempre p
 filter hflip ffmpeg_select: rotación automática por metadatos
 filter vflip ffmpeg_select: rotación automática por metadatos
 filter transpose ffmpeg_select: rotación automática por metadatos
+filter rotate ffmpeg_select (configure 7.1.5, l. 4055)
 bsf vp9_superframe mov_muxer_select
-muxer rtp mov_muxer_select → rtpenc_chain (pistas de hint; no abre red: sin protocolos de red)
