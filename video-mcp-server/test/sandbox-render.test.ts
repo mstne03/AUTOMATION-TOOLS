@@ -10,11 +10,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SERVER_ROOT } from "../src/raiz.js";
-import { HYPERFRAMES_BIN } from "../src/musica.js";
-import { ejecutar, entornoConFfmpeg, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
+import { entornoConFfmpeg, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
 import {
   MARCADOR,
   chunk,
+  cli,
+  copiaSinParche,
   ENTORNO_CERRADO,
   entornoLimpio,
   FLAGS_RED,
@@ -252,14 +253,12 @@ async function hasta(cond: () => boolean, ms: number): Promise<boolean> {
 }
 
 const CFT = process.env.HYPERFRAMES_BROWSER_PATH;
-const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video sandbox "));
-
 
 /**
- * Mata (con su árbol) los procesos de esta ejecución que sigan vivos: los que llevan RAIZ en la línea de
+ * Mata (con su árbol) los procesos de esta ejecución que sigan vivos: los que llevan `raiz` en la línea de
  * comandos (los Chrome de los controles, la CLI y sus hijos). El cierre en el motor es I7/W1.6.
  */
-function limpiar() {
+function limpiar(raiz: string) {
   spawnSync(
     "powershell.exe",
     [
@@ -268,16 +267,16 @@ function limpiar() {
       "-Command",
       "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:VIGIA_RAIZ) -and $_.ProcessId -ne $PID } | ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null | Out-Null }",
     ],
-    { env: { ...process.env, VIGIA_RAIZ: RAIZ }, windowsHide: true },
+    { env: { ...process.env, VIGIA_RAIZ: raiz }, windowsHide: true },
   );
 }
 
 /**
  * Composición mínima (540×960, 2 s, GSAP local) SIN CSP —simula que la CSP falla— con intentos de fuga.
- * `fugas`: "todo" (JS e <img>), "js" (solo lo que ejecuta Chrome: fetch, WebSocket, WebRTC, WebTransport)
- * o "no" (composición limpia, sin red ni WebRTC).
+ * `fugas`: "js" (lo que ejecuta Chrome: <img>, fetch, WebSocket, WebRTC, WebTransport) o "no" (composición
+ * limpia, sin red ni WebRTC). Un <img src="http…"> escrito en el HTML ya no llega a Chrome: aborta en Node.
  */
-function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: number, fugas: "todo" | "js" | "no" = "todo") {
+function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, fugas: "js" | "no") {
   fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
   fs.copyFileSync(path.join(SERVER_ROOT, "node_modules", "gsap", "dist", "gsap.min.js"), path.join(dir, "assets", "gsap.min.js"));
   fs.writeFileSync(
@@ -286,24 +285,25 @@ function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: numbe
 <style>*{margin:0;padding:0}html,body{width:540px;height:960px;overflow:hidden;background:#123}#root{position:relative;width:540px;height:960px;overflow:hidden}</style></head>
 <body><div id="root" data-composition-id="main" data-start="0" data-duration="2" data-width="540" data-height="960">
 <p style="color:#fff;font:48px sans-serif">fuga</p>
-${fugas === "todo" ? `<img src="//ejemplo.test/x.png" alt=""><img src="http://${ip}:${tcp}/x.png" alt="">` : ""}
+${fugas === "js" ? `<img src="//ejemplo.test/x.png" alt="">` : ""}
 </div><script>
 window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});
-${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp) : ""}
+${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 </script></body></html>`,
   );
 }
 
 /** Intentos de salida de la spec y los observables en los sumideros. */
-const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number) => `
+const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number, udpWt: number) => `
 const nada = () => {};
+try { document.body.append(Object.assign(document.createElement("img"), { src: "http://${ip}:${tcp}/x.png" })); } catch (e) {}
 try { fetch("http://203.0.113.1/").catch(nada); } catch (e) {}
 try { new WebSocket("ws://ejemplo.test/w"); } catch (e) {}
 try { fetch("http://${ip}:${tcp}/f").catch(nada); } catch (e) {}
 try { new WebSocket("ws://${ip}:${tcp}/w"); } catch (e) {}
 try { fetch("http://127.0.0.2:${tcp2}/f").catch(nada); } catch (e) {}
 try { const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:${ip}:${udp}" }] }); pc.createDataChannel("x"); pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(nada); } catch (e) {}
-try { new WebTransport("https://${ip}:${udp}/").ready.catch(nada); } catch (e) {}
+try { new WebTransport("https://${ip}:${udpWt}/").ready.catch(nada); } catch (e) {}
 ${especulacion(`http://127.0.0.2:${tcp2}`)}
 `;
 
@@ -328,12 +328,14 @@ function servir(html: string): Promise<{ url: string; cerrar(): Promise<void> }>
 }
 
 describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", () => {
+  const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video sandbox "));
   let h: Herramientas;
   let ip: string;
   let marcador: (a: string[]) => string[];
   let tcp: Sumidero;
   let tcp2: Sumidero;
   let udp: SumideroUdp;
+  let udpWt: SumideroUdp;
   let entorno: NodeJS.ProcessEnv;
   const hijos: ChildProcess[] = [];
 
@@ -351,8 +353,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
 
   afterEach(async () => {
     for (const c of hijos.splice(0)) c.kill();
-    await Promise.all([tcp?.cerrar(), tcp2?.cerrar(), udp?.cerrar()]);
-    limpiar();
+    await Promise.all([tcp?.cerrar(), tcp2?.cerrar(), udp?.cerrar(), udpWt?.cerrar()]);
+    limpiar(RAIZ);
   });
 
   afterAll(() => {
@@ -375,6 +377,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     tcp = await sumidero(ip);
     tcp2 = await sumidero("127.0.0.2");
     udp = await sumideroUdp(ip);
+    udpWt = await sumideroUdp(ip); // solo WebTransport (QUIC): sin compartirlo con el STUN
   };
 
   /** Tamaño y fecha de `debug.log` junto al exe del CfT ("no existe" si no está). No se borra: puede ser compartido. */
@@ -414,6 +417,32 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   );
 
   it(
+    "[::1]: no se alcanza con los flags del marcador; sin ellos, sí",
+    async () => {
+      // Las reglas de resolución también mapean literales IP y solo exceptúan localhost y 127.0.0.1.
+      const seis = await sumidero("::1");
+      const pagina = await servir(`<!doctype html><html><body><script>fetch("http://[::1]:${seis.puerto}/f", { mode: "no-cors" }).catch(() => {});</script></body></html>`);
+      try {
+        const lanzar = (args: string[]) => {
+          const c = spawn(CFT!, ["--headless", `--user-data-dir=${path.join(RAIZ, `dd-seis-${Date.now()}`)}`, ...args, pagina.url], { windowsHide: true, stdio: "ignore" });
+          hijos.push(c);
+          return c;
+        };
+        let c = lanzar(marcador(["--no-sandbox"]));
+        await new Promise((r) => setTimeout(r, 8000));
+        await matarYAsentar(c);
+        expect(seis.conexiones()).toBe(0);
+        c = lanzar(["--no-proxy-server"]);
+        expect(await hasta(() => seis.conexiones() > 0, 15000), "control positivo: sin flags [::1] debería alcanzarse").toBe(true);
+        await matarYAsentar(c);
+      } finally {
+        await Promise.all([pagina.cerrar(), seis.cerrar()]);
+      }
+    },
+    60000,
+  );
+
+  it(
     "control: el vigilante ve Medium con --no-sandbox y Untrusted sin él",
     async () => {
       for (const [flags, esperado] of [[["--no-sandbox"], MEDIUM], [[], UNTRUSTED]] as [string[], number][]) {
@@ -437,7 +466,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     "control: sin los flags la fuga llega a los sumideros (TCP, 127.0.0.2 y STUN por UDP); con los del marcador, no",
     async () => {
       await abrirSumideros();
-      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto)}</script></body></html>`);
+      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto)}</script></body></html>`);
       try {
         const lanzar = (args: string[]) => {
           const dd = path.join(RAIZ, `dd-${Date.now()}`);
@@ -445,9 +474,14 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
           hijos.push(c);
           return c;
         };
-        // 1. Sin nada (se anula el proxy del sistema): llegan TCP y STUN.
+        // 1. Sin nada (se anula el proxy del sistema): llegan TCP, STUN y WebTransport (QUIC).
+        // Medido: --disable-quic NO frena a WebTransport (solo con esa bandera llegan paquetes); lo frenan
+        // el proxy nulo y las reglas de resolución. La bandera queda por HTTP/3, sin control propio aquí.
         let c = lanzar(["--no-proxy-server"]);
-        expect(await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0, 15000), `tcp=${tcp.conexiones()} udp=${udp.paquetes()}`).toBe(true);
+        expect(
+          await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0 && udpWt.paquetes() > 0, 15000),
+          `tcp=${tcp.conexiones()} udp=${udp.paquetes()} webtransport=${udpWt.paquetes()}`,
+        ).toBe(true);
         await matarYAsentar(c);
         // 2. Proxy nulo SIN el bypass explícito: 127.0.0.2 entra por el bypass implícito de loopback (MEDIUM-1).
         const antes2 = tcp2.conexiones();
@@ -460,11 +494,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         expect(await hasta(() => udp.paquetes() > antesUdp, 15000), "sin el flag de WebRTC el STUN debería llegar").toBe(true);
         await matarYAsentar(c);
         // 4. Con los flags del marcador: nada en 10 s.
-        const [t1, t2, u] = [tcp.conexiones(), tcp2.conexiones(), udp.paquetes()];
+        const [t1, t2, u, w] = [tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()];
         c = lanzar(marcador(["--no-sandbox"]));
         await new Promise((r) => setTimeout(r, 10000));
         await matarYAsentar(c);
-        expect([tcp.conexiones() - t1, tcp2.conexiones() - t2, udp.paquetes() - u]).toEqual([0, 0, 0]);
+        expect([tcp.conexiones() - t1, tcp2.conexiones() - t2, udp.paquetes() - u, udpWt.paquetes() - w]).toEqual([0, 0, 0, 0]);
       } finally {
         await pagina.cerrar();
       }
@@ -473,21 +507,17 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   );
 
   /** Render real con el vigilante, y todas las aserciones de la tarea 4. */
-  async function renderVigilado(nombre: string, extra: string[], fugas: "todo" | "no" = "todo") {
+  async function renderVigilado(nombre: string, extra: string[], fugas: "js" | "no" = "js") {
     await abrirSumideros();
     const comp = path.join(RAIZ, `comp-${nombre}`);
-    componer(comp, ip, tcp.puerto, tcp2.puerto, udp.puerto, fugas);
+    componer(comp, ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, fugas);
     // WebM (VP9 por software) y no MP4: con el ffmpeg LGPL, HyperFrames elige el codificador H.264 por
     // GPU según una sonda que falla con la GPU ocupada y entonces pide libx264 (no existe). Elegir el
     // codificador es W1.6; aquí solo importa la captura con Chrome, que es la misma en los dos formatos.
     const salida = path.join(RAIZ, `${nombre}.webm`);
     const log0 = estadoDebugLog();
     const v = await vigilar(CFT!, comp);
-    const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "render", comp, "-o", salida, "--fps", "30", "--format", "webm", "--quality", "delivery", ...extra], {
-      cwd: comp,
-      env: entorno,
-      timeoutMs: 300000,
-    });
+    const r = await cli(["render", comp, "-o", salida, "--fps", "30", "--format", "webm", "--quality", "delivery", ...extra], { cwd: comp, env: entorno, timeoutMs: 300000 });
     const ms = await v.parar();
     const log = `${resumen(ms)}\n--- salida ---\n${(r.stdout + r.stderr).slice(-3000)}`;
     // 1. Render correcto.
@@ -496,7 +526,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     expect([info.ancho, info.alto]).toEqual([540, 960]);
     comprobarProcesos(ms, log, fugas !== "no");
     // 4. Ninguna salida: ni TCP fuera de loopback, ni a 127.0.0.2, ni UDP (STUN, QUIC).
-    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes()], log).toEqual([0, 0, 0]);
+    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()], log).toEqual([0, 0, 0, 0]);
     // 7. Medición (riesgo residual, sin aserción): el proceso de GPU escribe debug.log junto al exe del
     // CfT (errores de media\gpu\windows\mf_video_encoder_util). --disable-logging, --log-level=3,
     // --log-file=NUL, --enable-logging=stderr y --enable-logging --log-file=NUL no lo evitan en CfT 156
@@ -518,6 +548,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     // Cualquier otro valor (Medium, Low, -2, -3, -4: existe y no se puede leer) es fallo.
     expect(renderers.length, log).toBeGreaterThan(0);
     for (const m of renderers) expect([UNTRUSTED, -1], log).toContain(m.integridad);
+    // Al menos uno medido de verdad: si todos fueran -1, el bucle anterior no probaría nada.
+    expect(renderers.some((r) => r.integridad === UNTRUSTED), log).toBe(true);
     const salidos = renderers.filter((m) => m.integridad === -1).length;
     if (salidos) process.stderr.write(`${salidos} renderer(s) salieron antes de leer su token\n`);
     // Procesos de Chrome sin línea de comandos legible ('?', suele ser el preflight --version naciendo):
@@ -545,13 +577,15 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       expect(conRenderer, `browser ${b.pid} (vivo ${vida} ms) sin renderer Untrusted\n${log}`).toBe(true);
     }
     // 5. Sockets en escucha (TCP) de Chrome y de la CLI: solo 127.0.0.1. UDP: solo loopback, salvo el
-    // riesgo residual medido (LOW-3): con WebRTC en la página, el servicio de red abre sockets UDP en
-    // 0.0.0.0/:: (y a veces el respondedor mDNS en 5353) aunque ningún paquete salga (aserción 4). Se
-    // admite solo en ese proceso y solo si la composición usa WebRTC; el render limpio lo exige a cero.
+    // riesgo residual medido (LOW-3): con WebRTC en la página, el servicio de red abre sockets UDP
+    // efímeros en 0.0.0.0/:: aunque ningún paquete llegue a los sumideros (aserción 4). Se admite solo en
+    // ese proceso y solo si la composición usa WebRTC; el render limpio lo exige a cero. El respondedor
+    // mDNS (5353) está cerrado por WebRtcHideLocalIpsWithMdns.
     for (const m of ms) {
       expect(m.escucha.filter((e) => !esLoopback(e)), `${m.tipo}#${m.pid}\n${log}`).toEqual([]);
       const udpFuera = m.udp.filter((e) => !esLoopback(e));
       if (conWebRtc && m.tipo === "utility/network.mojom.NetworkService") {
+        expect(udpFuera.filter((e) => e.endsWith(":5353")), `${m.tipo}#${m.pid}\n${log}`).toEqual([]);
         if (udpFuera.length) process.stderr.write(`RESIDUAL UDP (WebRTC) ${m.tipo}#${m.pid}: ${udpFuera.join(" ")}\n`);
         continue;
       }
@@ -580,41 +614,80 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   it("check y snapshot: sockets solo en 127.0.0.1 y renderer Untrusted", async () => {
     await abrirSumideros();
     const comp = path.join(RAIZ, "comp-check");
-    // Sin <img>: `check` sondea con ffprobe las URL http de la composición (hallazgo aparte, abajo).
-    componer(comp, ip, tcp.puerto, tcp2.puerto, udp.puerto, "js");
+    componer(comp, ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, "js");
     const log0 = estadoDebugLog();
     for (const args of [["check", comp, "--json", "--no-contrast"], ["snapshot", comp, "--frames", "1", "--no-end"]]) {
       const v = await vigilar(CFT!, comp);
-      const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, ...args], { cwd: comp, env: entorno, timeoutMs: 180000 });
+      const r = await cli(args, { cwd: comp, env: entorno, timeoutMs: 180000 });
       const ms = await v.parar();
       const log = `${args[0]}\n${resumen(ms)}\n--- salida ---\n${(r.stdout + r.stderr).slice(-2000)}`;
       expect(r.timeout, log).toBeFalsy();
       expect(ms.some((m) => m.escucha.length > 0), `servidor no observado\n${log}`).toBe(true);
       comprobarProcesos(ms, log, true);
     }
-    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes()], tcp.peticiones().join("\n")).toEqual([0, 0, 0]);
+    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()], tcp.peticiones().join("\n")).toEqual([0, 0, 0, 0]);
     // Medición de debug.log (ver la aserción 7 del render).
     const log1 = estadoDebugLog();
     if (log1 !== log0) process.stderr.write(`RESIDUAL debug.log en la carpeta del navegador: ${log0} -> ${log1}\n`);
   }, 420000);
 
-  // HALLAZGO ABIERTO (fuera de I2b, que es la red de Chrome): `check` sondea con ffprobe, desde Node y
-  // fuera del proxy nulo, las URL http de la composición. Una composición con <img src="http://…"> hace
-  // salir un GET aunque la CSP y el parche funcionen. Lo frena hoy el escáner de URL de red de
-  // composicion.ts antes de llamar a la CLI; el arreglo de raíz (protocol_whitelist en el ffprobe de
-  // HyperFrames) queda para su paquete. Este test fija el comportamiento: cuando alguien lo arregle,
-  // fallará y habrá que invertir la aserción.
-  it("HALLAZGO: check sondea con ffprobe las URL http de la composición (fuera de Chrome)", async () => {
-    await abrirSumideros();
-    const comp = path.join(RAIZ, "comp-ffprobe");
-    fs.mkdirSync(comp, { recursive: true });
-    fs.writeFileSync(
-      path.join(comp, "index.html"),
-      `<!doctype html><html><body><div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="540" data-height="960"><img src="http://${ip}:${tcp.puerto}/x.png" alt=""></div><script>window.__timelines={};</script></body></html>`,
-    );
-    const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "check", comp, "--json", "--no-contrast"], { cwd: comp, env: entorno, timeoutMs: 180000 });
-    expect(r.timeout).toBeFalsy();
-    expect(await hasta(() => tcp.peticiones().length > 0, 5000)).toBe(true);
-    expect(tcp.peticiones().every((p) => /^GET \/x\.png/.test(p) && /User-Agent: Lavf\//i.test(p)), tcp.peticiones().join("\n")).toBe(true);
-  }, 240000);
+  // Salidas de Node (I14), fuera del proxy nulo y de la CSP. Los controles usan una copia de HyperFrames
+  // sin el parche: demuestran que sin los hunks la salida existe y que el sumidero la vería.
+  describe("I14: salidas de red de Node", () => {
+    let sinParche: { bin: string; borrar(): void };
+    beforeAll(() => {
+      sinParche = copiaSinParche();
+    }, 60000);
+    afterAll(() => sinParche?.borrar());
+
+    /** Composición de un segundo con `cuerpo` en el #root y `cabeza` en el <head>. */
+    const proyecto = (nombre: string, cuerpo: string, cabeza = "") => {
+      const comp = path.join(RAIZ, `comp-${nombre}`);
+      fs.mkdirSync(comp, { recursive: true });
+      fs.writeFileSync(
+        path.join(comp, "index.html"),
+        `<!doctype html><html lang="en"><head><meta charset="UTF-8" />${cabeza}</head><body><div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="540" data-height="960" style="width:540px;height:960px;background:#123">${cuerpo}</div><script>window.__timelines={};</script></body></html>`,
+      );
+      return comp;
+    };
+    const render = (comp: string, bin?: string) =>
+      cli(["render", comp, "-o", path.join(comp, "salida.webm"), "--fps", "30", "--format", "webm", "--quality", "delivery"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
+    const check = (comp: string, bin?: string) => cli(["check", comp, "--json", "--no-contrast"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
+    const CERRADO = "HyperFrames no descarga recursos remotos en modo cerrado (I14)";
+
+    it("<script src> externo: el render falla sin conectar; sin el parche, Node lo descarga", async () => {
+      tcp = await sumidero("127.0.0.1");
+      const comp = proyecto("script", "", `<script src="http://127.0.0.1:${tcp.puerto}/x.js"></script>`);
+      const r = await render(comp);
+      expect(r.timeout).toBe(false);
+      expect(r.code, r.stdout + r.stderr).not.toBe(0);
+      expect(r.stdout + r.stderr).toContain(CERRADO);
+      expect(tcp.conexiones()).toBe(0);
+      const control = await render(comp, sinParche.bin);
+      expect(control.timeout).toBe(false);
+      expect(tcp.conexiones(), "control positivo: sin el parche el sumidero debería ver la descarga").toBeGreaterThan(0);
+    }, 420000);
+
+    it("texto background:url(HTTPS://…) en la composición: el render falla con el error nuevo", async () => {
+      const comp = proyecto("texto", `<p>background:url(HTTPS://example.invalid/x.png)</p>`);
+      const r = await render(comp);
+      expect(r.timeout).toBe(false);
+      expect(r.code, r.stdout + r.stderr).not.toBe(0);
+      expect(r.stdout + r.stderr).toContain(CERRADO);
+    }, 240000);
+
+    it("check: <img>, <video> y <audio> con URL no llegan a ffprobe; sin el parche, GET de Lavf", async () => {
+      await abrirSumideros();
+      const url = `http://${ip}:${tcp.puerto}`;
+      const comp = proyecto("ffprobe", `<img src="${url}/x.png" alt=""><video id="v" src="${url}/x.mp4" data-start="0" data-duration="1"></video><audio id="a" src="${url}/x.mp3" data-start="0" data-duration="1"></audio>`);
+      const r = await check(comp);
+      expect(r.timeout).toBe(false);
+      await new Promise((ok) => setTimeout(ok, 1000));
+      expect(tcp.peticiones(), r.stdout + r.stderr).toEqual([]);
+      expect(tcp.conexiones()).toBe(0);
+      const control = await check(comp, sinParche.bin);
+      expect(control.timeout).toBe(false);
+      expect(await hasta(() => tcp.peticiones().some((p) => /User-Agent: Lavf\//i.test(p)), 5000), tcp.peticiones().join("\n")).toBe(true);
+    }, 420000);
+  });
 });
