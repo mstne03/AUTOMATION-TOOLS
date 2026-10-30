@@ -94,9 +94,13 @@ function inventario(re: RegExp): string[] {
  * forma»: PROCESOS_NODE cubre los hijos, y queda fuera lo que no sea dist/*.js de primer nivel
  * (@puppeteer/browsers y puppeteer-core, por ejemplo).
  */
-const RED_NODE = /\b(fetch|fetchImpl|doFetch|axios|undici)\b|\bhttps?\.(get|request)\b|\bhttps?(Get|Request)\b|\b(net|tls)\.(connect|createConnection)\b|\bdns\.[a-zA-Z]+|\bnew (dns\.)?Resolver\b|\bnew (WebSocket|EventSource)\b|\b(from|require\(|import\()\s*["'`](node:)?(https?|http2|net|tls|dgram|dns(\/promises)?|undici|ws)["'`]|\bimport\(\s*(?!["'`]\.\.?\/)|["'`](curl|wget|certutil|bitsadmin)(\.exe)?["'`]/;
-/** Toda llamada a child_process y toda importación suya, también con el alias numerado del empaquetador. */
-const PROCESO_NODE = /(?<![\w$])(spawn|spawnSync|execSync|execFile|execFileSync|fork)\d*\(|(?<![.\w$])exec\d*\(|\b(from|require\(|import\()\s*["'`](node:)?child_process["'`]/;
+const RED_NODE = /\b(fetch|fetchImpl|doFetch|axios|undici)\b|\bhttps?\.(get|request)\b|\bhttps?(Get|Request)\b|\b(net|tls)\.(connect|createConnection)\b|\bdns\.[a-zA-Z]+|\bnew (dns\.)?Resolver\b|\bnew (WebSocket|EventSource)\b|(\bfrom|\bimport|require\(|import\()\s*["'`](node:)?(https?|http2|net|tls|dgram|dns(\/promises)?|undici|ws)["'`]|\bgetBuiltinModule\b|\b(http2\.(connect|createSecureServer)|dgram\.createSocket)\b|\bimport\(\s*(?!["'`]\.\.?\/)|["'`](curl|wget|certutil|bitsadmin)(\.exe)?["'`]/;
+/**
+ * Toda llamada a child_process y toda importación suya, también con el alias numerado del empaquetador y las
+ * versiones promisificadas: `execFileAsync(` y la propia `promisify(execFile)`. Un alias con otro nombre se ve
+ * en su declaración, no en cada llamada.
+ */
+const PROCESO_NODE = /(?<![\w$])(spawn|spawnSync|execSync|execFile|execFileSync|fork)\d*\(|(?<![.\w$])exec\d*\(|(\bfrom|\bimport|require\(|import\()\s*["'`](node:)?child_process["'`]|(?<![.\w$])exec\w*Async\d*\(|\bpromisify\d*\(\s*(exec|execFile|spawn)\d*\s*\)/;
 
 // Lista cerrada de TODAS las coincidencias de RED_NODE en el dist parcheado. Una línea nueva o movida
 // rompe el test: tras subir de versión hay que clasificarla, no copiarla. Detalle en el informe de W1.3.
@@ -218,13 +222,13 @@ const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
   // Del grafo de render/check/snapshot: ffmpeg, ffprobe, Chrome, sondas de sistema con orden constante, y
   // ramas que no se dan en el motor (docker con --docker, apt-get y ps fuera de Windows). Sin red propia.
   locales: {
-    "chunk-2MLMO25E.js": [3893, 10843],
+    "chunk-2MLMO25E.js": [3893, 10841, 10843, 10883, 10993],
     "chunk-4CY5RXXC.js": [18, 34, 57, 88, 110, 126, 140, 169],
     "chunk-4UMPIPCQ.js": [9, 55],
-    "chunk-543U46OR.js": [15],
+    "chunk-543U46OR.js": [15, 18, 109, 120],
     "chunk-5QKJPCQ4.js": [21],
     "chunk-7FMUTGOH.js": [9, 184],
-    "chunk-7SXL476O.js": [424, 436, 3682, 3689, 4322, 8913, 9177],
+    "chunk-7SXL476O.js": [424, 436, 3682, 3689, 4322, 8913, 9119, 9154, 9177],
     "chunk-AXEEZKIL.js": [43, 46, 382, 843, 1189],
     "chunk-CMDVJP4T.js": [41, 558],
     "chunk-EXAX37XR.js": [12],
@@ -233,23 +237,23 @@ const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-KGPLIH7B.js": [9, 46, 68],
     "chunk-L5MFWGGU.js": [8783, 9174, 13968, 14190],
     "chunk-QSFWGZG6.js": [15, 392, 397],
-    "chunk-RDDVQSNQ.js": [679, 1489, 4767, 4928, 4989, 4996, 8262, 8490, 8576, 8710, 8774, 8826, 8905, 9099, 10502, 10748, 14852, 14893, 17220],
+    "chunk-RDDVQSNQ.js": [679, 1489, 4767, 4815, 4928, 4934, 4989, 4996, 8262, 8490, 8576, 8710, 8774, 8826, 8905, 9099, 10502, 10748, 14852, 14893, 17220, 17226],
     "chunk-T6SD37JZ.js": [32, 37, 53],
     "chunk-UIOZIIB7.js": [9, 109],
     "chunk-VAS6HQX3.js": [9, 97],
-    "chunk-VDVVQNTK.js": [28],
+    "chunk-VDVVQNTK.js": [28, 43, 341],
     "chunk-VEA7Z4PZ.js": [21, 46, 49, 151],
     "chunk-WMQNIQDJ.js": [407],
     "chunk-X7A7C4JS.js": [66, 71, 77, 96, 151],
     "chunk-XDMZY3H7.js": [42, 214],
-    "chunk-ZF3R2IPC.js": [1132],
-    "render-5J5PP3UK.js": [183],
+    "chunk-ZF3R2IPC.js": [1132, 1134],
+    "render-5J5PP3UK.js": [183, 277, 391, 435, 486, 522, 542],
     "render-VUVTK2JM.js": [971, 974, 990, 1031, 1624, 1646, 1758],
     "seo-studio-cierre.js": [7],
   },
   // Fuera del grafo de render/check/snapshot.
   otrosComandos: {
-    "audio-VYWWM4DB.js": [118],
+    "audio-VYWWM4DB.js": [118, 123],
     "chunk-2RT7MXFL.js": [18, 110],
     "chunk-5ETJX6WM.js": [9, 12, 32, 39, 59, 74],
     "chunk-BBUK6A7Q.js": [57, 68, 80, 196],
@@ -258,7 +262,7 @@ const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-HU2SPFNG.js": [12, 28, 34],
     "chunk-JZIEZCQM.js": [15, 33, 49],
     "chunk-MNNK7RV5.js": [18, 46],
-    "chunk-NNLQTG3M.js": [20],
+    "chunk-NNLQTG3M.js": [20, 26, 303],
     "chunk-RW4DMP2Y.js": [30, 503],
     "chunk-SFYLZX5C.js": [30, 135],
     "chunk-X5HHHFTX.js": [34, 151, 278, 464, 486],
@@ -273,7 +277,7 @@ const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
     "skills-3RFMPMJA.js": [61, 349, 357, 366],
     "synthesize-QCRP3NI7.js": [24, 144],
     "upgrade-KIF5Z4J3.js": [43, 217],
-    "usage-HG4WMM7A.js": [1725, 1965],
+    "usage-HG4WMM7A.js": [1725, 1918, 1965],
     "warmCheckClient.js": [21, 126],
   },
 };
@@ -776,13 +780,22 @@ describe("I14: HyperFrames no sale a la red desde Node", () => {
     `spawn3(orden, args);`,
     `import(modulo);`,
     `const c = require("child_process");`,
+    `const n = __require("net");`,
+    `const n = process.getBuiltinModule("net");`,
+    `import "node:dns";`,
+    `import 'node:net';`,
+    `await execFileAsync(orden);`,
+    `const r = promisify(execFile);`,
+    `const r = promisify3(exec2);`,
+    `http2.connect("https://nuevo.invalid/");`,
+    `dgram.createSocket("udp4");`,
   ])("el inventario no deja pasar: %s", (texto) => {
     const mutado = [...lineasDist(), { fichero: "chunk-MFHYBSJC.js", linea: 999999, texto }];
     const nuevas = [...sinClasificar(mutado, RED_NODE, SALIDAS_NODE), ...sinClasificar(mutado, PROCESO_NODE, PROCESOS_NODE)];
     expect(nuevas).toContain("chunk-MFHYBSJC.js:999999");
   });
 
-  it.each([`import("./chunk-X.js");`, `const a = /x/.exec(y);`, `const texto = "red";`])("control: el inventario no salta con %s", (texto) => {
+  it.each([`import("./chunk-X.js");`, `const a = /x/.exec(y);`, `const texto = "red";`, `await runCommand(main);`, `import { x } from "./y.js";`])("control: el inventario no salta con %s", (texto) => {
     expect(sinClasificar([{ fichero: "x.js", linea: 1, texto }], RED_NODE, {})).toEqual([]);
     expect(sinClasificar([{ fichero: "x.js", linea: 1, texto }], PROCESO_NODE, {})).toEqual([]);
   });
@@ -942,12 +955,14 @@ describe.runIf(process.platform === "win32")("I14: rutas UNC y referencias con o
       ["spawn", `try { cp.spawn("ffprobe.exe", ["-i", ${UNC}]).on("error", () => {}); } catch {}`],
       ["execFileSync", `try { cp.execFileSync("ffprobe.exe", [${UNC}]); } catch {}`],
       ["ffprobe con URL", `try { cp.spawn("C:/x/ffprobe.exe", ["--", "http://h.invalid/x.mp4"]).on("error", () => {}); } catch {}`],
+      ["promisify(execFile)", `await promisify(cp.execFile)("ffprobe.exe", [${UNC}]).catch(() => {});`],
+      ["promisify(exec)", `await promisify(cp.exec)(${UNC}).catch(() => {});`],
       ["ffmpeg con rtmp://", `try { cp.execFile("ffmpeg", ["-i", "rtmp://h.invalid/x"], () => {}).on("error", () => {}); } catch {}`],
     ];
     const corre = (codigo: string, cierre: boolean) => {
       const log = path.join(tmp, `barrera${n++}.log`);
       const pre = cierre ? `await import(${JSON.stringify(chunk("seo-studio-cierre.js"))});` : "";
-      const fuente = `import fs from "node:fs"; import cp from "node:child_process"; ${pre} ${codigo} console.log("SIGUIÓ"); await new Promise((r) => setTimeout(r, 200));`;
+      const fuente = `import fs from "node:fs"; import cp from "node:child_process"; import { promisify } from "node:util"; ${pre} ${codigo} console.log("SIGUIÓ"); await new Promise((r) => setTimeout(r, 200));`;
       const r = spawnSync(process.execPath, ["--input-type=module", "-e", fuente], { env: conEspia(process.env, log), encoding: "utf8", windowsHide: true, timeout: 30000 });
       return { r, vistos: accesos(log) };
     };
@@ -964,6 +979,45 @@ describe.runIf(process.platform === "win32")("I14: rutas UNC y referencias con o
       const { r, vistos } = corre(codigo, false);
       expect(r.stdout, r.stderr).toContain("SIGUIÓ");
       expect(vistos.length).toBeGreaterThan(0);
+    });
+
+    it.each([
+      ["sin captura", `process.exit = () => {}; fs.statSync(${UNC});`, false],
+      ["dentro de try/catch", `process.exit = () => {}; try { fs.statSync(${UNC}); } catch {}`, true],
+      ["en un hijo", `process.exit = () => {}; try { cp.execFileSync("ffprobe.exe", [${UNC}]); } catch {}`, true],
+    ])("LOW-A: con process.exit sustituido, %s, el acceso no llega al espía", (_n, codigo, sigue) => {
+      const { r, vistos } = corre(codigo, true);
+      expect(r.stderr).toContain("(I14)");
+      expect(vistos).toEqual([]);
+      if (!sigue) expect(r.stdout).not.toContain("SIGUIÓ");
+    });
+
+    // Sin espía: el del test envuelve child_process con una función lisa y perdería la versión propia de
+    // promisify (promisify.custom), que es justo la que esquivaba la barrera. El hijo de abajo es node, que ignora el UNC.
+    describe("LOW-B: util.promisify(exec|execFile) pasa por la barrera", () => {
+      const sinEspia = (codigo: string, cierre: boolean) => {
+        const pre = cierre ? `await import(${JSON.stringify(chunk("seo-studio-cierre.js"))});` : "";
+        const fuente = `import cp from "node:child_process"; import { promisify } from "node:util"; const antes = [promisify(cp.exec), promisify(cp.execFile)]; ${pre} ${codigo}`;
+        return spawnSync(process.execPath, ["--input-type=module", "-e", fuente], { env: { ...process.env, NODE_OPTIONS: "" }, encoding: "utf8", windowsHide: true, timeout: 30000 });
+      };
+      const llamada = `await promisify(cp.execFile)(process.execPath, ["-e", "", ${UNC}]); console.log("SIGUIÓ");`;
+
+      it("execFile con un UNC en los argumentos aborta con I14", () => {
+        const r = sinEspia(llamada, true);
+        expect(r.status, r.stderr).toBe(1);
+        expect(r.stderr).toContain("(I14)");
+        expect(r.stdout).not.toContain("SIGUIÓ");
+      });
+
+      it("control sin barrera: el mismo hijo se ejecuta", () => {
+        const r = sinEspia(llamada, false);
+        expect(r.stdout, r.stderr).toContain("SIGUIÓ");
+      });
+
+      it("la versión propia de exec y de execFile ya no es la original de Node", () => {
+        const r = sinEspia(`console.log(antes[0] !== promisify(cp.exec), antes[1] !== promisify(cp.execFile), promisify(cp.exec) === promisify(cp.exec));`, true);
+        expect(r.stdout.trim(), r.stderr).toBe("true true true");
+      });
     });
 
     it("no molesta a rutas locales ni a datos que empiezan por //", () => {

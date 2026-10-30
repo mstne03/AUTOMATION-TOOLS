@@ -315,17 +315,18 @@ diff --git b/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/h
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/hyperframes/dist/seo-studio-cierre.js
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,88 @@
 +// SEO Studio (parche local, SEO-109, I14). Punto único del cierre de red de Node:
 +// - seoStudioCerrarRuta/Url rechazan una referencia del HTML o el CSS antes de tocar el disco.
 +// - En Windows, además, fs y child_process abortan el proceso ante una ruta UNC ya resuelta, venga de
 +//   donde venga: un UNC es DNS y SMB saliente (captura de NTLM). Aborta y no lanza porque HyperFrames
 +//   traga errores en varios sitios y el render tiene que fallar (I11).
-+// util.promisify(exec|execFile) no pasa por aquí: HyperFrames solo los usa con comandos constantes.
++// util.promisify(exec|execFile) usa su propia versión (promisify.custom): también se envuelve, aquí mismo.
 +import childProcess from "node:child_process";
 +import fs from "node:fs";
 +import { syncBuiltinESMExports } from "node:module";
 +import { resolve } from "node:path";
++import { promisify } from "node:util";
 +
 +var CIERRE = "SEO Studio: HyperFrames no descarga recursos remotos en modo cerrado (I14)";
 +var ESQUEMAS_NO_RUTA = new Set(["http", "https", "data", "blob", "about"]);
@@ -377,11 +378,15 @@ new file mode 100644
 +      if (prohibida(ruta, args)) {
 +        process.stderr.write(`${seoStudioErrorI14(ruta).message}\n`);
 +        process.exit(1);
++        throw seoStudioErrorI14(ruta); // si process.exit está sustituido o no termina, la llamada nunca continúa
 +      }
 +    }
 +    return Reflect.apply(original, this, args);
 +  };
-+  return Object.defineProperties(envuelta, Object.getOwnPropertyDescriptors(original));
++  const descriptores = Object.getOwnPropertyDescriptors(original);
++  const propia = descriptores[promisify.custom];
++  if (typeof propia?.value === "function") descriptores[promisify.custom] = { ...propia, value: propia.value === original ? envuelta : envolver(propia.value, rutas, prohibida) }; // la versión propia se apunta a sí misma
++  return Object.defineProperties(envuelta, descriptores);
 +}
 +
 +if (process.platform === "win32") {
