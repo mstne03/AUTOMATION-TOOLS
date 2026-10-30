@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "postinstall": "node -e \"const cp=require('node:child_process'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');const env={...process.env,GIT_CEILING_DIRECTORIES:path.dirname(process.cwd())};const p='patches/hyperframes+0.8.206.patch';const git=(a,stdio)=>cp.execFileSync('git',['-c','core.autocrlf=false','apply',...a,p],{env,stdio});try{git(['--reverse','--check'],'ignore')}catch{git(['--verbose'],'inherit')}const h=JSON.parse(fs.readFileSync('patches/hyperframes+0.8.206.sha256.json','utf8'));for(const [f,s] of Object.entries(h.ficheros)){if(crypto.createHash('sha256').update(fs.readFileSync(path.join('node_modules/hyperframes',f))).digest('hex')!==s)throw new Error('Parche de HyperFrames sin aplicar: '+f)}\"",
+    "postinstall": "node scripts/aplicar-parche.mjs",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
     "test": "npm run build && vitest run --exclude test/e2e-mock.test.ts --exclude test/matriz.test.ts --exclude test/sandbox-render.test.ts",
