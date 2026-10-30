@@ -532,10 +532,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     // 3. Flags del proceso browser, y HIGH-1: ninguno de un solo proceso y cada uno con un renderer Untrusted.
     expect(browsers.length, log).toBeGreaterThan(0);
     for (const b of browsers) {
-      for (const f of [...FLAGS_RED, MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
-      // --disable-gpu-sandbox solo donde HyperFrames quitaba el sandbox: un lanzamiento que ya lo traía
-      // completo (también el de GPU) no lo lleva y es más estricto, así que solo se registra.
-      if (!b.cmd.includes(GPU_SIN_SANDBOX)) process.stderr.write(`browser#${b.pid} con el sandbox de GPU activo: ${b.cmd}\n`);
+      for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED, MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
       expect(b.cmd).not.toMatch(/--no-sandbox|--single-process|--in-process-gpu/);
       // Un browser de vida corta (la sonda de GPU de HyperFrames) puede cerrar antes de que el vigilante
       // vea su renderer; uno que vive 2 s o más sin renderer Untrusted es fallo (un solo proceso, HIGH-1).
