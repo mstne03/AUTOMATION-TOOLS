@@ -275,8 +275,8 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     // Control del oráculo: un servidor conocido, descendiente de este proceso, que el muestreo tiene que ver.
     const control = spawn(process.execPath, ["-e", 'require("net").createServer().listen(0,"127.0.0.1");setTimeout(()=>process.exit(0),3e5)'], { stdio: "ignore" });
     datos.controlPid = control.pid;
+    const s = muestreador();
     try {
-      const s = muestreador();
       const t0 = performance.now();
       const job = await encolarRender("video030", o());
       const fases = seguirFases(job.job_id);
@@ -313,6 +313,7 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
       // El navegador sigue cuadrando con el manifiesto tras usarlo (Chrome solo escribe su debug.log).
       await expect(verificarNavegador()).resolves.toBeUndefined();
     } finally {
+      await s.parar();
       control.kill();
     }
   }, 900000);
