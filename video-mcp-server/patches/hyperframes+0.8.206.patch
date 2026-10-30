@@ -1,0 +1,414 @@
+diff --git a/node_modules/hyperframes/dist/chunk-4UMPIPCQ.js b/node_modules/hyperframes/dist/chunk-4UMPIPCQ.js
+--- a/node_modules/hyperframes/dist/chunk-4UMPIPCQ.js
++++ b/node_modules/hyperframes/dist/chunk-4UMPIPCQ.js
+@@ -7,6 +7,7 @@ var __dirname = __hf_dirname(__filename);
+ 
+ // ../engine/src/services/chromeHostCeiling.ts
+ import { spawnSync } from "child_process";
++import { lstatSync } from "fs";
+ import { debuglog } from "util";
+ import { release } from "os";
+ var MACOS_12_LAST_CHROME_MAJOR = 150;
+@@ -70,11 +71,23 @@ function pickSharedShell(versions, shell) {
+   return void 0;
+ }
+ function browserPathFromEnv(env = process.env) {
+-  for (const name of ["HYPERFRAMES_BROWSER_PATH", "PRODUCER_HEADLESS_SHELL_PATH"]) {
+-    const path = env[name];
+-    if (path) return { name, path };
++  // SEO Studio (parche local, SEO-109, I13): cada una de las dos variables que esté definida (aunque
++  // vacía) tiene que ser la ruta absoluta de unidad de un fichero normal (sin UNC, sin ADS, sin enlace).
++  // Si no lo es, error: nunca se cae a la caché, al Chrome del sistema ni a una descarga (I11).
++  const names = ["HYPERFRAMES_BROWSER_PATH", "PRODUCER_HEADLESS_SHELL_PATH"].filter((n) => n in env);
++  for (const name of names) {
++    const path = env[name] ?? "";
++    const forma = process.platform === "win32" ? /^[A-Za-z]:[\\/]/.test(path) && !path.includes(":", 2) : path.startsWith("/");
++    let st;
++    try {
++      st = forma ? lstatSync(path) : void 0; // la forma, antes: un UNC no llega a tocar la red.
++    } catch {
++    }
++    if (!forma || !st || !st.isFile() || st.isSymbolicLink()) {
++      throw new Error(`${name}="${path}" no es la ruta absoluta de un fichero. SEO Studio no busca otro navegador ni lo descarga.`);
++    }
+   }
+-  return void 0;
++  return names.length ? { name: names[0], path: env[names[0]] } : void 0;
+ }
+ 
+ export {
+diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
+--- a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
++++ b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
+@@ -7,8 +7,35 @@ var __dirname = __hf_dirname(__filename);
+ 
+ // ../core/dist/browserMarker.js
+ var HYPERFRAMES_BROWSER_MARKER_ARG = "--hyperframes-owned-browser";
++// SEO Studio (parche local, SEO-109): todo lanzamiento de Chrome de HyperFrames pasa por aquí.
++// Windows: renderer con sandbox (I3); el proceso de GPU sin él solo donde HyperFrames quitaba el
++// sandbox (riesgo residual aceptado); red solo en loopback aunque falle la CSP (I2b).
++var SEO_STUDIO_ARGS_WIN32 = [
++  "--proxy-server=127.0.0.1:1",
++  "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1",
++  "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
++  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
++  "--disable-quic",
++  "--disable-accelerated-video-decode"
++];
++var SEO_STUDIO_FUERA = /^--((no-sandbox|disable-setuid-sandbox|no-proxy-server)(=|$)|proxy-|host-resolver-rules=|force-webrtc-ip-handling-policy=)/;
++var SEO_STUDIO_UN_PROCESO = /^--(single-process|in-process-gpu)(=|$)/;
++function seoStudioArgs(args) {
++  if (process.platform !== "win32") return [...args];
++  if (args.some((a) => SEO_STUDIO_UN_PROCESO.test(a))) {
++    throw new Error("SEO Studio: HyperFrames pidió --single-process; el renderer saldría del sandbox (I3)");
++  }
++  const extra = args.includes("--no-sandbox") ? ["--disable-gpu-sandbox", ...SEO_STUDIO_ARGS_WIN32] : SEO_STUDIO_ARGS_WIN32;
++  const limpios = args.filter((a) => SEO_STUDIO_ARGS_WIN32.includes(a) || !SEO_STUDIO_FUERA.test(a));
++  // Sin esto, el servicio de red abre el respondedor mDNS (5353) con WebRTC. Chrome solo atiende el último
++  // --disable-features: se funde con el de HyperFrames.
++  const rasgos = limpios.filter((a) => a.startsWith("--disable-features=")).flatMap((a) => a.slice(19).split(","));
++  const unidos = `--disable-features=${[...new Set([...rasgos, "WebRtcHideLocalIpsWithMdns"])].join(",")}`;
++  return [unidos, ...limpios.filter((a) => !a.startsWith("--disable-features=")), ...extra.filter((a) => !limpios.includes(a))];
++}
+ function withHyperframesBrowserMarker(args = []) {
+-  return args.includes(HYPERFRAMES_BROWSER_MARKER_ARG) ? [...args] : [...args, HYPERFRAMES_BROWSER_MARKER_ARG];
++  const a = seoStudioArgs(args);
++  return a.includes(HYPERFRAMES_BROWSER_MARKER_ARG) ? a : [...a, HYPERFRAMES_BROWSER_MARKER_ARG];
+ }
+ 
+ export {
+diff --git a/node_modules/hyperframes/dist/chunk-L5MFWGGU.js b/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
+--- a/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
++++ b/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioCerrarRuta, seoStudioCerrarUrl } from "./seo-studio-cierre.js";
+ import {
+   Semaphore,
+   prepareHeifImageInputs,
+@@ -5997,6 +5998,7 @@ function assertSubCompositionsUsable(html, projectDir, visited = /* @__PURE__ */
+   for (const el of hosts) {
+     const srcPath = el.getAttribute("data-composition-src");
+     if (!srcPath) continue;
++    seoStudioCerrarRuta(srcPath); // SEO Studio (parche local, SEO-109, I14): antes de resolve5, que daría un UNC.
+     if (isUnresolvedAssetPlaceholder(srcPath)) continue;
+     const filePath = resolve5(projectDir, srcPath);
+     if (visited.has(filePath)) continue;
+@@ -6141,6 +6143,7 @@ function detectShaderTransitionUsage(html) {
+   return false;
+ }
+ async function resolveMediaDuration(src, mediaStart, playbackRate, baseDir, downloadDir, tagName, elementIdentity, log, urlByAbsentLocalPath) {
++  seoStudioCerrarRuta(src); // SEO Studio (parche local, SEO-109, I14): nada de UNC ni otros esquemas.
+   let filePath = src;
+   if (isHttpUrl(src)) {
+     if (!existsSync9(downloadDir)) mkdirSync5(downloadDir, { recursive: true });
+@@ -6148,8 +6151,8 @@ async function resolveMediaDuration(src, mediaStart, playbackRate, baseDir, down
+       filePath = await downloadToTemp(src, downloadDir, void 0, void 0, void 0, {
+         onTelemetry: logRemoteDownloadTelemetry
+       });
+-    } catch {
+-      return { duration: null, resolvedPath: src };
++    } catch (err) {
++      throw err; // SEO Studio (parche local, SEO-109, I11): la descarga fallida aborta, no avisa.
+     }
+   } else {
+     filePath = decodedUrlPath(src);
+@@ -6629,6 +6632,7 @@ async function inlineExternalScripts(html) {
+   const externalScripts = [];
+   for (const el of scripts) {
+     const src = (el.getAttribute("src") || "").trim();
++    seoStudioCerrarUrl(src); // SEO Studio (parche local, SEO-109, I14): un script externo se descargaría e insertaría inline.
+     if (src && isHttpUrl(src) && !isRuntimeFileUrl(src)) {
+       externalScripts.push({ el, src });
+     }
+@@ -6677,6 +6681,7 @@ function collectExternalAssets(html, projectDir) {
+   const externalAssets = /* @__PURE__ */ new Map();
+   function processPath(rawPath) {
+     const trimmed = rawPath.trim();
++    seoStudioCerrarRuta(trimmed); // SEO Studio (parche local, SEO-109, I14): todo src, href y url() de la composición.
+     if (isNonRelativeUrl(trimmed)) return null;
+     const absPath = resolve5(absProjectDir, trimmed);
+     if (isPathInside2(absPath, absProjectDir)) {
+@@ -6742,12 +6747,7 @@ async function downloadAndRewriteUrls(urlSet, html, remoteDir, warnLabel, logLab
+         });
+         urlToLocal.set(url, localPath);
+       } catch (err) {
+-        const identity = safeDownloadUrlIdentity(url);
+-        defaultLogger.warn(`[Compiler] ${warnLabel}, using original URL as fallback.`, {
+-          urlFingerprint: identity.urlFingerprint,
+-          host: identity.host,
+-          error: err instanceof Error ? err.message : String(err)
+-        });
++        throw err; // SEO Studio (parche local, SEO-109, I11): la descarga fallida aborta, no avisa.
+       }
+     })
+   );
+@@ -6836,12 +6836,7 @@ async function fetchExternalStylesheetCss(href) {
+       timeoutMs: 15e3
+     });
+   } catch (err) {
+-    defaultLogger.warn("[Compiler] External stylesheet fetch failed, preserving link tag.", {
+-      urlFingerprint: identity.urlFingerprint,
+-      host: identity.host,
+-      error: err instanceof Error ? err.message : String(err)
+-    });
+-    return null;
++    throw err; // SEO Studio (parche local, SEO-109, I11): la descarga fallida aborta, no avisa.
+   }
+ }
+ function extractFontFaceBlocks(css) {
+diff --git a/node_modules/hyperframes/dist/chunk-MFHYBSJC.js b/node_modules/hyperframes/dist/chunk-MFHYBSJC.js
+--- a/node_modules/hyperframes/dist/chunk-MFHYBSJC.js
++++ b/node_modules/hyperframes/dist/chunk-MFHYBSJC.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioCerrarUrl } from "./seo-studio-cierre.js";
+ import {
+   AUTHORED_SOURCE_BEGIN,
+   AUTHORED_SOURCE_END,
+@@ -92,6 +93,7 @@ import {
+ // ../core/dist/compiler/htmlCompiler.js
+ import { resolve } from "path";
+ function resolveMediaSrc(src, projectDir) {
++  seoStudioCerrarUrl(src); // SEO Studio (parche local, SEO-109, I14): ffprobe no sondea URL ni UNC.
+   return src.startsWith("http://") || src.startsWith("https://") ? src : resolve(projectDir, decodedUrlPath(src));
+ }
+ async function compileHtml(rawHtml, projectDir, probeMediaDuration) {
+diff --git a/node_modules/hyperframes/dist/chunk-N7ZMDVAK.js b/node_modules/hyperframes/dist/chunk-N7ZMDVAK.js
+--- a/node_modules/hyperframes/dist/chunk-N7ZMDVAK.js
++++ b/node_modules/hyperframes/dist/chunk-N7ZMDVAK.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioErrorI14 } from "./seo-studio-cierre.js";
+ import {
+   EMBEDDED_FONT_DATA
+ } from "./chunk-FI4I7CME.js";
+@@ -4192,6 +4193,9 @@ async function runFontFetchAttempt(url, init, readBody, options, remainingMs) {
+   }
+ }
+ async function fetchFontResource(url, init, readBody, familyName, what, options) {
++  // SEO Studio (parche local, SEO-109, I14): Google Fonts, nunca (la URL lleva el texto de la página).
++  // Los temas listan familias de reserva sin @font-face: quedan sin resolver, con aviso, como sin red.
++  throw seoStudioErrorI14(url);
+   if (!options.failClosedFontFetch) {
+     const response = await options.fetchImpl(url, { ...init, signal: options.abortSignal });
+     if (!response.ok)
+diff --git a/node_modules/hyperframes/dist/chunk-OZUAVHFE.js b/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
+--- a/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
++++ b/node_modules/hyperframes/dist/chunk-OZUAVHFE.js
+@@ -132,7 +132,7 @@ async function listenOnFreePort(server, startPort) {
+         };
+         server.once("error", onErr);
+         server.once("listening", onOk);
+-        server.listen(port);
++        server.listen(port, "127.0.0.1"); // SEO Studio (parche local, SEO-109, I7): solo loopback.
+       });
+       return port;
+     } catch (err) {
+diff --git a/node_modules/hyperframes/dist/chunk-PBNWRWKA.js b/node_modules/hyperframes/dist/chunk-PBNWRWKA.js
+--- a/node_modules/hyperframes/dist/chunk-PBNWRWKA.js
++++ b/node_modules/hyperframes/dist/chunk-PBNWRWKA.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioCerrarRuta } from "./seo-studio-cierre.js";
+ import {
+   decodeHTMLAttribute
+ } from "./chunk-2RY2LWAA.js";
+@@ -160,6 +161,7 @@ function collectSubCompositionSrcs(html) {
+     if (attribute?.kind !== "value") continue;
+     const src = decodeAuthoredAttribute(attribute.value).trim();
+     if (!src || seen.has(src)) continue;
++    seoStudioCerrarRuta(src); // SEO Studio (parche local, SEO-109, I14): antes de cualquier join.
+     if (isUnresolvedAssetPlaceholder(src)) continue;
+     if (isRemoteOrInlineUrl(src)) continue;
+     seen.add(src);
+@@ -218,6 +220,7 @@ function reanchoredCandidates(variant, baseDir, compiledDir) {
+   return compiledDir ? [join2(compiledDir, stripped), join2(baseDir, stripped)] : [join2(baseDir, stripped)];
+ }
+ function resolveProjectRelativeSrc(src, baseDir, compiledDir) {
++  seoStudioCerrarRuta(src); // SEO Studio (parche local, SEO-109, I14): nada de UNC ni otros esquemas.
+   const cleanSrc = cleanAssetUrl(src);
+   if (isAbsolute2(cleanSrc) && existsSync(cleanSrc)) return cleanSrc;
+   const candidates = /* @__PURE__ */ new Set();
+diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
+--- a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
++++ b/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioCerrarUrl, seoStudioErrorI14 } from "./seo-studio-cierre.js";
+ import {
+   alphaDecoderFor,
+   pixelFormatHasAlpha,
+@@ -1047,6 +1048,7 @@ function resolveHeadlessShellPath(config) {
+   return findManagedHeadlessShell(ours) ?? findSharedHeadlessShell(shared) ?? findCachedHeadlessShell(ours);
+ }
+ function resolveFullChromePath() {
++  if (browserPathFromEnv()) throw new Error("SEO Studio: el render HDR no está soportado en modo cerrado (I13)");
+   const baseDir = join2(homedir(), ".cache", "puppeteer", "chrome");
+   let versions;
+   try {
+@@ -8839,6 +8841,7 @@ function urlInputArgs(input, {
+   tool = "ffmpeg",
+   caBundles = CA_BUNDLES
+ } = {}) {
++  seoStudioCerrarUrl(input); // SEO Studio (parche local, SEO-109, I14): toda entrada de ffmpeg/ffprobe que sea una URL pasa por aquí.
+   if (!/^https:\/\//i.test(input)) return [];
+   const caFile = caBundles.find((path) => existsSync4(path));
+   if (!caFile) {
+@@ -11220,6 +11223,8 @@ function isBlockedNetworkHost(hostname) {
+   return addressType === 4 ? NON_PUBLIC_IPV4_ADDRESSES.check(h, "ipv4") : NON_PUBLIC_IPV6_ADDRESSES.check(h, "ipv6");
+ }
+ function assertPublicHttpsUrl(url) {
++  // SEO Studio (parche local, SEO-109, I14): por aquí pasan todas las descargas de Node. Ninguna.
++  throw seoStudioErrorI14(url);
+   let parsed;
+   try {
+     parsed = new URL(url);
+@@ -18019,7 +18024,7 @@ function createFileServer(options) {
+     });
+   });
+   return new Promise((resolve2) => {
+-    const server = serve({ fetch: app.fetch, port }, (info) => {
++    const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" }, (info) => { // SEO Studio (parche local, SEO-109, I7): solo loopback.
+       const actualPort = info.port;
+       const url = `http://localhost:${actualPort}`;
+       resolve2({
+diff --git a/node_modules/hyperframes/dist/chunk-X7RXXBYM.js b/node_modules/hyperframes/dist/chunk-X7RXXBYM.js
+--- a/node_modules/hyperframes/dist/chunk-X7RXXBYM.js
++++ b/node_modules/hyperframes/dist/chunk-X7RXXBYM.js
+@@ -4,6 +4,7 @@ import { dirname as __hf_dirname } from "node:path";
+ var require = __hf_createRequire(import.meta.url);
+ var __filename = __hf_fileURLToPath(import.meta.url);
+ var __dirname = __hf_dirname(__filename);
++import { seoStudioCerrarUrl } from "./seo-studio-cierre.js";
+ import {
+   loadProducer
+ } from "./chunk-CNVHMLPI.js";
+@@ -20,6 +21,7 @@ async function collectProjectMedia(projectDir) {
+   return { ...producer.collectRenderMedia(html), html };
+ }
+ function mediaPath(src, projectDir) {
++  seoStudioCerrarUrl(src); // SEO Studio (parche local, SEO-109, I14): el <img>, <video> o <audio> de `check` no llega a ffprobe ni a ffmpeg.
+   return /^https?:\/\//i.test(src) ? src : resolveProjectRelativeSrc(src, projectDir, projectDir);
+ }
+ 
+diff --git a/node_modules/hyperframes/dist/cli.js b/node_modules/hyperframes/dist/cli.js
+--- a/node_modules/hyperframes/dist/cli.js
++++ b/node_modules/hyperframes/dist/cli.js
+@@ -1,4 +1,5 @@
+ #!/usr/bin/env node
++import "./seo-studio-cierre.js"; // SEO Studio (parche local, SEO-109, I14): antes que todo lo demás.
+ import { createRequire as __hf_createRequire } from "node:module";
+ import { fileURLToPath as __hf_fileURLToPath } from "node:url";
+ import { dirname as __hf_dirname } from "node:path";
+diff --git b/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/hyperframes/dist/seo-studio-cierre.js
+new file mode 100644
+--- /dev/null
++++ b/node_modules/hyperframes/dist/seo-studio-cierre.js
+@@ -0,0 +1,88 @@
++// SEO Studio (parche local, SEO-109, I14). Punto único del cierre de red de Node:
++// - seoStudioCerrarRuta/Url rechazan una referencia del HTML o el CSS antes de tocar el disco.
++// - En Windows, además, fs y child_process abortan el proceso ante una ruta UNC ya resuelta, venga de
++//   donde venga: un UNC es DNS y SMB saliente (captura de NTLM). Aborta y no lanza porque HyperFrames
++//   traga errores en varios sitios y el render tiene que fallar (I11).
++// util.promisify(exec|execFile) usa su propia versión (promisify.custom): también se envuelve, aquí mismo.
++import childProcess from "node:child_process";
++import fs from "node:fs";
++import { syncBuiltinESMExports } from "node:module";
++import { resolve } from "node:path";
++import { promisify } from "node:util";
++
++var CIERRE = "SEO Studio: HyperFrames no descarga recursos remotos en modo cerrado (I14)";
++var ESQUEMAS_NO_RUTA = new Set(["http", "https", "data", "blob", "about"]);
++
++/** Error de I14 con la referencia truncada y sin consulta (la URL de Google Fonts lleva el texto). */
++export function seoStudioErrorI14(ref) {
++  const corta = String(ref).split(/[?#]/, 1)[0].replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 80);
++  return new Error(`${CIERRE}: ${corta}. Si viene de un texto del guion, reescríbelo sin esa dirección.`);
++}
++
++/** Sin blancos y sin escapes %XX, como la ven decodedUrlPath y el resto de HyperFrames. */
++function normalizada(ref) {
++  let r = String(ref).replace(/[\x00-\x20]/g, "");
++  for (let previa = ""; previa !== r; ) {
++    previa = r;
++    r = r.replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
++  }
++  return r;
++}
++
++/** UNC en cualquier forma (`//`, `\\`, `/\`, `\/`, `\\?\`, `\\.\`) o esquema que no sea de ruta relativa. */
++export function seoStudioCerrarRuta(ref) {
++  const r = normalizada(ref);
++  const esquema = /^([a-z][a-z0-9+.-]+):/i.exec(r)?.[1].toLowerCase();
++  const permitido = !esquema || ESQUEMAS_NO_RUTA.has(esquema) || (esquema === "file" && !/^file:[\\/]/i.test(r));
++  if (/^[\\/]{2}/.test(r) || !permitido) throw seoStudioErrorI14(ref);
++}
++
++/** Lo mismo, y además http(s): para los sitios que descargarían o sondearían la URL. */
++export function seoStudioCerrarUrl(ref) {
++  if (/^https?:/i.test(normalizada(ref))) throw seoStudioErrorI14(ref);
++  seoStudioCerrarRuta(ref);
++}
++
++function esRutaRed(ruta) {
++  if (ruta instanceof URL) return ruta.protocol === "file:" && ruta.host !== "";
++  const texto = Buffer.isBuffer(ruta) ? ruta.toString() : ruta;
++  return typeof texto === "string" && (/^[\\/]{2}/.test(texto) || resolve(texto).startsWith("\\\\"));
++}
++
++/** ffmpeg y ffprobe abren por sí mismos cualquier URL (`snapshot` les pasa una sin pasar por urlInputArgs). */
++function esUrlDeFfmpeg(arg, args) {
++  return /(^|[\\/])ff(mpeg|probe)(\.exe)?$/i.test(String(args[0])) && /^[a-z][a-z0-9+.-]+:\/\//i.test(String(arg));
++}
++
++function envolver(original, rutas, prohibida = esRutaRed) {
++  const envuelta = function (...args) {
++    for (const ruta of rutas(args)) {
++      if (prohibida(ruta, args)) {
++        process.stderr.write(`${seoStudioErrorI14(ruta).message}\n`);
++        process.exit(1);
++        throw seoStudioErrorI14(ruta); // si process.exit está sustituido o no termina, la llamada nunca continúa
++      }
++    }
++    return Reflect.apply(original, this, args);
++  };
++  const descriptores = Object.getOwnPropertyDescriptors(original);
++  const propia = descriptores[promisify.custom];
++  if (typeof propia?.value === "function") descriptores[promisify.custom] = { ...propia, value: propia.value === original ? envuelta : envolver(propia.value, rutas, prohibida) }; // la versión propia se apunta a sí misma
++  return Object.defineProperties(envuelta, descriptores);
++}
++
++if (process.platform === "win32") {
++  const dosRutas = new Set(["copyFile", "copyFileSync", "cp", "cpSync", "link", "linkSync", "rename", "renameSync", "symlink", "symlinkSync"]);
++  for (const objeto of [fs, fs.promises]) {
++    for (const nombre of Object.keys(objeto)) {
++      if (typeof objeto[nombre] !== "function" || !/^[a-z]/.test(nombre)) continue;
++      objeto[nombre] = envolver(objeto[nombre], (a) => (dosRutas.has(nombre) ? [a[0], a[1]] : [a[0]]));
++    }
++  }
++  for (const nombre of ["realpath", "realpathSync"]) fs[nombre].native = envolver(fs[nombre].native, (a) => [a[0]]);
++  for (const nombre of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"]) {
++    const argumentos = (a) => [a[0], ...(Array.isArray(a[1]) ? a[1] : [])];
++    childProcess[nombre] = envolver(childProcess[nombre], argumentos, (r, a) => esRutaRed(r) || esUrlDeFfmpeg(r, a));
++  }
++  syncBuiltinESMExports();
++}
+diff --git a/node_modules/hyperframes/dist/warmCheck.js b/node_modules/hyperframes/dist/warmCheck.js
+--- a/node_modules/hyperframes/dist/warmCheck.js
++++ b/node_modules/hyperframes/dist/warmCheck.js
+@@ -1,3 +1,4 @@
++import "./seo-studio-cierre.js"; // SEO Studio (parche local, SEO-109, I14): antes que todo lo demás.
+ import { createRequire as __hf_createRequire } from "node:module";
+ import { fileURLToPath as __hf_fileURLToPath } from "node:url";
+ import { dirname as __hf_dirname } from "node:path";
