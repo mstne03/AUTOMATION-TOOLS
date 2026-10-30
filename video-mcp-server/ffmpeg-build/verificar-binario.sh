@@ -42,7 +42,7 @@ nombres() { # nombres <tipo> → lo que el binario dice tener de ese tipo, uno p
 listado_exacto() { # listado_exacto <tipo> → igual a FF_LISTAS[tipo] ∪ autoseleccionados de ese tipo
   local tipo=$1 esperado real sobran faltan
   # shellcheck disable=SC2086 # la lista son palabras sueltas
-  esperado=$( { printf '%s\n' ${FF_LISTAS[$tipo]:-}; awk -v t="$tipo" '$1 == t {print $2}' "$AQUI/autoseleccionados.txt"; } | sed '/^$/d' | sort -u)
+  esperado=$( { printf '%s\n' ${FF_LISTAS[$tipo]:-} | sed 's/^image_\(.*_pipe\)$/\1/'; awk -v t="$tipo" '$1 == t {print $2}' "$AQUI/autoseleccionados.txt"; } | sed '/^$/d' | sort -u)
   real=$(nombres "$tipo")
   sobran=$(comm -13 <(echo "$esperado") <(echo "$real") | paste -sd' ' -)
   faltan=$(comm -23 <(echo "$esperado") <(echo "$real") | paste -sd' ' -)
