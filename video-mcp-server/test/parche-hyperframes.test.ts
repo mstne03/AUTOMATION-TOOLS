@@ -10,11 +10,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SERVER_ROOT } from "../src/raiz.js";
-import { HYPERFRAMES_BIN } from "../src/musica.js";
-import { ejecutar } from "../src/proceso.js";
 import {
   BYPASS,
   chunk,
+  cli,
   conecta,
   DIST,
   ENTORNO_CERRADO,
@@ -38,16 +37,30 @@ type Marcador = (args?: Args) => Args;
 
 const MARCA_PARCHE = "SEO Studio (parche local, SEO-109";
 /** Ficheros que toca el parche, relativos a node_modules/hyperframes (las claves del .sha256.json). */
-const PARCHEADOS = ["dist/chunk-G6W55MTX.js", "dist/chunk-K4MJX7SR.js", "dist/chunk-OZUAVHFE.js", "dist/chunk-RDDVQSNQ.js"];
+const PARCHEADOS = [
+  "dist/chunk-4UMPIPCQ.js",
+  "dist/chunk-K4MJX7SR.js",
+  "dist/chunk-L5MFWGGU.js",
+  "dist/chunk-MFHYBSJC.js",
+  "dist/chunk-N7ZMDVAK.js",
+  "dist/chunk-OZUAVHFE.js",
+  "dist/chunk-RDDVQSNQ.js",
+  "dist/chunk-X7RXXBYM.js",
+];
+/** El error de todo hunk que corta una salida de red de Node (I14). */
+const CERRADO = "SEO Studio: HyperFrames no descarga recursos remotos en modo cerrado (I14)";
 
+let cacheLineas: { fichero: string; linea: number; texto: string }[] | undefined;
 /** Los `dist/*.js` de HyperFrames (sin las skills) con sus líneas. */
 function lineasDist(): { fichero: string; linea: number; texto: string }[] {
+  if (cacheLineas) return cacheLineas;
   const out: { fichero: string; linea: number; texto: string }[] = [];
   for (const f of fs.readdirSync(DIST).filter((n) => n.endsWith(".js")).sort()) {
     fs.readFileSync(path.join(DIST, f), "utf8")
       .split("\n")
       .forEach((texto, i) => out.push({ fichero: f, linea: i + 1, texto }));
   }
+  cacheLineas = out;
   return out;
 }
 
@@ -57,6 +70,92 @@ function inventario(re: RegExp): string[] {
     .filter((l) => re.test(l.texto))
     .map((l) => `${l.fichero}:${l.linea}`);
 }
+
+/** Cualquier forma de abrir red desde Node que aparezca en el dist, también por alias o importación. */
+const RED_NODE = /\b(fetch|fetchImpl|doFetch|axios)\b|\bhttps?\.(get|request)\b|\bhttps?(Get|Request)\b|(from |require\()"(node:)?(https?|http2|net|tls|dgram|undici)"/;
+
+// Lista cerrada de TODAS las coincidencias de RED_NODE en el dist parcheado. Una línea nueva o movida
+// rompe el test: tras subir de versión hay que clasificarla, no copiarla. Detalle en el informe de W1.3.
+const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
+  // Alcanzables desde render/check/snapshot y cortadas por un hunk (no llegan a ejecutarse).
+  cerradas: {
+    "chunk-L5MFWGGU.js": [6641], // inlineExternalScripts
+    "chunk-N7ZMDVAK.js": [4180, 4199, 4570, 4576], // Google Fonts: fetchFontResource lanza antes
+    "chunk-RDDVQSNQ.js": [11427], // fetchWithValidatedRedirects: pasa antes por assertPublicHttpsUrl
+  },
+  // Alcanzables, pero solo contra el servidor propio en 127.0.0.1 o por un par de sockets en memoria.
+  loopback: {
+    "chunk-2S263R6D.js": [40, 69],
+    "chunk-3R6SXPHD.js": [93, 166],
+    "chunk-543U46OR.js": [13, 14, 49, 139, 236, 315, 324, 335, 345, 349, 370, 372, 378, 380],
+    "chunk-AJSU6KGS.js": [259],
+    "chunk-RDDVQSNQ.js": [5743],
+  },
+  // RESIDUAL: alcanzables, y solo las apaga el entorno (ENTORNO_CERRADO); W1.6 tiene que fijarlo siempre.
+  soloEntorno: {
+    "chunk-FJW757TF.js": [86, 111], // telemetría: HYPERFRAMES_NO_TELEMETRY / DO_NOT_TRACK
+    "chunk-NNLQTG3M.js": [293], // skills: HYPERFRAMES_SKIP_SKILLS / sin comprobación de versión
+    "chunk-XOM3XTJ4.js": [198], // versión nueva: HYPERFRAMES_NO_UPDATE_CHECK
+  },
+  // Código que corre dentro de Chrome (sujeto a CSP, sandbox y proxy nulo), no en Node.
+  enChrome: {
+    "capture-KKD5GMAF.js": [1690],
+    "chunk-KLIPVNCO.js": [4574],
+    "chunk-RDDVQSNQ.js": [4022, 6135],
+    "hyperframe.runtime.iife.js": [43, 366, 373, 1130],
+  },
+  // Otros comandos o flags que el motor no usa con render/check/snapshot.
+  otrosComandos: {
+    "audio-VYWWM4DB.js": [309, 317, 325, 336, 1789, 1804], // servicio de pago de `audio` (ver informe)
+    "capture-KKD5GMAF.js": [210, 211, 1232],
+    "catalog-6IJGNN3T.js": [492], // video_catalogo: no se registra en modo integrado (I14)
+    "chunk-2MLMO25E.js": [10805], // lintMediaUrls: sin llamadores en el dist
+    "chunk-4DGLKB2H.js": [2802],
+    "chunk-6A45RKAK.js": [28, 32, 48],
+    "chunk-7SXL476O.js": [9328, 9804],
+    "chunk-CE7EQUBV.js": [14, 15, 39, 45, 59, 114, 122],
+    "chunk-CZUAX3BV.js": [20, 24],
+    "chunk-ELP5QZWL.js": [422, 426, 446, 543, 759, 767, 785, 824, 887, 893, 919, 926, 963, 971],
+    "chunk-HJAJ6W4V.js": [34],
+    "chunk-N7ZMDVAK.js": [528, 529, 577, 578, 2084, 2085, 2133, 2134], // cargador wasm: el binario va en data:
+    "chunk-RDDVQSNQ.js": [9075], // declareProbeFactsUrl: solo renders distribuidos
+    "chunk-SFYLZX5C.js": [33, 34, 35, 196],
+    "chunk-TSJVPPXT.js": [111, 139],
+    "chunk-WQ6ZXHFQ.js": [11, 50],
+    "chunk-WYB3VKLK.js": [303],
+    "feedback-K5ZMMLTA.js": [94, 119],
+    "render-5J5PP3UK.js": [372, 374, 659, 732],
+    "studioServer-ZS5RA6U3.js": [1470],
+    "timeline-BDO5DYWP.js": [1264, 1272],
+    "usage-HG4WMM7A.js": [2116],
+  },
+  // No abren red: homónimos, textos de error, comentarios, servidores y sockets locales.
+  sinRed: {
+    "capture-KKD5GMAF.js": [1688],
+    "catalog-6IJGNN3T.js": [997],
+    "chunk-2MLMO25E.js": [6333, 6349, 9871, 9876],
+    "chunk-2RY2LWAA.js": [3336, 3340, 3354, 3374, 3383, 3427, 3431],
+    "chunk-4DGLKB2H.js": [2853, 2914, 2952, 2955],
+    "chunk-7SXL476O.js": [9938],
+    "chunk-DEVZJ4AL.js": [228],
+    "chunk-EXAX37XR.js": [242, 243],
+    "chunk-L5MFWGGU.js": [1023, 16101, 17409, 17823],
+    "chunk-MFHYBSJC.js": [840],
+    "chunk-N7ZMDVAK.js": [4119, 4137, 4205],
+    "chunk-RDDVQSNQ.js": [5495, 6215, 11088, 11182, 11457, 11514, 11517, 12642, 18027],
+    "chunk-WYB3VKLK.js": [277, 297],
+    "get-JVIDYMVP.js": [64],
+    "play-S562STR4.js": [240],
+    "present-PGOHZT3L.js": [204],
+    "preview-JU75H4QN.js": [1792, 1858],
+    "render-5J5PP3UK.js": [1510],
+    "skills-3RFMPMJA.js": [375],
+    "studioServer-ZS5RA6U3.js": [641],
+    "video-ECWXMY4F.js": [63],
+    "warmCheck.js": [122],
+    "warmCheckClient.js": [24],
+  },
+};
 
 describe("parche de HyperFrames (I3, I2b, I9)", () => {
   it("node_modules tiene hyperframes 0.8.206 exacta, igual que package.json", () => {
@@ -85,24 +184,71 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     }
   });
 
+  describe("scripts/aplicar-parche.mjs", () => {
+    const script = path.join(SERVER_ROOT, "scripts", "aplicar-parche.mjs");
+    const aplicar = (dir?: string) => spawnSync(process.execPath, [script, ...(dir ? [dir] : [])], { encoding: "utf8", windowsHide: true });
+    /** Copia solo lo parcheado, tal como está ahora, en una carpeta con node_modules/hyperframes. */
+    const copia = (): string => {
+      const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "video parche "));
+      for (const rel of PARCHEADOS) {
+        fs.mkdirSync(path.dirname(path.join(raiz, "node_modules", "hyperframes", rel)), { recursive: true });
+        fs.copyFileSync(path.join(HF, rel), path.join(raiz, "node_modules", "hyperframes", rel));
+      }
+      return raiz;
+    };
+
+    it("es idempotente sobre node_modules", () => {
+      const r = aplicar();
+      expect(r.status, r.stderr).toBe(0);
+    });
+
+    it("aplica el parche sobre el dist original, sin convertir finales de línea", () => {
+      const raiz = copia();
+      try {
+        const env = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(raiz) };
+        const q = spawnSync("git", ["-c", "core.autocrlf=false", "apply", "--reverse", PARCHE], { cwd: raiz, env, encoding: "utf8" });
+        expect(q.status, q.stderr).toBe(0);
+        expect(fs.readFileSync(path.join(raiz, "node_modules", "hyperframes", PARCHEADOS[0]), "utf8")).not.toContain(MARCA_PARCHE);
+        const r = aplicar(raiz);
+        expect(r.status, r.stderr).toBe(0);
+        expect(fs.readFileSync(path.join(raiz, "node_modules", "hyperframes", PARCHEADOS[0]), "utf8")).toContain(MARCA_PARCHE);
+      } finally {
+        fs.rmSync(raiz, { recursive: true, force: true });
+      }
+    });
+
+    it("falla con un dist que no cuadra", () => {
+      const raiz = copia();
+      try {
+        const rel = path.join(raiz, "node_modules", "hyperframes", PARCHEADOS[0]);
+        fs.appendFileSync(rel, "// tocado");
+        const r = aplicar(raiz);
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("Parche de HyperFrames sin aplicar");
+      } finally {
+        fs.rmSync(raiz, { recursive: true, force: true });
+      }
+    });
+  });
+
   // Listas cerradas por fichero y línea (dist ya parcheado): cualquier aparición nueva tras una subida
   // de versión rompe el test y obliga a revisar el parche.
   it("inventario: literales \"--no-sandbox\" solo en los sitios conocidos", () => {
     expect(inventario(/"--no-sandbox"/)).toEqual([
       "capture-KKD5GMAF.js:199", // captura de webs, solo Linux (I14: el motor no la usa)
-      "chunk-4UMPIPCQ.js:53", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
+      "chunk-4UMPIPCQ.js:54", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
       "chunk-K4MJX7SR.js:28", // el propio hunk A (lo detecta para quitarlo)
       "chunk-RDDVQSNQ.js:1252", // getHardwareGpuProbeArgs → marcador
       "chunk-RDDVQSNQ.js:1529", // buildChromeArgs → marcador
-      "chunk-RDDVQSNQ.js:15804", // efectos de audio → marcador
-      "chunk-RDDVQSNQ.js:18338", // buildHdrChromeArgs → marcador (HDR cerrado por el hunk B2)
+      "chunk-RDDVQSNQ.js:15808", // efectos de audio → marcador
+      "chunk-RDDVQSNQ.js:18342", // buildHdrChromeArgs → marcador (HDR cerrado por el hunk B2)
     ]);
   });
 
   it("inventario: spawn/execFile de un ejecutable de navegador solo en los sitios conocidos", () => {
     expect(inventario(/\b(spawn|spawnSync|execFile|execFileSync|runCancellableProcess)\(\s*(options\.)?(binary|executablePath|browserPath|chromePath)\s*,/)).toEqual([
-      "chunk-4UMPIPCQ.js:54", // shellStarts (ver arriba)
-      "chunk-L5MFWGGU.js:14195", // ffmpeg -version (no es un navegador; casa por el nombre `binary`)
+      "chunk-4UMPIPCQ.js:55", // shellStarts (ver arriba)
+      "chunk-L5MFWGGU.js:14187", // ffmpeg -version (no es un navegador; casa por el nombre `binary`)
       "chunk-MNNK7RV5.js:46", // openBrowser de la vista previa de HyperFrames (el motor no la usa)
       "chunk-QVTCXN42.js:216", // preflight `--version` del navegador
     ]);
@@ -114,7 +260,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       "chunk-RDDVQSNQ.js:810", // this.options.launch: delega en launchManagedBrowser
       "chunk-RDDVQSNQ.js:936", // sonda de GPU (probeLifecycle.launch / ppt.launch)
       "chunk-RDDVQSNQ.js:1402", // launchBrowser del render
-      "chunk-RDDVQSNQ.js:18325", // HDR
+      "chunk-RDDVQSNQ.js:18329", // HDR
       "chunk-T6SD37JZ.js:163", // launchOwnedBrowser (check, snapshot, sonda gestionada)
     ]);
     const lineas = lineasDist();
@@ -189,6 +335,17 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       expect(a.filter((x) => x.startsWith("--force-webrtc-ip-handling-policy="))).toEqual([WEBRTC]);
     });
 
+    it("funde --disable-features: Chrome solo atiende el último", () => {
+      const a = marcador(["--no-sandbox", "--disable-features=Translate,BackForwardCache", "--disable-features=Otra"]);
+      expect(a.filter((x) => x.startsWith("--disable-features="))).toEqual(["--disable-features=Translate,BackForwardCache,Otra,WebRtcHideLocalIpsWithMdns"]);
+      expect(marcador(["--headless"]).filter((x) => x.startsWith("--disable-features="))).toEqual(["--disable-features=WebRtcHideLocalIpsWithMdns"]);
+    });
+
+    it("el ancla no se come flags con el mismo prefijo", () => {
+      expect(marcador(["--no-sandbox-and-elevated"])).toContain("--no-sandbox-and-elevated");
+      expect(marcador(["--no-sandbox=1"])).not.toContain("--no-sandbox=1");
+    });
+
     it("rechaza un solo proceso: el renderer saldría del sandbox (HIGH-1)", async () => {
       const { oneProcessOverPipe } = (await import(chunk("chunk-DKPNNYBZ.js"))) as { oneProcessOverPipe: (o: { args: Args }) => { args: Args } };
       expect(() => marcador(oneProcessOverPipe({ args: ["--no-sandbox"] }).args)).toThrow(/--single-process.*I3/);
@@ -200,6 +357,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
 /** Ejecuta `código` (ESM) en un node hijo y devuelve la última línea JSON que imprime. */
 function enHijo(codigo: string, env: NodeJS.ProcessEnv): { ok?: boolean; ruta?: string; error?: string } {
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", codigo], { env, encoding: "utf8", timeout: 60000, windowsHide: true });
+  if (r.error) throw new Error(`no se pudo lanzar el hijo: ${r.error.message}`);
   const linea = r.stdout.trim().split(/\r?\n/).filter((l) => l.startsWith("{")).at(-1);
   if (!linea) throw new Error(`el hijo no dio respuesta (código ${r.status}): ${r.stderr}`);
   return JSON.parse(linea);
@@ -339,10 +497,18 @@ describe("I13: HyperFrames no busca otro navegador", () => {
   });
 
   it("HDR: con la variable definida, el render HDR falla en vez de buscar Chrome en la caché (MEDIUM-3)", () => {
-    for (const valor of [senuelo, ""]) {
-      const r = enHijo(llamada("chunk-RDDVQSNQ.js", "m.launchHdrBrowser(16, 16)"), entorno({ HYPERFRAMES_BROWSER_PATH: valor }));
-      expect(r.error, JSON.stringify(r)).toContain("el render HDR no está soportado en modo cerrado (I13)");
+    const r = enHijo(llamada("chunk-RDDVQSNQ.js", "m.launchHdrBrowser(16, 16)"), entorno({ HYPERFRAMES_BROWSER_PATH: senuelo }));
+    expect(r.error, JSON.stringify(r)).toContain("el render HDR no está soportado en modo cerrado (I13)");
+    for (const nombre of ["HYPERFRAMES_BROWSER_PATH", "PRODUCER_HEADLESS_SHELL_PATH"]) {
+      fallaSinSenuelo(enHijo(llamada("chunk-RDDVQSNQ.js", "m.launchHdrBrowser(16, 16)"), entorno({ [nombre]: "" })), nombre);
     }
+  });
+
+  it("resolveHeadlessShellPath valida igual que findBrowser (LOW-1)", () => {
+    const resolver = (extra: Record<string, string>) => enHijo(llamada("chunk-RDDVQSNQ.js", "({ executablePath: m.resolveHeadlessShellPath() })"), entorno(extra));
+    expect(resolver({ HYPERFRAMES_BROWSER_PATH: senuelo })).toEqual({ ok: true, ruta: senuelo });
+    fallaSinSenuelo(resolver({ HYPERFRAMES_BROWSER_PATH: tmp }));
+    fallaSinSenuelo(resolver({ PRODUCER_HEADLESS_SHELL_PATH: "" }), "PRODUCER_HEADLESS_SHELL_PATH");
   });
 
   it(
@@ -356,7 +522,7 @@ describe("I13: HyperFrames no busca otro navegador", () => {
           `<script>window.__timelines={};</script></body></html>`,
       );
       const mp4 = path.join(tmp, "salida.mp4");
-      const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "render", comp, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"], {
+      const r = await cli(["render", comp, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"], {
         cwd: comp,
         env: entorno({ HYPERFRAMES_BROWSER_PATH: path.join(tmp, "no-existe.exe") }),
         timeoutMs: 120000,
@@ -375,6 +541,77 @@ describe("I13: HyperFrames no busca otro navegador", () => {
     },
     150000,
   );
+});
+
+describe("I14: HyperFrames no sale a la red desde Node", () => {
+  let tmp: string;
+  let sumi: Sumidero;
+  let env: NodeJS.ProcessEnv;
+
+  beforeAll(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "video i14 "));
+    sumi = await sumidero();
+    env = entornoLimpio(process.env, { ...ENTORNO_CERRADO, HYPERFRAMES_FONT_CACHE_DIR: path.join(tmp, "fuentes") });
+  });
+
+  afterAll(async () => {
+    await sumi?.cerrar();
+    if (tmp?.startsWith(os.tmpdir())) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** Ejecuta `expr` (con `m`, el módulo de `fichero`) y devuelve el mensaje de error, o undefined si no falla. */
+  const errorDe = (fichero: string, expr: string): string | undefined => enHijo(llamada(fichero, expr), env).error;
+
+  it("assertPublicHttpsUrl lanza siempre", () => {
+    expect(errorDe("chunk-RDDVQSNQ.js", `m.assertPublicHttpsUrl("https://example.com/")`)).toContain(CERRADO);
+  });
+
+  it.each([
+    ["downloadToTemp", "chunk-RDDVQSNQ.js", (u: string) => `m.downloadToTemp("${u}", ${JSON.stringify(path.join(os.tmpdir(), "no-se-crea"))})`],
+    ["ffprobe (vídeo)", "chunk-RDDVQSNQ.js", (u: string) => `m.extractMediaMetadata("${u}")`],
+    ["ffprobe (audio)", "chunk-RDDVQSNQ.js", (u: string) => `m.extractAudioMetadata("${u}")`],
+    ["ffprobe en mayúsculas", "chunk-RDDVQSNQ.js", (u: string) => `m.extractMediaMetadata("${u.replace("http", "HTTP")}")`],
+    ["mediaPath (<img>, <video> y <audio> de check)", "chunk-X7RXXBYM.js", (u: string) => `m.mediaPath("${u}", ".")`],
+  ])("%s: error sin conexión", (_n, fichero, expr) => {
+    expect(errorDe(fichero, expr(`http://127.0.0.1:${sumi.puerto}/x.mp4`))).toContain(CERRADO);
+    expect(errorDe(fichero, expr(`https://127.0.0.1:${sumi.puerto}/x.mp4`))).toContain(CERRADO);
+    expect(sumi.conexiones()).toBe(0);
+  });
+
+  it("resolveMediaSrc: compileHtml no llega a sondear una URL", () => {
+    const html = `<div data-composition-id="m" data-start="0" data-duration="1"><video id="v" src="http://127.0.0.1:${sumi.puerto}/x.mp4" data-start="0"></video></div>`;
+    const expr = `m.compileHtml(${JSON.stringify(html)}, ".", async () => { throw new Error("ha sondeado la URL"); })`;
+    expect(errorDe("chunk-MFHYBSJC.js", expr)).toContain(CERRADO);
+  });
+
+  it.each([
+    ["<img>", "localizeRemoteImageSources", `<img src="https://example.invalid/x.png">`],
+    ["<video>", "localizeRemoteMediaSources", `<video src="https://example.invalid/x.mp4"></video>`],
+    ["@font-face", "localizeRemoteFontFaces", `<style>@font-face{font-family:x;src:url(https://example.invalid/x.woff2)}</style>`],
+    ["<link rel=stylesheet>", "localizeRemoteFontFaces", `<link rel="stylesheet" href="https://example.invalid/x.css">`],
+  ])("%s: la descarga fallida aborta en vez de avisar (I11)", (_n, funcion, html) => {
+    const dir = JSON.stringify(path.join(tmp, "descargas"));
+    expect(errorDe("chunk-L5MFWGGU.js", `m.${funcion}(${JSON.stringify(html)}, ${dir})`)).toContain(CERRADO);
+  });
+
+  it("fuentes: una familia sin @font-face no sale a Google Fonts; queda sin resolver, y aborta en modo estricto", () => {
+    const html = `<html><head><style>p{font-family:"Fuente Sin Declarar",sans-serif}</style></head><body><p>x</p></body></html>`;
+    const con = (extra: string) =>
+      `m.injectDeterministicFontFaces(${JSON.stringify(html)}, { ${extra} fetchImpl: () => { console.log('{"error":"ha llamado a fetchImpl"}'); process.exit(0); } })`;
+    expect(errorDe("chunk-N7ZMDVAK.js", con(""))).toBeUndefined();
+    expect(errorDe("chunk-N7ZMDVAK.js", con("failClosedFontFetch: true,"))).toContain("(I14)");
+  });
+
+  it("inventario: toda salida de red de Node está clasificada, por fichero y línea", () => {
+    const halladas: Record<string, number[]> = {};
+    for (const l of lineasDist()) if (RED_NODE.test(l.texto)) (halladas[l.fichero] ??= []).push(l.linea);
+    const esperadas: Record<string, number[]> = {};
+    for (const grupo of Object.values(SALIDAS_NODE)) {
+      for (const [f, lineas] of Object.entries(grupo)) (esperadas[f] ??= []).push(...lineas);
+    }
+    for (const lineas of Object.values(esperadas)) lineas.sort((a, b) => a - b);
+    expect(halladas).toEqual(esperadas);
+  });
 });
 
 describe("I7: servidores de HyperFrames solo en loopback", () => {
@@ -407,11 +644,12 @@ describe("I7: servidores de HyperFrames solo en loopback", () => {
 
   it("todo servidor TCP del dist declara host loopback", () => {
     const sinHost = lineasDist()
-      .filter((l) => /\.listen\(|\bserve\(\{/.test(l.texto) && !/127\.0\.0\.1/.test(l.texto))
+      .filter((l) => /\.listen\(|\bserve\d?\(\{/.test(l.texto) && !/127\.0\.0\.1/.test(l.texto))
       .map((l) => `${l.fichero}:${l.linea}`);
     expect(sinHost).toEqual([
       "chunk-543U46OR.js:28", // probe.listen({ port, host }): host = 127.0.0.1 salvo HYPERFRAMES_PREVIEW_HOST (fuera de la lista blanca de I5)
       "chunk-543U46OR.js:249", // server.listen(port, host): ídem (vista previa de HyperFrames)
+      "chunk-L5MFWGGU.js:17823", // startServer del producer: servidor HTTP aparte, la CLI no lo arranca
       "warmCheck.js:210", // tubería con nombre, no TCP
     ]);
   });
