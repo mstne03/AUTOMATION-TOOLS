@@ -275,43 +275,46 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     // Control del oráculo: un servidor conocido, descendiente de este proceso, que el muestreo tiene que ver.
     const control = spawn(process.execPath, ["-e", 'require("net").createServer().listen(0,"127.0.0.1");setTimeout(()=>process.exit(0),3e5)'], { stdio: "ignore" });
     datos.controlPid = control.pid;
-    const s = muestreador();
-    const t0 = performance.now();
-    const job = await encolarRender("video030", o());
-    const fases = seguirFases(job.job_id);
-    const j = await esperarJob(job.job_id, 500);
-    fases.parar();
-    // snapshot sobre la misma composición, también muestreado.
-    fases.tramos.push({ fase: "snapshot", t: Date.now() });
-    const fotos = path.join(F.base, "snap");
-    const rs = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "snapshot", path.join(RAIZ, "video030", "_composicion"), "--at", "1", "--no-end", "-o", fotos], {
-      timeoutMs: 300000,
-    });
-    fases.tramos.push({ fase: "fin", t: Date.now() });
-    await s.parar();
-    control.kill();
-    datos.job = j;
-    datos.muestras = s.muestras.map((m) => ({ fase: faseEn(fases.tramos, m.t), m }));
-    medida(`render Compatible de ${j.duracion?.toFixed(2)} s en ${((performance.now() - t0) / 1000).toFixed(1)} s · ${j.avisos.find((a) => a.startsWith("Codificador:"))}`);
-    medida(`muestras de sockets: ${s.muestras.length}; fases: ${fases.tramos.map((x) => x.fase || "-").join(" → ")}; snapshot código ${rs.code}`);
-    expect(j.error).toBeUndefined();
-    expect(j.estado).toBe("terminado");
-    expect(j.codificador).toMatch(/^h264_(nvenc|qsv|amf|mf)$/);
-    expect(j.avisos.some((a) => a.startsWith("Codificador:"))).toBe(true);
-    exigirMuestras();
-    // HOME redirigido: el estado de HyperFrames de nuestras CLI está en hf-home…
-    expect(fs.existsSync(path.join(hfHome(), ".hyperframes"))).toBe(true);
-    // …y ninguna de ellas se apuntó en ~/.hyperframes/running del usuario.
-    const nuestros = new Set(datos.muestras.flatMap(({ m }) => m.desc.map(String)));
-    expect(datos.muestras.flatMap(({ m }) => m.run).filter((r) => nuestros.has(r))).toEqual([]);
-    // Las cachés del usuario no cambian, salvo que otra sesión de HyperFrames (no nuestra) corriera a la vez.
-    const ajenos = Math.max(0, ...datos.muestras.map(({ m }) => m.ajenos));
-    medida(`CLI de HyperFrames ajenas durante el render: ${ajenos}; pids propios vistos: ${nuestros.size}`);
-    if (!ajenos) expect(huellaCaches()).toEqual(datos.huellaAntes);
-    const png = await extraerFotograma(herramientasFfmpeg(process.env.FFMPEG_DIR)!, j.mp4, 1);
-    expect(png.subarray(1, 4).toString()).toBe("PNG");
-    // El navegador sigue cuadrando con el manifiesto tras usarlo (Chrome solo escribe su debug.log).
-    await expect(verificarNavegador()).resolves.toBeUndefined();
+    try {
+      const s = muestreador();
+      const t0 = performance.now();
+      const job = await encolarRender("video030", o());
+      const fases = seguirFases(job.job_id);
+      const j = await esperarJob(job.job_id, 500);
+      fases.parar();
+      // snapshot sobre la misma composición, también muestreado.
+      fases.tramos.push({ fase: "snapshot", t: Date.now() });
+      const fotos = path.join(F.base, "snap");
+      const rs = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "snapshot", path.join(RAIZ, "video030", "_composicion"), "--at", "1", "--no-end", "-o", fotos], {
+        timeoutMs: 300000,
+      });
+      fases.tramos.push({ fase: "fin", t: Date.now() });
+      await s.parar();
+      datos.job = j;
+      datos.muestras = s.muestras.map((m) => ({ fase: faseEn(fases.tramos, m.t), m }));
+      medida(`render Compatible de ${j.duracion?.toFixed(2)} s en ${((performance.now() - t0) / 1000).toFixed(1)} s · ${j.avisos.find((a) => a.startsWith("Codificador:"))}`);
+      medida(`muestras de sockets: ${s.muestras.length}; fases: ${fases.tramos.map((x) => x.fase || "-").join(" → ")}; snapshot código ${rs.code}`);
+      expect(j.error).toBeUndefined();
+      expect(j.estado).toBe("terminado");
+      expect(j.codificador).toMatch(/^h264_(nvenc|qsv|amf|mf)$/);
+      expect(j.avisos.some((a) => a.startsWith("Codificador:"))).toBe(true);
+      exigirMuestras();
+      // HOME redirigido: el estado de HyperFrames de nuestras CLI está en hf-home…
+      expect(fs.existsSync(path.join(hfHome(), ".hyperframes"))).toBe(true);
+      // …y ninguna de ellas se apuntó en ~/.hyperframes/running del usuario.
+      const nuestros = new Set(datos.muestras.flatMap(({ m }) => m.desc.map(String)));
+      expect(datos.muestras.flatMap(({ m }) => m.run).filter((r) => nuestros.has(r))).toEqual([]);
+      // Las cachés del usuario no cambian, salvo que otra sesión de HyperFrames (no nuestra) corriera a la vez.
+      const ajenos = Math.max(0, ...datos.muestras.map(({ m }) => m.ajenos));
+      medida(`CLI de HyperFrames ajenas durante el render: ${ajenos}; pids propios vistos: ${nuestros.size}`);
+      if (!ajenos) expect(huellaCaches()).toEqual(datos.huellaAntes);
+      const png = await extraerFotograma(herramientasFfmpeg(process.env.FFMPEG_DIR)!, j.mp4, 1);
+      expect(png.subarray(1, 4).toString()).toBe("PNG");
+      // El navegador sigue cuadrando con el manifiesto tras usarlo (Chrome solo escribe su debug.log).
+      await expect(verificarNavegador()).resolves.toBeUndefined();
+    } finally {
+      control.kill();
+    }
   }, 900000);
 
   it("HyperFrames no intenta actualizarse ni comprobar nada en segundo plano (LOW-3)", () => {
