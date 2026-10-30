@@ -53,15 +53,27 @@ export const CLAVES_PERMITIDAS: ReadonlySet<string> = new Set([
   "HYPERFRAMES_FFPROBE_PATH",
 ]);
 
-/** `<SYSTEMROOT>\System32`; sin SYSTEMROOT en Windows no se lanza nada (no se adivina la carpeta). */
-function system32(): string {
-  const raiz = process.env.SYSTEMROOT?.trim();
-  if (!raiz) throw new Error("Falta la variable SYSTEMROOT: no puedo localizar las herramientas de Windows.");
-  return path.join(raiz, "System32");
-}
+const normalizarRuta = (p: string): string => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
+const mismaRuta = (a: string, b: string): boolean => normalizarRuta(a) === normalizarRuta(b);
+const dentroDe = (p: string, base?: string): boolean =>
+  !!base?.trim() && (mismaRuta(p, base) || normalizarRuta(p).startsWith(normalizarRuta(base).replace(/[\\/]+$/, "") + path.sep));
 
-const mismaRuta = (a: string, b: string): boolean =>
-  process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
+/**
+ * `<SYSTEMROOT>\System32`, del que salen taskkill y PowerShell. SYSTEMROOT tiene que ser una ruta
+ * absoluta local (con letra de unidad, no UNC), fuera del perfil del usuario y coherente con `windir`;
+ * si no, no se lanza nada (no se adivina la carpeta ni se ejecuta un taskkill plantado).
+ */
+export function system32(env: NodeJS.ProcessEnv = process.env): string {
+  const raiz = env.SYSTEMROOT?.trim();
+  if (!raiz) throw new Error("Falta la variable SYSTEMROOT: no puedo localizar las herramientas de Windows.");
+  const valida =
+    /^[A-Za-z]:[\\/]/.test(raiz) &&
+    !dentroDe(raiz, env.USERPROFILE) &&
+    !dentroDe(raiz, env.LOCALAPPDATA) &&
+    (!env.windir?.trim() || mismaRuta(env.windir, raiz));
+  if (!valida) throw new Error(`SYSTEMROOT no es una carpeta de Windows válida (${raiz}): no lanzo herramientas del sistema.`);
+  return path.join(path.resolve(raiz), "System32");
+}
 
 /**
  * HOME de los hijos: `<estado>/video/hf-home` integrado (VIDEO_STATE_DIR = `<estado>/video/estado`), o
@@ -105,8 +117,10 @@ export function entornoHijo(): NodeJS.ProcessEnv {
   return env;
 }
 
-// ponytail: se conserva la firma para capacidades.ts, herramientas.ts y musica.ts; `ejecutar` descarta
-// cualquier env, así que lo que devuelve esto solo sirve de referencia.
+/**
+ * @deprecated `ejecutar` descarta cualquier env. Solo queda porque musica.ts y herramientas.ts (fuera de
+ * W1.6) aún lo pasan; cuando sus dueños lo quiten, se borra junto con `OpcionesEjecutar.env`.
+ */
 export function entornoConFfmpeg(_h?: Herramientas | null, _extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
   return entornoHijo();
 }
@@ -291,14 +305,21 @@ function matarArbol(hijo: ChildProcess): Promise<void> {
 export type OpcionesEjecutar = Omit<SpawnOptions, "env" | "shell" | "stdio" | "detached"> & {
   onLinea?: (linea: string) => void;
   timeoutMs?: number;
-  /** Se acepta por compatibilidad y se descarta: el entorno de todo hijo es entornoHijo() (I5, I13). */
+  /** @deprecated Se descarta: el entorno de todo hijo es entornoHijo() (I5, I13). Ver entornoConFfmpeg. */
   env?: NodeJS.ProcessEnv;
 };
 
-/** true si la llamada es la CLI de HyperFrames: el script empaquetado o cualquier Node como comando. */
+/** true si la llamada es la CLI de HyperFrames: el script empaquetado, el Node del motor o cualquier `node`. */
 function esLlamadaCli(comando: string, args: string[]): boolean {
-  return args[0] === HYPERFRAMES_BIN || /^node(\.exe)?$/i.test(path.basename(comando));
+  return (
+    (args[0] !== undefined && mismaRuta(args[0], HYPERFRAMES_BIN)) ||
+    mismaRuta(comando, process.execPath) ||
+    /^node(\.exe)?$/i.test(path.basename(comando))
+  );
 }
+
+/** Hijos vivos lanzados por `ejecutar` (pid → momento del lanzamiento): el barrido nunca los toca. */
+const enVuelo = new Map<number, number>();
 
 // Candado en memoria: las invocaciones de la CLI de HyperFrames van de una en una dentro del proceso.
 let colaCli: Promise<unknown> = Promise.resolve();
@@ -345,6 +366,12 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const pid = hijo.pid;
+    if (pid) enVuelo.set(pid, Date.now());
+    // Sale de «en vuelo» en cuanto termina (o se da por muerto tras el timeout), antes de cualquier barrido.
+    const fuera = () => {
+      if (pid) enVuelo.delete(pid);
+    };
     let terminado = false;
     let vencido = false;
     let stdout = "";
@@ -372,6 +399,7 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
         vencido = true;
         // Se resuelve solo cuando el árbol ya está muerto: así el llamador no sigue con Chrome vivo.
         void matarArbol(hijo).then(() => {
+          fuera();
           if (terminado) return;
           terminado = true;
           if (onLinea && resto.trim()) onLinea(resto);
@@ -380,12 +408,14 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       }, timeoutMs);
     }
     hijo.on("error", (e) => {
+      fuera();
       if (temporizador) clearTimeout(temporizador);
       if (terminado) return;
       terminado = true;
       reject(e);
     });
     hijo.on("close", (code) => {
+      fuera();
       // Si venció el timeout, resuelve el temporizador cuando taskkill/kill haya terminado (el código de salida sería el de la muerte forzada).
       if (vencido) return;
       if (temporizador) clearTimeout(temporizador);
@@ -407,7 +437,15 @@ export interface ObjetivoBarrido {
 
 export interface ProcesoVivo {
   pid: number;
+  /** ExecutablePath; vacío si el sistema no la da (otro usuario, proceso protegido). */
   ruta: string;
+  /** Nombre de la imagen (Name de WMI). */
+  nombre?: string;
+  /** CommandLine, solo si no hay ruta: permite descartar procesos ajenos con el mismo nombre. */
+  linea?: string;
+  padre?: number;
+  /** Fecha de creación (ms desde 1970): distingue un padre de verdad de un pid reutilizado. */
+  creado?: number;
 }
 
 const TIMEOUT_LISTAR_MS = 30_000;
@@ -426,12 +464,14 @@ function realOResuelta(p: string): string {
 }
 
 /**
- * Lo que pertenece al motor: ffmpeg y ffprobe exactos (su carpeta puede tener otras cosas) y, del
- * navegador, la carpeta entera de la versión si hay manifiesto o, si no (desarrollo), solo su exe:
- * nunca la carpeta de un Chrome del usuario.
+ * Lo que pertenece al motor: ffmpeg y ffprobe exactos (su carpeta puede tener otras cosas; en ruta
+ * real y sin resolver) y, del navegador, la carpeta entera de la versión si hay manifiesto o, si no
+ * (desarrollo), solo su exe: nunca la carpeta de un Chrome del usuario. En desarrollo, ffmpeg solo si
+ * FFMPEG_DIR está fijado: el de PATH o winget puede estar trabajando para otro programa.
  */
 export function carpetasDelBundle(h: Herramientas | null, env: NodeJS.ProcessEnv = process.env): ObjetivoBarrido {
-  const exactos = h ? [realOResuelta(h.ffmpeg), realOResuelta(h.ffprobe)] : [];
+  const conFfmpeg = h && (esIntegrado(env) || !!env.FFMPEG_DIR?.trim());
+  const exactos = conFfmpeg ? [...new Set([h.ffmpeg, h.ffprobe, realOResuelta(h.ffmpeg), realOResuelta(h.ffprobe)])] : [];
   const arboles: string[] = [];
   const manifiesto = env.VIDEO_NAVEGADOR_MANIFIESTO?.trim();
   const navegador = env.HYPERFRAMES_BROWSER_PATH?.trim();
@@ -458,20 +498,36 @@ function powershell(script: string): Promise<Resultado> {
   return lanzar(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", codificado], { timeoutMs: TIMEOUT_LISTAR_MS }, false, false);
 }
 
-/** Procesos vivos cuya imagen es del motor. Lanza si no se puede listar (código, timeout o salida ilegible). */
-export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
+/** Todos los procesos (en Windows con padre y fecha de creación). Lanza si no se puede listar (código, timeout o salida ilegible). */
+export async function listarProcesos(): Promise<ProcesoVivo[]> {
   const todos: ProcesoVivo[] = [];
   if (process.platform === "win32") {
-    const r = await powershell('Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ExecutablePath)" }');
+    const r = await powershell(
+      "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = [int]$_.ProcessId; f = [int]$_.ParentProcessId; " +
+        "n = [string]$_.Name; r = [string]$_.ExecutablePath; l = $(if ($_.ExecutablePath) { '' } else { [string]$_.CommandLine }); " +
+        "c = $(if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { 0 }) } } | ConvertTo-Json -Compress",
+    );
     if (r.timeout || r.code !== 0) throw new Error(`No pude listar los procesos (código ${r.code}${r.timeout ? ", timeout" : ""}).`);
-    for (const linea of r.stdout.split(/\r?\n/)) {
-      if (!linea.trim()) continue;
-      const m = /^(\d+)\t(.*)$/.exec(linea);
-      if (!m) throw new Error(`Salida ilegible al listar procesos: ${linea.slice(0, 100)}`);
-      todos.push({ pid: Number(m[1]), ruta: m[2].trim() });
+    let lista: unknown;
+    try {
+      lista = JSON.parse(r.stdout);
+    } catch {
+      throw new Error(`Salida ilegible al listar procesos: ${r.stdout.slice(0, 100)}`);
     }
-    if (!todos.length) throw new Error("La lista de procesos salió vacía.");
+    if (!Array.isArray(lista) || !lista.length) throw new Error("La lista de procesos salió vacía o ilegible.");
+    for (const x of lista as { p?: unknown; f?: unknown; n?: unknown; r?: unknown; l?: unknown; c?: unknown }[]) {
+      if (typeof x?.p !== "number") throw new Error("Salida ilegible al listar procesos.");
+      todos.push({
+        pid: x.p,
+        padre: typeof x.f === "number" ? x.f : undefined,
+        nombre: typeof x.n === "string" ? x.n : undefined,
+        ruta: typeof x.r === "string" ? x.r.trim() : "",
+        linea: typeof x.l === "string" && x.l ? x.l : undefined,
+        creado: typeof x.c === "number" && x.c > 0 ? x.c : undefined,
+      });
+    }
   } else if (process.platform === "linux") {
+    // ponytail: en Linux sin padre ni fecha (no es objetivo de la fase 1): no protege a los hijos en vuelo.
     for (const d of fs.readdirSync("/proc")) {
       if (!/^\d+$/.test(d)) continue;
       try {
@@ -484,16 +540,61 @@ export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
     // ponytail: macOS no es objetivo de la fase 1; ahí el barrido no ve nada.
     log.warn("El barrido de procesos no está implementado en este sistema.");
   }
-  return filtrarProcesos(todos, o);
+  return todos;
+}
+
+/** Procesos vivos cuya imagen es del motor (sin mirar quién los lanzó). */
+export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
+  return filtrarProcesos(await listarProcesos(), o);
+}
+
+/**
+ * Qué barrer: procesos con imagen del motor salvo los que cuelgan de un hijo vivo de `ejecutar` (por
+ * la cadena de ParentProcessId, con un padre creado antes que el hijo para no seguir un pid reutilizado):
+ * un timeout no mata la segunda pasada de otro trabajo. `noVerificables`: procesos con el nombre de un
+ * ejecutable del motor cuya ruta el sistema no da; no se pueden matar con seguridad (falla cerrado).
+ * WMI deja sin ruta también a procesos ajenos (medido: un ffmpeg y varios Chrome de otra sesión), así
+ * que antes se mira el ejecutable de su CommandLine: si es absoluto y de otro sitio, no son del motor.
+ */
+export function seleccionarBarrido(
+  todos: ProcesoVivo[],
+  o: ObjetivoBarrido,
+  vuelo: ReadonlyMap<number, number> = enVuelo,
+): { matar: ProcesoVivo[]; noVerificables: ProcesoVivo[] } {
+  const porPid = new Map(todos.map((p) => [p.pid, p]));
+  const protegido = (p: ProcesoVivo): boolean => {
+    let actual: ProcesoVivo | undefined = p;
+    for (let i = 0; actual && i < 64; i++) {
+      const lanzado = vuelo.get(actual.pid);
+      // Margen de 5 s entre el spawn medido en Node y la fecha de creación del sistema.
+      if (lanzado !== undefined && (actual.creado === undefined || actual.creado >= lanzado - 5000)) return true;
+      const padre: ProcesoVivo | undefined = actual.padre !== undefined ? porPid.get(actual.padre) : undefined;
+      if (!padre || padre.creado === undefined || actual.creado === undefined || padre.creado > actual.creado) return false;
+      actual = padre;
+    }
+    return false;
+  };
+  const candidatos = todos.filter((p) => p.pid !== process.pid && !protegido(p));
+  const nombres = new Set([...o.exactos.map((e) => path.basename(e).toLowerCase()), ...(o.arboles.length ? ["chrome-headless-shell.exe"] : [])]);
+  const ajeno = (p: ProcesoVivo): boolean => {
+    const exe = /^\s*(?:"([^"]+)"|(\S+))/.exec(p.linea ?? "");
+    const ruta = exe?.[1] ?? exe?.[2];
+    return !!ruta && path.isAbsolute(ruta) && !filtrarProcesos([{ pid: p.pid, ruta }], o).length;
+  };
+  return {
+    matar: filtrarProcesos(candidatos, o),
+    noVerificables: candidatos.filter((p) => !p.ruta && !!p.nombre && nombres.has(p.nombre.toLowerCase()) && !ajeno(p)),
+  };
 }
 
 /** Mata filtrando otra vez por pid Y ruta: un pid reutilizado por otro programa no se toca. */
 export async function matarProcesos(vivos: ProcesoVivo[]): Promise<void> {
   if (!vivos.length) return;
   if (process.platform === "win32") {
-    const tabla = vivos.map((p) => `${p.pid} = '${p.ruta.replace(/'/g, "''")}'`).join("; ");
+    // La tabla viaja como JSON en base64: ninguna ruta (con ' o ’) puede romper el script.
+    const tabla = Buffer.from(JSON.stringify(vivos.map((p) => ({ pid: p.pid, ruta: p.ruta }))), "utf8").toString("base64");
     await powershell(
-      `$o = @{ ${tabla} }\n` +
+      `$o = @{}; foreach ($x in ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${tabla}')) | ConvertFrom-Json)) { $o[[int]$x.pid] = [string]$x.ruta }\n` +
         "Get-CimInstance Win32_Process | Where-Object { $o.ContainsKey([int]$_.ProcessId) -and $_.ExecutablePath -eq $o[[int]$_.ProcessId] } | " +
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
     );
@@ -509,14 +610,15 @@ export async function matarProcesos(vivos: ProcesoVivo[]): Promise<void> {
 }
 
 export interface DepsBarrido {
-  listar: (o: ObjetivoBarrido) => Promise<ProcesoVivo[]>;
+  /** Todos los procesos; la selección la hace seleccionarBarrido. */
+  listar: () => Promise<ProcesoVivo[]>;
   matar: (vivos: ProcesoVivo[]) => Promise<void>;
   /** Si quedan procesos que no se pueden matar: el backend relanza el motor en la siguiente llamada. */
   reiniciar: () => void;
 }
 
 const DEPS_BARRIDO: DepsBarrido = {
-  listar: procesosBajo,
+  listar: listarProcesos,
   matar: matarProcesos,
   reiniciar: () => {
     log.error("Reinicio el motor de vídeo: quedan procesos del navegador o de ffmpeg que no puedo matar.");
@@ -526,22 +628,25 @@ const DEPS_BARRIDO: DepsBarrido = {
 
 /**
  * Tras un timeout, taskkill /T no alcanza a los procesos cuyo padre ya murió (Chrome relanzado,
- * vigilantes desligados). Se buscan por ruta de imagen, se matan y se comprueba; si no se puede
- * listar o matar, se reinicia el motor antes que dejarlos vivos.
+ * vigilantes desligados). Se buscan por ruta de imagen (sin tocar lo que cuelga de un hijo en vuelo),
+ * se matan y se comprueba; si no se puede listar, verificar o matar, se reinicia el motor antes que
+ * dejarlos vivos.
  */
-export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO): Promise<void> {
+export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO, vuelo: ReadonlyMap<number, number> = enVuelo): Promise<void> {
   if (!o.arboles.length && !o.exactos.length) return;
-  const ajenos = (l: ProcesoVivo[]) => l.filter((p) => p.pid !== process.pid);
   try {
-    let vivos = ajenos(await deps.listar(o));
-    for (let intento = 0; vivos.length && intento < 3; intento++) {
-      log.warn(`Barrido: mato ${vivos.length} proceso(s) del motor que seguían vivos (pids ${vivos.map((p) => p.pid).join(", ")}).`);
-      await deps.matar(vivos);
+    let sel = seleccionarBarrido(await deps.listar(), o, vuelo);
+    for (let intento = 0; sel.matar.length && intento < 3; intento++) {
+      log.warn(`Barrido: mato ${sel.matar.length} proceso(s) del motor que seguían vivos (pids ${sel.matar.map((p) => p.pid).join(", ")}).`);
+      await deps.matar(sel.matar);
       await new Promise((r) => setTimeout(r, 200));
-      vivos = ajenos(await deps.listar(o));
+      sel = seleccionarBarrido(await deps.listar(), o, vuelo);
     }
-    if (vivos.length) {
-      log.error(`Barrido: no pude matar los pids ${vivos.map((p) => p.pid).join(", ")}.`);
+    const restos = [...sel.matar, ...sel.noVerificables];
+    if (restos.length) {
+      log.error(
+        `Barrido: no pude matar o verificar los pids ${restos.map((p) => `${p.pid}${p.ruta ? "" : ` (${p.nombre}, sin ruta)`}`).join(", ")}.`,
+      );
       deps.reiniciar();
     }
   } catch (e) {

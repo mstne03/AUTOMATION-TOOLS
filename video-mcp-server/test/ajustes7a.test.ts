@@ -36,7 +36,7 @@ vi.mock("node:child_process", async (orig) => {
       // El barrido tras el timeout lista procesos con PowerShell: responde al momento con uno ajeno.
       if (/powershell\.exe$/i.test(cmd)) {
         process.nextTick(() => {
-          e.stdout.emit("data", Buffer.from("1\tC:\\otro\\x.exe\n"));
+          e.stdout.emit("data", Buffer.from(JSON.stringify([{ p: 1, f: 0, n: "x.exe", r: "C:\\otro\\x.exe", c: 1 }])));
           e.emit("close", 0);
         });
         return e;
