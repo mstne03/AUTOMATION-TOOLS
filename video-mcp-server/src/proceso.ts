@@ -414,6 +414,8 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       terminado = true;
       reject(e);
     });
+    // `close` espera a las tuberías, que un nieto huérfano puede retener: mientras, el barrido lo protegería.
+    hijo.on("exit", fuera);
     hijo.on("close", (code) => {
       fuera();
       // Si venció el timeout, resuelve el temporizador cuando taskkill/kill haya terminado (el código de salida sería el de la muerte forzada).
@@ -580,7 +582,8 @@ export function seleccionarBarrido(
   const ajeno = (p: ProcesoVivo): boolean => {
     const exe = /^\s*(?:"([^"]+)"|(\S+))/.exec(p.linea ?? "");
     const ruta = exe?.[1] ?? exe?.[2];
-    if (ruta && path.isAbsolute(ruta)) return !filtrarProcesos([{ pid: p.pid, ruta }], o).length;
+    // Sin comillas, una ruta con espacios sale cortada (C:\Users\Marc): solo vale si acaba en su propio exe.
+    if (ruta && path.isAbsolute(ruta) && path.basename(ruta).toLowerCase() === p.nombre?.toLowerCase()) return !filtrarProcesos([{ pid: p.pid, ruta }], o).length;
     // Renderer con sandbox: WMI no lee nada de él, pero su padre es un Chrome con ruta legible.
     const padre = p.padre !== undefined ? porPid.get(p.padre) : undefined;
     const esSuPadre = padre && padre.creado !== undefined && p.creado !== undefined && padre.creado <= p.creado;
@@ -640,19 +643,25 @@ const DEPS_BARRIDO: DepsBarrido = {
 export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO, vuelo: ReadonlyMap<number, number> = enVuelo): Promise<void> {
   if (!o.arboles.length && !o.exactos.length) return;
   try {
-    let sel = seleccionarBarrido(await deps.listar(), o, vuelo);
-    for (let intento = 0; sel.matar.length && intento < 3; intento++) {
-      log.warn(`Barrido: mato ${sel.matar.length} proceso(s) del motor que seguían vivos (pids ${sel.matar.map((p) => p.pid).join(", ")}).`);
-      await deps.matar(sel.matar);
-      await new Promise((r) => setTimeout(r, 200));
-      sel = seleccionarBarrido(await deps.listar(), o, vuelo);
-    }
+    const observar = async () => {
+      let actual = seleccionarBarrido(await deps.listar(), o, vuelo);
+      for (let intento = 0; actual.matar.length && intento < 3; intento++) {
+        log.warn(`Barrido: mato ${actual.matar.length} proceso(s) del motor que seguían vivos (pids ${actual.matar.map((p) => p.pid).join(", ")}).`);
+        await deps.matar(actual.matar);
+        await new Promise((r) => setTimeout(r, 200));
+        actual = seleccionarBarrido(await deps.listar(), o, vuelo);
+      }
+      return actual;
+    };
+    let sel = await observar();
     // WMI también deja sin ruta a un proceso que está arrancando o saliendo (medido con otras sesiones):
-    // solo cuenta el que sigue sin verificar en cada observación.
+    // solo cuenta el que sigue sin verificar en cada observación. El que gana la ruta del motor sale de
+    // dudosos, pero `observar` lo mata, y si no puede queda en sel.matar.
     let dudosos = sel.noVerificables;
     for (let intento = 0; dudosos.length && intento < 3; intento++) {
       await new Promise((r) => setTimeout(r, 500));
-      const ahora = new Set(seleccionarBarrido(await deps.listar(), o, vuelo).noVerificables.map((p) => p.pid));
+      sel = await observar();
+      const ahora = new Set(sel.noVerificables.map((p) => p.pid));
       dudosos = dudosos.filter((p) => ahora.has(p.pid));
     }
     const restos = [...sel.matar, ...dudosos];

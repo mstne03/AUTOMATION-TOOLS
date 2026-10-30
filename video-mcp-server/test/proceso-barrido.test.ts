@@ -122,6 +122,28 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     }
   }, 180000);
 
+  it("un hijo que sale deja de estar en vuelo aunque un nieto retenga sus tuberías", async () => {
+    const pidFile = path.join(F.dir, "salido.pid");
+    // El hijo lanza un nieto (Node, fuera del objetivo) que hereda stdout/stderr 10 s y sale al momento:
+    // hay `exit`, pero `close` no llega hasta que el nieto suelta las tuberías.
+    const codigo = `const fs = require("node:fs"); require("node:child_process")
+      .spawn(process.argv[2], ["-e", "setTimeout(()=>{},1e4)"], { detached: true, stdio: ["ignore", 1, 2] }).unref();
+      fs.writeFileSync(process.argv[1], String(process.pid)); process.exit(0);`;
+    let cerrado = false;
+    const trabajo = ejecutar(F.exe, ["-e", codigo, pidFile, process.execPath]).finally(() => {
+      cerrado = true;
+    });
+    await vi.waitFor(() => expect(fs.existsSync(pidFile) && fs.statSync(pidFile).size > 0).toBe(true), { timeout: 15000 });
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    expect(await muere(pid)).toBe(true);
+    await vi.waitFor(() => {
+      const sel = seleccionarBarrido([{ pid, ruta: F.exe }], { arboles: [], exactos: [F.exe] });
+      expect(sel.matar.map((p) => p.pid)).toEqual([pid]);
+    }, { timeout: 3000 });
+    expect(cerrado).toBe(false);
+    await trabajo;
+  }, 60000);
+
   it("matarProcesos mata un proceso cuya ruta lleva ’ y ' (la tabla viaja en JSON)", async () => {
     const dir = path.join(F.dir, "nav ’comilla' x");
     fs.mkdirSync(dir, { recursive: true });
@@ -221,6 +243,44 @@ describe("barrerProcesos", () => {
     expect(await con('"C:\\otra sesion\\chrome-headless-shell.exe" --type=renderer')).toBe(0);
     expect(await con('"C:\\nav\\chrome-headless-shell.exe" --type=renderer')).toBe(1);
     expect(await con("chrome-headless-shell.exe --type=renderer")).toBe(1);
+  });
+
+  it("una línea de órdenes sin comillas con espacios no descarta un proceso del motor", async () => {
+    const o = { arboles: ["C:\\Users\\Marc Serra\\nav"], exactos: [] };
+    const linea = "C:\\Users\\Marc Serra\\nav\\chrome-headless-shell.exe --type=renderer";
+    const reiniciar = vi.fn();
+    await barrerProcesos(o, { listar: async () => [{ pid: 4248, ruta: "", nombre: "chrome-headless-shell.exe", linea }], matar: vi.fn(), reiniciar });
+    expect(reiniciar).toHaveBeenCalledTimes(1);
+    // Sin comillas pero entera (sin espacios) y de otro sitio: sigue siendo ajeno.
+    const r2 = vi.fn();
+    await barrerProcesos(o, {
+      listar: async () => [{ pid: 4249, ruta: "", nombre: "Chrome-Headless-Shell.exe", linea: "C:\\otra\\chrome-headless-shell.exe --type=renderer" }],
+      matar: vi.fn(),
+      reiniciar: r2,
+    });
+    expect(r2).not.toHaveBeenCalled();
+  });
+
+  it("un dudoso que gana la ruta del motor al reobservarlo se mata, no se olvida", async () => {
+    const sinRuta = { pid: 4250, ruta: "", nombre: "chrome-headless-shell.exe" };
+    const conRuta = { ...sinRuta, ruta: "C:\\nav\\chrome-headless-shell.exe" };
+    const matar = vi.fn();
+    const reiniciar = vi.fn();
+    const listar = vi.fn(async () => [] as (typeof sinRuta)[]);
+    listar.mockResolvedValueOnce([sinRuta]).mockResolvedValueOnce([conRuta]);
+    await barrerProcesos(objetivo, { listar, matar, reiniciar });
+    expect(matar).toHaveBeenCalledWith([conRuta]);
+    expect(reiniciar).not.toHaveBeenCalled();
+  });
+
+  it("un dudoso que gana la ruta del motor y no se deja matar reinicia", async () => {
+    const sinRuta = { pid: 4251, ruta: "", nombre: "chrome-headless-shell.exe" };
+    const conRuta = { ...sinRuta, ruta: "C:\\nav\\chrome-headless-shell.exe" };
+    const reiniciar = vi.fn();
+    const listar = vi.fn(async () => [conRuta]);
+    listar.mockResolvedValueOnce([sinRuta]);
+    await barrerProcesos(objetivo, { listar, matar: vi.fn(), reiniciar });
+    expect(reiniciar).toHaveBeenCalledTimes(1);
   });
 });
 
