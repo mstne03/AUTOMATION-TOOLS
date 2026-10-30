@@ -3,7 +3,8 @@
 Build reproducible de `ffmpeg.exe` + `ffprobe.exe` para win64, LGPL-2.1-o-posterior, con solo lo
 que usan HyperFrames y el motor de vídeo. Sustituirá al ffmpeg de BtbN del instalador en W3.2.
 
-**Estado:** tareas 1–9 hechas sin red. Quedan marcadores `PENDIENTE-TAREA-10` (hashes, commits,
+**Estado:** tareas 1–9 hechas sin red y descargas locales de la Tarea 10 hechas (ver «Estado de la
+Tarea 10»). Quedan marcadores `PENDIENTE-TAREA-10` (hashes, commits,
 huellas, anclajes, digest de la imagen, snapshot de Debian y versiones de paquetes). Ninguna
 construcción real arranca mientras quede uno: `comprobar-pendientes.sh` es la primera orden de
 `construir.sh` y del job `construir`, antes de cualquier descarga.
@@ -179,6 +180,38 @@ pendiente de Marc), sin PAT:
 8. **Testigo (M5):** Marc ejecuta `construir.sh` en su máquina; su `SHA256SUMS` debe coincidir con
    el de CI. Marc prueba `h264_nvenc` y `h264_mf` (RTX 4060). QSV fuera; AMF sin GPU AMD dedicada.
 9. Anotar aquí los SHA-256 de `ffmpeg.exe`/`ffprobe.exe` y la URL del asset para W3.2.
+
+### Estado de la Tarea 10 (permiso A hecho el 2026-10-30; permiso B sin hacer)
+
+Verificado a mano contra las fuentes reales (los patrones de `compilar.sh` cuadran con 7.1.5):
+`win32_dlopen`/`w32dlfcn.h`, `dynlink_loader.h`, `AMF_DLL_NAME` (`comprobar_carga_dll` pasa sobre el
+árbol real), rutas de licencia (`COPYING.LGPLv2.1`, `COPYING`, `LICENSE`, `nvEncodeAPI.h`,
+`core/Platform.h`), `copiar_amf` sobre el asset real, mínimos (`configure` l. 6783 y 7423-7425:
+nv-codec-headers ≥ 12.1.14.0 y AMF ≥ 1.4.33.0, por eso la fila AMF es **v1.4.33** y no la v1.4.36
+candidata) y las opciones de `componentes.conf` (existen todas). Corregido: en 7.1.5 los demuxers
+de imagen por tubería se llaman `image_png_pipe`, `image_jpeg_pipe` e `image_webp_pipe` (el binario
+los lista como `png_pipe`…); con los nombres antiguos configure los habría ignorado y `compilar.sh`
+habría fallado. `autoseleccionados.txt` se revisó contra el configure (+`rotate`, −`rtp`), pero no
+contra un binario: su línea `PENDIENTE` sigue.
+
+Lo que **no** se ha podido cerrar, y por qué:
+
+- **Huellas y anclajes (ffmpeg, dav1d, zlib):** falta el canal `debian:<paquete>` (exige bajar el
+  `Sources.xz` y los `.dsc`/`debian.tar.*` de `snapshot.debian.org`, fuera de lo autorizado). El
+  PKGBUILD de Arch confirma 65F7…1ADC (dav1d) y 5ED4…AFBA (zlib), pero **no** la clave de
+  FFmpeg: Arch verifica la etiqueta git con otra clave (DD1E…8D64) y no empaqueta 7.1.5.
+- **Firmas de dav1d y zlib:** son DSA con resumen **SHA-1**; `verificar_firma` las rechaza a
+  propósito. Hay que decidir: tratarlas como fuentes sin firma con `canal2` (los PKGBUILD de Arch
+  traen sha512/b2, no SHA-256: `descargar-fuentes.sh` tendría que aceptar sha512) o aceptar SHA-1.
+  Comprobado a mano: el tarball de ambas coincide con el sha512 y el b2 del PKGBUILD de Arch.
+- **AMF `canal2`:** el PKGBUILD de `amf-headers` descarga por git (`#tag=<commit>`), no lleva ningún
+  hash del tarball. Lo que sí está comprobado: el asset `AMF-headers-v1.4.33.tar.gz` es idéntico
+  (salvo CRLF→LF) a `amf/public/include` del commit e8c7cd7c… que fija Arch (PKGBUILD 1.4.33-1,
+  commit e5d45472…). Su layout es `amf-headers-v1.4.33/{core,components}/` y **no trae licencia**
+  propia: la del MIT va en la cabecera de cada fichero (`core/Platform.h`).
+- **SHA-256 del `git archive` de nv-codec-headers:** calculado con Git para Windows; idéntico en
+  GitHub y en git.videolan.org (mismo commit 1889e62e…). Debe reconfirmarse dentro de la imagen
+  fijada (permiso B).
 
 ### Descargas que pedirá la Tarea 10
 
