@@ -16,6 +16,9 @@ const base: InfoMedio = {
   duracionVideo: 50.4,
   duracionAudio: 50.43,
   nbFrames: 1512,
+  nbPaquetes: 1512,
+  pistasVideo: 1,
+  pistasAudio: 1,
 };
 const ESPERADA = 50.4;
 const con = (cambios: Partial<InfoMedio>): InfoMedio => ({ ...base, ...cambios });
@@ -26,17 +29,22 @@ describe("verificarMp4", () => {
   });
 
   it.each<[string, Partial<InfoMedio>, RegExp]>([
-    ["sin audio", { tieneAudio: false, duracionAudio: undefined }, /audio/],
+    ["sin audio", { tieneAudio: false, pistasAudio: 0, duracionAudio: undefined }, /audio/],
+    ["dos pistas de audio", { pistasAudio: 2 }, /pistas/],
+    ["dos pistas de vídeo", { pistasVideo: 2 }, /pistas/],
+    ["paquetes que no cuadran con nb_frames", { nbPaquetes: 1500 }, /íntegro/],
+    ["sin nb_read_packets", { nbPaquetes: undefined }, /íntegro/],
+    ["sin nb_frames", { nbFrames: undefined }, /íntegro/],
     ["25 fps", { fps: 25, fpsMedio: 25 }, /fps/],
     ["fps ausente", { fps: undefined }, /fps/],
     ["avg_frame_rate 29,5", { fpsMedio: 29.5 }, /fps/],
     ["avg_frame_rate ausente", { fpsMedio: undefined }, /fps/],
     ["vídeo de 50,6 s", { duracionVideo: 50.6 }, /duración del vídeo/],
     ["duración del vídeo ausente", { duracionVideo: undefined }, /duración del vídeo/],
-    ["vídeo de 25 s con audio de 50 s", { duracionVideo: 25, nbFrames: 750 }, /duración del vídeo/],
+    ["vídeo de 25 s con audio de 50 s", { duracionVideo: 25, nbFrames: 750, nbPaquetes: 750 }, /duración del vídeo/],
     ["audio de 25 s", { duracionAudio: 25 }, /duración del audio/],
     ["duración del audio ausente", { duracionAudio: undefined }, /duración del audio/],
-    ["fotogramas de menos", { nbFrames: 1500 }, /fotogramas/],
+    ["fotogramas de menos", { nbFrames: 1500, nbPaquetes: 1500 }, /fotogramas/],
     ["hevc", { codecVideo: "hevc" }, /h264/],
     ["1920×1080", { ancho: 1920, alto: 1080 }, /1080×1920/],
     ["etiqueta Lavc… libx264", { codificador: "Lavc61.19.101 libx264" }, /codificador/],
@@ -44,10 +52,6 @@ describe("verificarMp4", () => {
     ["sin etiqueta de codificador", { codificador: undefined }, /codificador/],
   ])("%s: falla", (_n, cambios, re) => {
     expect(() => verificarMp4(con(cambios), ESPERADA)).toThrow(re);
-  });
-
-  it("sin nb_frames no se exige el recuento", () => {
-    expect(() => verificarMp4(con({ nbFrames: undefined }), ESPERADA)).not.toThrow();
   });
 
   it("si se pasa el codificador esperado, tiene que ser ese", () => {

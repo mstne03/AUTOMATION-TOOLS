@@ -579,7 +579,11 @@ export function seleccionarBarrido(
   const ajeno = (p: ProcesoVivo): boolean => {
     const exe = /^\s*(?:"([^"]+)"|(\S+))/.exec(p.linea ?? "");
     const ruta = exe?.[1] ?? exe?.[2];
-    return !!ruta && path.isAbsolute(ruta) && !filtrarProcesos([{ pid: p.pid, ruta }], o).length;
+    if (ruta && path.isAbsolute(ruta)) return !filtrarProcesos([{ pid: p.pid, ruta }], o).length;
+    // Renderer con sandbox: WMI no lee nada de él, pero su padre es un Chrome con ruta legible.
+    const padre = p.padre !== undefined ? porPid.get(p.padre) : undefined;
+    const esSuPadre = padre && padre.creado !== undefined && p.creado !== undefined && padre.creado <= p.creado;
+    return !!esSuPadre && !!padre.ruta && padre.nombre?.toLowerCase() === p.nombre?.toLowerCase() && !filtrarProcesos([padre], o).length;
   };
   return {
     matar: filtrarProcesos(candidatos, o),
@@ -642,7 +646,15 @@ export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEP
       await new Promise((r) => setTimeout(r, 200));
       sel = seleccionarBarrido(await deps.listar(), o, vuelo);
     }
-    const restos = [...sel.matar, ...sel.noVerificables];
+    // WMI también deja sin ruta a un proceso que está arrancando o saliendo (medido con otras sesiones):
+    // solo cuenta el que sigue sin verificar en cada observación.
+    let dudosos = sel.noVerificables;
+    for (let intento = 0; dudosos.length && intento < 3; intento++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const ahora = new Set(seleccionarBarrido(await deps.listar(), o, vuelo).noVerificables.map((p) => p.pid));
+      dudosos = dudosos.filter((p) => ahora.has(p.pid));
+    }
+    const restos = [...sel.matar, ...dudosos];
     if (restos.length) {
       log.error(
         `Barrido: no pude matar o verificar los pids ${restos.map((p) => `${p.pid}${p.ruta ? "" : ` (${p.nombre}, sin ruta)`}`).join(", ")}.`,
@@ -735,6 +747,10 @@ export interface InfoMedio {
   duracionVideo?: number;
   duracionAudio?: number;
   nbFrames?: number;
+  /** Solo con `soloMp4`: paquetes de vídeo leídos de verdad (nb_read_packets). */
+  nbPaquetes?: number;
+  pistasVideo?: number;
+  pistasAudio?: number;
 }
 
 const numero = (v?: string): number | undefined => {
@@ -746,9 +762,14 @@ const fraccion = (v?: string): number | undefined => {
   return a && b ? a / b : undefined;
 };
 
-export async function sondear(ffprobe: string, archivo: string): Promise<InfoMedio> {
-  const r = await ejecutar(ffprobe, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
-  if (r.code !== 0) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
+/**
+ * ffprobe de un medio. Con `soloMp4` (el MP4 propio): solo fichero local y demuxer mp4, cuenta los
+ * paquetes y cualquier error de ffprobe, aunque salga con 0, es un fallo.
+ */
+export async function sondear(ffprobe: string, archivo: string, { soloMp4 = false } = {}): Promise<InfoMedio> {
+  const previos = soloMp4 ? ["-protocol_whitelist", "file", "-f", "mp4", "-count_packets"] : [];
+  const r = await ejecutar(ffprobe, ["-v", "error", ...previos, "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
+  if (r.code !== 0 || (soloMp4 && r.stderr.trim())) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
   type Pista = {
     codec_type?: string;
     codec_name?: string;
@@ -758,6 +779,7 @@ export async function sondear(ffprobe: string, archivo: string): Promise<InfoMed
     avg_frame_rate?: string;
     duration?: string;
     nb_frames?: string;
+    nb_read_packets?: string;
     tags?: { encoder?: string };
   };
   const j = JSON.parse(r.stdout) as { format?: { duration?: string }; streams?: Pista[] };
@@ -775,5 +797,8 @@ export async function sondear(ffprobe: string, archivo: string): Promise<InfoMed
     duracionVideo: numero(video?.duration),
     duracionAudio: numero(audio?.duration),
     nbFrames: numero(video?.nb_frames),
+    nbPaquetes: numero(video?.nb_read_packets),
+    pistasVideo: j.streams?.filter((s) => s.codec_type === "video").length ?? 0,
+    pistasAudio: j.streams?.filter((s) => s.codec_type === "audio").length ?? 0,
   };
 }

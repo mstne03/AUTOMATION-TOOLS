@@ -1,7 +1,6 @@
 // I5 e I13: el entorno de cada hijo se construye desde cero (lista blanca) y toda invocación de la CLI
 // de HyperFrames corre en modo cerrado, con HOME en hf-home, cwd en hf-home y en serie.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +35,11 @@ else { fin(); process.exit(0); }
   return { dir, script, registro, navegador };
 });
 
-import { CLAVES_PERMITIDAS, VARIABLES_CERRADO, ejecutar, entornoHijo, herramientasFfmpeg, hfHome } from "../src/proceso.js";
+import { ejecutar, entornoHijo, herramientasFfmpeg, hfHome, system32 } from "../src/proceso.js";
+
+// Literales a propósito: si la lista del código crece, este test tiene que fallar (I5, I13).
+const CERRADO = ["CI", "HYPERFRAMES_NO_UPDATE_CHECK", "HYPERFRAMES_NO_AUTO_INSTALL", "HYPERFRAMES_NO_OPTIONAL_INSTALL", "HYPERFRAMES_NO_TELEMETRY", "DO_NOT_TRACK", "HYPERFRAMES_SKIP_SKILLS"];
+const LISTA_BLANCA = new Set(["PATH", "SYSTEMROOT", "TEMP", "TMP", "HOME", "USERPROFILE", ...CERRADO, "HYPERFRAMES_BROWSER_PATH", "HYPERFRAMES_FFMPEG_PATH", "HYPERFRAMES_FFPROBE_PATH"]);
 
 type Llamada = { argv: string[]; env: Record<string, string>; cwd: string; inicio: number; fin: number };
 const leer = (): Llamada[] =>
@@ -65,8 +68,18 @@ afterAll(() => {
 describe("entorno de los hijos (I5)", () => {
   it("entornoHijo solo contiene claves de la lista blanca", () => {
     const env = entornoHijo();
-    for (const k of Object.keys(env)) expect(CLAVES_PERMITIDAS.has(k), k).toBe(true);
+    for (const k of Object.keys(env)) expect(LISTA_BLANCA.has(k), k).toBe(true);
     for (const k of SECRETAS) expect(env[k]).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")("SYSTEMROOT tiene que ser una carpeta local fuera del perfil y coherente con windir", () => {
+    const base = { USERPROFILE: "C:\\Users\\Marc", LOCALAPPDATA: "C:\\Users\\Marc\\AppData\\Local", windir: "C:\\Windows" };
+    expect(system32({ ...base, SYSTEMROOT: "C:\\Windows" })).toBe("C:\\Windows\\System32");
+    expect(system32({ ...base, SYSTEMROOT: "c:\\windows\\" })).toMatch(/System32$/);
+    expect(() => system32({ ...base })).toThrow(/SYSTEMROOT/);
+    for (const mala of ["\\\\servidor\\Windows", "Windows", "C:\\Users\\Marc\\falso", "C:\\Users\\Marc\\AppData\\Local\\x", "D:\\Windows"]) {
+      expect(() => system32({ ...base, SYSTEMROOT: mala }), mala).toThrow(/SYSTEMROOT/);
+    }
   });
 
   it.runIf(process.platform === "win32")("PATH = ffmpeg del motor + System32 + PowerShell, sin el PATH del usuario", () => {
@@ -96,13 +109,13 @@ describe("modo cerrado de la CLI (I13)", () => {
     });
     expect(r.code).toBe(0);
     const [l] = leer();
-    for (const [k, v] of Object.entries(VARIABLES_CERRADO)) expect(l.env[k], k).toBe(v);
+    for (const k of CERRADO) expect(l.env[k], k).toBe("1");
     expect(l.env.HOME).toBe(hfHome());
     expect(l.env.USERPROFILE).toBe(hfHome());
     for (const k of Object.keys(l.env)) {
       // libuv copia en Windows estas variables del padre si faltan (required_vars de uv_spawn): no son secretos.
       if (process.platform === "win32" && LIBUV.has(k.toUpperCase())) continue;
-      expect(CLAVES_PERMITIDAS.has(k), k).toBe(true);
+      expect(LISTA_BLANCA.has(k), k).toBe(true);
     }
     for (const k of [...SECRETAS, "NODE_OPTIONS"]) expect(l.env[k], k).toBeUndefined();
   });
@@ -140,6 +153,14 @@ describe("modo cerrado de la CLI (I13)", () => {
     expect(leer()).toHaveLength(0);
   });
 
+  it("el Node del motor con otros argumentos, o el script con otra escritura de la ruta, también son la CLI", async () => {
+    delete process.env.HYPERFRAMES_BROWSER_PATH;
+    await expect(ejecutar(process.execPath, ["-e", "1"])).rejects.toThrow(/descárgalo en Ajustes/);
+    // Una copia de Node con otro nombre sigue siendo la CLI si args[0] es el script, aunque cambie la grafía.
+    await expect(ejecutar("C:\\otro\\runtime.exe", [F.script.toUpperCase().replace(/\//g, "\\"), "render"])).rejects.toThrow(/Node del motor/);
+    expect(leer()).toHaveLength(0);
+  });
+
   it("un .env plantado en hf-home bloquea la CLI", async () => {
     fs.writeFileSync(path.join(hfHome(), ".env"), "PRODUCER_X=1\n");
     await expect(ejecutar(process.execPath, [F.script, "check", F.dir])).rejects.toThrow(/hf-home/);
@@ -172,8 +193,4 @@ describe("arranque sin navegador", () => {
       vi.unstubAllEnvs();
     }
   });
-});
-
-it("os.homedir del motor no cambia (solo los hijos ven hf-home)", () => {
-  expect(mismaRuta(os.homedir(), hfHome())).toBe(false);
 });

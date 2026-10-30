@@ -16,7 +16,7 @@ export async function extraerFotograma(h: Herramientas, mp4: string, segundo: nu
   try {
     const r = await ejecutar(
       h.ffmpeg,
-      ["-v", "error", "-ss", segundo.toFixed(3), "-i", mp4, "-frames:v", "1", "-vf", "scale=540:960", "-c:v", "png", "-f", "image2", png],
+      ["-v", "error", "-protocol_whitelist", "file", "-ss", segundo.toFixed(3), "-f", "mp4", "-i", mp4, "-frames:v", "1", "-vf", "scale=540:960", "-c:v", "png", "-f", "image2", png],
       { timeoutMs: TIMEOUT_FOTOGRAMA_MS },
     );
     const datos = r.code === 0 && fs.existsSync(png) ? fs.readFileSync(png) : Buffer.alloc(0);

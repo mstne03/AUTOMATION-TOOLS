@@ -128,6 +128,20 @@ describe("verificarNavegador", () => {
     await expect(verificarNavegador(integrado())).rejects.toThrow(/debug\.log no está en el manifiesto/);
   });
 
+  it.runIf(process.platform === "win32")("debug.log como unión (junction): rechazado", async () => {
+    const destino = path.join(F.base, "destino-log");
+    fs.mkdirSync(destino, { recursive: true });
+    fs.symlinkSync(destino, path.join(RAIZ, "chrome-headless-shell-win64", "debug.log"), "junction");
+    await expect(verificarNavegador(integrado())).rejects.toThrow(/debug\.log es un enlace/);
+  });
+
+  it("debug.log como carpeta con una .dll dentro: rechazado", async () => {
+    const dir = path.join(RAIZ, "chrome-headless-shell-win64", "debug.log");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "x.dll"), "x");
+    await expect(verificarNavegador(integrado())).rejects.toThrow(/x\.dll no está en el manifiesto/);
+  });
+
   it("una .dll listada y borrada: rechazada", async () => {
     fs.rmSync(path.join(RAIZ, "chrome-headless-shell-win64", "a.dll"));
     await expect(verificarNavegador(integrado())).rejects.toThrow(/falta/);

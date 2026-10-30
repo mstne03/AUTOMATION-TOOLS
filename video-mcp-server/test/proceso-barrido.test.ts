@@ -193,6 +193,25 @@ describe("barrerProcesos", () => {
     expect(r2).not.toHaveBeenCalled();
   });
 
+  it("sin ruta y transitorio (arrancando o saliendo): no reinicia", async () => {
+    const reiniciar = vi.fn();
+    const listar = vi.fn(async () => [] as { pid: number; ruta: string; nombre: string }[]);
+    listar.mockResolvedValueOnce([{ pid: 4245, ruta: "", nombre: "chrome-headless-shell.exe" }]);
+    await barrerProcesos(objetivo, { listar, matar: vi.fn(), reiniciar });
+    expect(reiniciar).not.toHaveBeenCalled();
+  });
+
+  it("renderer sin ruta ni línea de órdenes, hijo de un Chrome ajeno: se ignora; huérfano: reinicia", async () => {
+    const hijo = { pid: 4247, ruta: "", nombre: "chrome-headless-shell.exe", padre: 4246, creado: 200 };
+    const padre = { pid: 4246, ruta: "C:\\otra sesion\\chrome-headless-shell.exe", nombre: "chrome-headless-shell.exe", padre: 1, creado: 100 };
+    const r1 = vi.fn();
+    await barrerProcesos(objetivo, { listar: async () => [padre, hijo], matar: vi.fn(), reiniciar: r1 });
+    expect(r1).not.toHaveBeenCalled();
+    const r2 = vi.fn();
+    await barrerProcesos(objetivo, { listar: async () => [hijo], matar: vi.fn(), reiniciar: r2 });
+    expect(r2).toHaveBeenCalledTimes(1);
+  });
+
   it("sin ruta, la línea de órdenes decide: de otro sitio se ignora; del motor o relativa, reinicia", async () => {
     const con = async (linea: string) => {
       const reiniciar = vi.fn();

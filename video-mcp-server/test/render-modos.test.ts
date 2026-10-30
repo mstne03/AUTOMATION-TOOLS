@@ -141,6 +141,7 @@ describe("decisiones puras", () => {
     expect(revisarEncoders(listado, false)).toEqual({ presentes: ["h264_nvenc", "h264_mf"], prohibidos: ["libx264"] });
     expect(() => revisarEncoders(listado, true)).toThrow(/no es el LGPL del bundle/);
     expect(() => revisarEncoders(" V....D libopenh264  OpenH264\n", true)).toThrow(ErrorVideo);
+    expect(() => revisarEncoders(" V....D libx264rgb  libx264 RGB\n", true)).toThrow(/libx264rgb/);
     expect(revisarEncoders(" V....D h264_amf  AMD\n", true)).toEqual({ presentes: ["h264_amf"], prohibidos: [] });
   });
 
@@ -175,6 +176,19 @@ describe.skipIf(!h)("ffmpeg real", () => {
     expect(info.fpsMedio).toBe(30);
     expect(info.tieneAudio).toBe(true);
     expect(info.codificador).toMatch(/h264_mf$/);
+    // Modo estricto del MP4 propio: paquetes contados y una pista de cada.
+    const estricto = await sondear(h!.ffprobe, salida, { soloMp4: true });
+    expect(estricto.nbPaquetes).toBe(estricto.nbFrames);
+    expect([estricto.pistasVideo, estricto.pistasAudio]).toEqual([1, 1]);
+    // Un MP4 truncado no pasa, aunque ffprobe saliera con 0.
+    const truncado = path.join(F.dir, "truncado.mp4");
+    const b = fs.readFileSync(salida);
+    fs.writeFileSync(truncado, b.subarray(0, Math.floor(b.length / 2)));
+    await expect(sondear(h!.ffprobe, truncado, { soloMp4: true })).rejects.toThrow(/ffprobe no puede leer/);
+    // Un fichero que no es mp4 con esa extensión tampoco.
+    const falso = path.join(F.dir, "falso.mp4");
+    fs.writeFileSync(falso, "esto no es un mp4");
+    await expect(sondear(h!.ffprobe, falso, { soloMp4: true })).rejects.toThrow(/ffprobe no puede leer/);
   }, 120000);
 });
 

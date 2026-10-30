@@ -5,7 +5,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import { log } from "./log.js";
-import { ejecutar, entornoConFfmpeg, type Herramientas } from "./proceso.js";
+import { ejecutar, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
@@ -37,9 +37,9 @@ export function leerPruebaGpu(): PruebaGpu | undefined {
 let fallidaEnEsteProceso: PruebaGpu | undefined;
 
 /** ¿Se pueden usar fondos WebGPU? Usa la prueba cacheada; si no hay, la hace. */
-export async function hayWebgpu(h: Herramientas, browserPath?: string): Promise<boolean> {
+export async function hayWebgpu(h: Herramientas): Promise<boolean> {
   if (gpuForzadaApagada()) return false;
-  const p = leerPruebaGpu() ?? fallidaEnEsteProceso ?? (await probarGpu(h, browserPath));
+  const p = leerPruebaGpu() ?? fallidaEnEsteProceso ?? (await probarGpu(h));
   return p.webgpu;
 }
 
@@ -47,7 +47,7 @@ export async function hayWebgpu(h: Herramientas, browserPath?: string): Promise<
  * Renderiza 1 s de `aurora` con --browser-gpu en una carpeta temporal y mira el fotograma del medio:
  * hay WebGPU si el render termina y la imagen no es negra (luminancia media > 8).
  */
-export async function probarGpu(h: Herramientas, browserPath?: string): Promise<PruebaGpu> {
+export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video-gpu-"));
   const fecha = new Date().toISOString();
   let resultado: PruebaGpu;
@@ -70,9 +70,8 @@ export async function probarGpu(h: Herramientas, browserPath?: string): Promise<
 <div id="h-fondo" data-composition-id="fondo" data-composition-src="compositions/fondo.html" data-start="0" data-duration="1" data-track-index="1" data-no-timeline data-width="540" data-height="960" style="position:absolute;inset:0"></div>
 </div><script>window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});</script></body></html>`,
     );
-    const env = entornoConFfmpeg(h, browserPath ? { HYPERFRAMES_BROWSER_PATH: browserPath } : {});
     const salida = path.join(dir, "gpu.mp4");
-    const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "render", dir, "-o", salida, "--browser-gpu", "--quiet"], { cwd: dir, env, timeoutMs: 240000 });
+    const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "render", dir, "-o", salida, "--browser-gpu", "--quiet"], { timeoutMs: 240000 });
     if (r.code !== 0 || !fs.existsSync(salida)) {
       const motivo = (r.stderr + r.stdout).replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).filter((l) => /webgpu|gpu|failed|error/i.test(l)).slice(0, 3).join(" ");
       resultado = { webgpu: false, fecha, detalle: `El render de prueba con --browser-gpu falló. ${motivo}`.trim() };
@@ -114,9 +113,9 @@ export async function probarGpu(h: Herramientas, browserPath?: string): Promise<
   return resultado;
 }
 
-async function primeraLinea(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string | undefined> {
+async function primeraLinea(cmd: string, args: string[]): Promise<string | undefined> {
   try {
-    const r = await ejecutar(cmd, args, { env, timeoutMs: 60000 });
+    const r = await ejecutar(cmd, args, { timeoutMs: 60000 });
     return (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
   } catch {
     return undefined;
@@ -135,17 +134,16 @@ export interface Capacidades {
   fondos: { disponibles: string[]; conWebgpu: string[]; usaranFallback: string[] };
 }
 
-export async function capacidades(h: Herramientas | null, reprobar: boolean, browserPath?: string): Promise<Capacidades> {
+export async function capacidades(h: Herramientas | null, reprobar: boolean, _browserPath?: string): Promise<Capacidades> {
   let gpu = leerPruebaGpu();
-  if (h && (reprobar || !gpu)) gpu = await probarGpu(h, browserPath);
-  const env = entornoConFfmpeg(h);
+  if (h && (reprobar || !gpu)) gpu = await probarGpu(h);
   const pkg = JSON.parse(fs.readFileSync(path.join(SERVER_ROOT, "node_modules", "hyperframes", "package.json"), "utf8")) as { version: string };
   // Las tres sondas de versión van en paralelo: su peor caso es 60 s y no 180 s (lo cubre
   // TIMEOUT_CAPACIDADES del backend junto con los 270 s de probarGpu).
   // `telemetry status` imprime "Status: disabled" y "Source: config|HYPERFRAMES_NO_TELEMETRY|…".
   const [chromeRuta, tel, ffmpeg] = await Promise.all([
-    primeraLinea(process.execPath, [HYPERFRAMES_BIN, "browser", "path"], env),
-    ejecutar(process.execPath, [HYPERFRAMES_BIN, "telemetry", "status"], { env, timeoutMs: 60000 }).catch(() => undefined),
+    primeraLinea(process.execPath, [HYPERFRAMES_BIN, "browser", "path"]),
+    ejecutar(process.execPath, [HYPERFRAMES_BIN, "telemetry", "status"], { timeoutMs: 60000 }).catch(() => undefined),
     h ? primeraLinea(h.ffmpeg, ["-version"]) : Promise.resolve(undefined),
   ]);
   const salidaTel = tel?.stdout.replace(/\x1b\[[0-9;]*m/g, "");

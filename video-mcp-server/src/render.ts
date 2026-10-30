@@ -33,6 +33,10 @@ export class ErrorTiempo extends Error {}
 
 // ---------- Codificadores (D11) ----------
 
+/** Codificadores H.264 que el motor admite en el MP4 final (todos LGPL; nunca libx264 ni libopenh264). */
+export type CodificadorH264 = "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_mf";
+export const CODIFICADORES: readonly CodificadorH264[] = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"];
+
 /** Modo de Automático: Compatible (codificador predecible) hasta que un parche fije el de Rápido. */
 export const MODO_AUTOMATICO: "rapido" | "compatible" = "compatible";
 
@@ -52,7 +56,7 @@ export const FABRICANTE: Record<CodificadorH264, string> = {
 };
 
 /** Si el ffmpeg los trae, no es el LGPL del bundle (I4, I11). */
-const PROHIBIDOS = ["libx264", "libx265", "libopenh264"];
+const PROHIBIDOS = ["libx264", "libx264rgb", "libx265", "libopenh264"];
 
 /**
  * Lee `ffmpeg -encoders`: qué codificadores admitidos trae y cuáles prohibidos. Integrado, uno
@@ -144,10 +148,6 @@ export function disparaReserva(e: unknown): boolean {
 
 // ---------- Verificación del MP4 (I11) ----------
 
-/** Codificadores H.264 que el motor admite en el MP4 final (todos LGPL; nunca libx264 ni libopenh264). */
-export type CodificadorH264 = "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_mf";
-export const CODIFICADORES: readonly CodificadorH264[] = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"];
-
 const FPS = 30;
 const TOLERANCIA_DURACION_S = 0.1;
 const TOLERANCIA_FPS = 0.01;
@@ -169,6 +169,10 @@ export function codificadorDeEtiqueta(etiqueta?: string): string | undefined {
 export function verificarMp4(info: InfoMedio, duracionEsperada: number, codificador?: CodificadorH264): void {
   if (info.ancho !== 1080 || info.alto !== 1920) throw new Error(`El mp4 salió de ${info.ancho}×${info.alto} y tenía que ser 1080×1920.`);
   if (info.codecVideo !== "h264") throw new Error(`El mp4 salió en ${info.codecVideo ?? "un códec desconocido"} y tenía que ser h264.`);
+  if (info.pistasVideo !== 1 || info.pistasAudio !== 1) {
+    if (!info.pistasAudio) throw new Error("El mp4 salió sin pista de audio.");
+    throw new Error(`El mp4 tiene ${info.pistasVideo ?? "?"} pistas de vídeo y ${info.pistasAudio} de audio; tenía que tener 1 y 1.`);
+  }
   const cod = codificadorDeEtiqueta(info.codificador);
   if (!cod || !(CODIFICADORES as readonly string[]).includes(cod) || (codificador && cod !== codificador)) {
     throw new Error(`El mp4 salió con el codificador ${cod ?? "desconocido"} y tenía que ser ${codificador ?? CODIFICADORES.join(", ")}.`);
@@ -176,7 +180,6 @@ export function verificarMp4(info: InfoMedio, duracionEsperada: number, codifica
   for (const [nombre, v] of [["r_frame_rate", info.fps], ["avg_frame_rate", info.fpsMedio]] as const) {
     if (v === undefined || Math.abs(v - FPS) > TOLERANCIA_FPS) throw new Error(`El mp4 salió a ${v?.toFixed(2) ?? "?"} fps (${nombre}) y tenía que ser ${FPS}.`);
   }
-  if (!info.tieneAudio) throw new Error("El mp4 salió sin pista de audio.");
   for (const [nombre, v] of [["vídeo", info.duracionVideo], ["audio", info.duracionAudio]] as const) {
     if (v === undefined || Math.abs(v - duracionEsperada) > TOLERANCIA_DURACION_S) {
       throw new Error(`La duración del ${nombre} del mp4 es ${v?.toFixed(2) ?? "desconocida"} s y tenía que ser ${duracionEsperada.toFixed(2)} s.`);
@@ -185,6 +188,10 @@ export function verificarMp4(info: InfoMedio, duracionEsperada: number, codifica
   const fotogramas = Math.round(duracionEsperada * FPS);
   if (info.nbFrames !== undefined && Math.abs(info.nbFrames - fotogramas) > TOLERANCIA_FOTOGRAMAS) {
     throw new Error(`El mp4 tiene ${info.nbFrames} fotogramas y tenía que tener ${fotogramas}.`);
+  }
+  // El índice del contenedor tiene que cuadrar con los paquetes que hay de verdad.
+  if (info.nbPaquetes === undefined || info.nbFrames === undefined || info.nbPaquetes !== info.nbFrames) {
+    throw new Error(`El mp4 no es íntegro: declara ${info.nbFrames ?? "?"} fotogramas y se leen ${info.nbPaquetes ?? "?"} paquetes de vídeo.`);
   }
 }
 
@@ -343,7 +350,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
         );
       }
     }
-    const gpu = await hayWebgpu(h, o.browserPath);
+    const gpu = await hayWebgpu(h);
     const plan = planificarComposicion({
       guion: prep.guion,
       palabras: prep.palabras,
@@ -503,10 +510,96 @@ export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: 
   return { errores, avisos: [...porCodigo].map(([c, { n, ejemplo }]) => `check ${c} (×${n}): ${ejemplo}`) };
 }
 
+/** Lo que comparten las dos rutas de render de un job. */
+interface ContextoRender {
+  job: Job;
+  prep: Preparado;
+  montaje: Montaje;
+  disponibles: CodificadorH264[];
+  timeoutMs: number;
+  /** MP4 temporal: un fallo no deja un mp4 a medias donde lo busca la subida. */
+  temporal: string;
+}
+
+interface SalidaRender {
+  info: InfoMedio;
+  codificador: CodificadorH264;
+}
+
+/** Una ejecución de la CLI de render; lanza ErrorTiempo o Error con la última línea útil. */
+async function renderCli(c: ContextoRender, salida: string, formato: "mp4" | "mov" | "webm"): Promise<void> {
+  c.job.fase = "render";
+  c.job.progreso = 0;
+  const args = [HYPERFRAMES_BIN, "render", c.prep.rutas.composicion, "-o", salida, "--fps", "30", "--format", formato];
+  if (formato === "mp4") args.push("--quality", "delivery");
+  if (c.montaje.usaWebgpu) args.push("--browser-gpu");
+  const r = await ejecutar(process.execPath, args, { onLinea: (l) => anotar(c.job, l), timeoutMs: c.timeoutMs });
+  if (r.timeout) throw new ErrorTiempo(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(c.timeoutMs)}).`);
+  if (r.code !== 0 || !fs.existsSync(salida)) {
+    const ultima = ultimasLineasUtiles(c.job, 1)[0];
+    throw new Error(`La CLI de HyperFrames terminó con código ${r.code}${ultima ? ` (${ultima})` : ""}.`);
+  }
+}
+
+async function verificarTemporal(c: ContextoRender, cod?: CodificadorH264): Promise<InfoMedio> {
+  c.job.fase = "verificacion";
+  const info = await sondear(c.prep.herramientas.ffprobe, c.temporal, { soloMp4: true });
+  verificarMp4(info, c.montaje.duracion, cod);
+  return info;
+}
+
+/** HyperFrames elige el codificador: se registra el real y se avisa si no es el que preferiría el motor. */
+async function renderRapido(c: ContextoRender): Promise<SalidaRender> {
+  await renderCli(c, c.temporal, "mp4");
+  const info = await verificarTemporal(c);
+  // verificarMp4 ya ha comprobado que la etiqueta es de un codificador admitido.
+  const codificador = codificadorDeEtiqueta(info.codificador) as CodificadorH264;
+  const preferido = c.disponibles.find((d) => d !== "h264_mf");
+  if (preferido && codificador !== preferido) c.job.avisos.push(`HyperFrames eligió ${codificador}; el sondeo del motor prefería ${preferido}.`);
+  return { info, codificador };
+}
+
+/** Segunda pasada por orden de preferencia hasta la primera que funcione; cada fallo queda registrado. */
+async function codificarIntermedio(c: ContextoRender, intermedio: string, formato: "mov" | "webm"): Promise<CodificadorH264> {
+  c.job.fase = "codificacion";
+  const fallidos: string[] = [];
+  for (const cod of ordenSegundaPasada(c.disponibles)) {
+    const r = await segundaPasada(c.prep.herramientas, intermedio, formato, c.temporal, cod, c.timeoutMs);
+    if (r.timeout) throw new ErrorTiempo(`La codificación con ${cod} superó el tiempo máximo (${duracionLegible(c.timeoutMs)}).`);
+    if (r.code === 0) {
+      if (fallidos.length) {
+        const texto = `${fallidos.join(", ")} falló; se usó ${cod}.`;
+        c.job.reserva = c.job.reserva ? `${c.job.reserva} ${texto}` : texto;
+        c.job.avisos.push(texto);
+      }
+      return cod;
+    }
+    fallidos.push(cod);
+    log.warn(`Job ${c.job.job_id}: la segunda pasada con ${cod} falló: ${r.stderr.trim().slice(-300)}`);
+    fs.rmSync(c.temporal, { force: true });
+  }
+  throw new Error(`Ningún codificador H.264 pudo codificar el vídeo (${fallidos.join(", ")}).`);
+}
+
+/** HyperFrames saca un intermedio y la segunda pasada la hace el motor, con el codificador que ha sondeado. */
+async function renderCompatible(c: ContextoRender): Promise<SalidaRender> {
+  const carpeta = path.dirname(c.temporal);
+  const formato = elegirIntermedio(espacioLibre(carpeta), c.montaje.duracion);
+  c.job.intermedio = formato;
+  const intermedio = path.join(carpeta, `${c.prep.id}.intermedio.${formato}`);
+  fs.rmSync(intermedio, { force: true });
+  try {
+    await renderCli(c, intermedio, formato);
+    const codificador = await codificarIntermedio(c, intermedio, formato);
+    return { info: await verificarTemporal(c, codificador), codificador };
+  } finally {
+    fs.rmSync(intermedio, { force: true });
+  }
+}
+
 async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promise<void> {
   job.estado = "renderizando";
   job.fase = "composicion";
-  const h = prep.herramientas;
 
   const montaje = await montarComposicion(prep, prep.rutas.composicion, o);
   job.avisos.push(...montaje.avisos);
@@ -518,47 +611,19 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
     throw new Error(`hyperframes check encontró ${check.errores.length} error(es): ${check.errores.slice(0, 5).join(" | ")}`);
   }
 
-  const disponibles = await dependencias.sondear(h);
+  const disponibles = await dependencias.sondear(prep.herramientas);
   const pedido = o.modo ?? "auto";
   let modo = elegirModo(pedido, disponibles);
   if (pedido === "rapido" && modo === "compatible") job.avisos.push("Rápido no disponible: no hay codificador H.264 de GPU; se usa Compatible.");
-  const timeoutMs = timeoutPasadaMs(montaje.duracion);
-  const carpeta = path.dirname(prep.rutas.mp4);
-  // Render a un archivo temporal y renombrado al final: un fallo no deja un mp4 a medias donde lo busca la subida.
-  const temporal = path.join(carpeta, `${prep.id}.renderizando.mp4`);
+  const temporal = path.join(path.dirname(prep.rutas.mp4), `${prep.id}.renderizando.mp4`);
   fs.rmSync(temporal, { force: true });
+  const c: ContextoRender = { job, prep, montaje, disponibles, timeoutMs: timeoutPasadaMs(montaje.duracion), temporal };
 
-  /** Una ejecución de la CLI de render; lanza ErrorTiempo o Error con la última línea útil. */
-  const renderCli = async (salida: string, formato: "mp4" | "mov" | "webm") => {
-    job.fase = "render";
-    job.progreso = 0;
-    const args = [HYPERFRAMES_BIN, "render", prep.rutas.composicion, "-o", salida, "--fps", "30", "--format", formato];
-    if (formato === "mp4") args.push("--quality", "delivery");
-    if (montaje.usaWebgpu) args.push("--browser-gpu");
-    const r = await ejecutar(process.execPath, args, { onLinea: (l) => anotar(job, l), timeoutMs });
-    if (r.timeout) throw new ErrorTiempo(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(timeoutMs)}).`);
-    if (r.code !== 0 || !fs.existsSync(salida)) {
-      const ultima = ultimasLineasUtiles(job, 1)[0];
-      throw new Error(`La CLI de HyperFrames terminó con código ${r.code}${ultima ? ` (${ultima})` : ""}.`);
-    }
-  };
-  const verificar = async (cod?: CodificadorH264): Promise<InfoMedio> => {
-    job.fase = "verificacion";
-    const info = await sondear(h.ffprobe, temporal);
-    verificarMp4(info, montaje.duracion, cod);
-    return info;
-  };
-
-  let info: InfoMedio | undefined;
-  let codificador: string | undefined;
+  let salida: SalidaRender | undefined;
   try {
     if (modo === "rapido") {
       try {
-        await renderCli(temporal, "mp4");
-        info = await verificar();
-        codificador = codificadorDeEtiqueta(info.codificador);
-        const preferido = disponibles.find((c) => c !== "h264_mf");
-        if (preferido && codificador !== preferido) job.avisos.push(`HyperFrames eligió ${codificador}; el sondeo del motor prefería ${preferido}.`);
+        salida = await renderRapido(c);
       } catch (e) {
         if (!disparaReserva(e)) throw e;
         fs.rmSync(temporal, { force: true });
@@ -568,37 +633,7 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
         modo = "compatible";
       }
     }
-    if (modo === "compatible") {
-      const formato = elegirIntermedio(espacioLibre(carpeta), montaje.duracion);
-      job.intermedio = formato;
-      const intermedio = path.join(carpeta, `${prep.id}.intermedio.${formato}`);
-      fs.rmSync(intermedio, { force: true });
-      try {
-        await renderCli(intermedio, formato);
-        job.fase = "codificacion";
-        const fallidos: string[] = [];
-        for (const cod of ordenSegundaPasada(disponibles)) {
-          const r = await segundaPasada(h, intermedio, formato, temporal, cod, timeoutMs);
-          if (r.timeout) throw new ErrorTiempo(`La codificación con ${cod} superó el tiempo máximo (${duracionLegible(timeoutMs)}).`);
-          if (r.code === 0) {
-            codificador = cod;
-            break;
-          }
-          fallidos.push(cod);
-          log.warn(`Job ${job.job_id}: la segunda pasada con ${cod} falló: ${r.stderr.trim().slice(-300)}`);
-          fs.rmSync(temporal, { force: true });
-        }
-        if (!codificador) throw new Error(`Ningún codificador H.264 pudo codificar el vídeo (${fallidos.join(", ")}).`);
-        if (fallidos.length) {
-          const texto = `${fallidos.join(", ")} falló; se usó ${codificador}.`;
-          job.reserva = job.reserva ? `${job.reserva} ${texto}` : texto;
-          job.avisos.push(texto);
-        }
-        info = await verificar(codificador as CodificadorH264);
-      } finally {
-        fs.rmSync(intermedio, { force: true });
-      }
-    }
+    salida ??= await renderCompatible(c);
   } catch (e) {
     fs.rmSync(temporal, { force: true });
     throw e;
@@ -607,16 +642,16 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
   fs.rmSync(prep.rutas.mp4, { force: true });
   fs.renameSync(temporal, prep.rutas.mp4);
   job.modo = modo;
-  job.codificador = codificador;
-  job.adaptador = FABRICANTE[codificador as CodificadorH264];
+  job.codificador = salida.codificador;
+  job.adaptador = FABRICANTE[salida.codificador];
   job.avisos.push(
-    `Codificador: ${codificador} (${job.adaptador}) · modo ${modo === "rapido" ? "Rápido" : "Compatible"}${job.intermedio === "webm" ? " · intermedio webm" : ""}`,
+    `Codificador: ${salida.codificador} (${job.adaptador}) · modo ${modo === "rapido" ? "Rápido" : "Compatible"}${job.intermedio === "webm" ? " · intermedio webm" : ""}`,
   );
-  job.duracion = info!.duracion;
+  job.duracion = salida.info.duracion;
   job.progreso = 100;
   job.fase = undefined;
   job.estado = "terminado";
-  log.info(`Job ${job.job_id} terminado: ${prep.rutas.mp4} (${info!.duracion?.toFixed(2)} s, ${codificador}, modo ${modo}).`);
+  log.info(`Job ${job.job_id} terminado: ${prep.rutas.mp4} (${salida.info.duracion?.toFixed(2)} s, ${salida.codificador}, modo ${modo}).`);
 }
 
 function espacioLibre(carpeta: string): number {

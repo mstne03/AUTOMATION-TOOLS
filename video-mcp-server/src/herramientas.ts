@@ -601,6 +601,8 @@ export const ADAPTADAS: Record<string, string> = {
 const TIMEOUT_CATALOGO_MS = 120_000;
 
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
+  // I14: la tool no se registra en integrado (index.ts); esto cierra también la llamada directa.
+  if (esIntegrado()) throw new ErrorVideo("El catálogo de HyperFrames no está disponible en SEO Studio.");
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
     env: { ...entornoConFfmpeg(h), CI: "1" },
