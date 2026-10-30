@@ -5,7 +5,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 W="$DIR_BUILD/../../.github/workflows/ffmpeg-lgpl.yml"
 if [ ! -f "$W" ]; then echo "  OMITIDO: sin el workflow (árbol del código fuente correspondiente)"; fin; exit 0; fi
-bloque() { awk -v j="  $1:" '$0 == j {f = 1; print; next} f && /^  [a-z]/ {f = 0} f' "$W"; }
+# Bloque de un job sin comentarios (de línea ni al final): un comentario no puede satisfacer el test.
+bloque() { awk -v j="  $1:" '/^[[:space:]]*#/ {next} {sub(/[ 	]+#.*$/, "")} $0 == j {f = 1; print; next} f && /^  [a-z]/ {f = 0} f' "$W"; }
 sin_comentarios=$(grep -v '^[[:space:]]*#' "$W")
 
 # Sin cachés de ningún tipo.
@@ -18,7 +19,7 @@ afirmar "permissions: {} en el workflow" grep -qx 'permissions: {}' "$W"
 afirmar "push limitado a branches: [main]" bash -c "awk '/^  push:/ {f = 1} f && /branches:/ {print; exit}' '$W' | grep -q 'branches: \[main\]'"
 negar "pruebas no tiene if (corre siempre)" grep -q '^    if:' <<<"$(bloque pruebas)"
 for j in construir verificar empaquetar publicar; do
-  afirmar "$j solo con workflow_dispatch" grep -qF "github.event_name == 'workflow_dispatch'" <<<"$(bloque "$j")"
+  afirmar "$j solo con workflow_dispatch" grep -qE "^    if: github\.event_name == 'workflow_dispatch'( |$)" <<<"$(bloque "$j")"
 done
 
 # Permisos por job (L2).
@@ -35,9 +36,19 @@ P=$(bloque publicar)
 afirmar "publicar: if con refs/heads/main" grep -q "^    if: .*github.ref == 'refs/heads/main'" <<<"$P"
 afirmar "publicar: git merge-base --is-ancestor" grep -q 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' <<<"$P"
 afirmar "publicar: environment: release" grep -qx '    environment: release' <<<"$P"
-afirmar "publicar: compara SHA256SUMS con verificar" grep -q 'ESPERADO: ${{ needs.verificar.outputs.sha256 }}' <<<"$P"
-afirmar "publicar: compara el tarball con empaquetar" grep -q 'ESPERADO_FUENTE: ${{ needs.empaquetar.outputs.sha256 }}' <<<"$P"
+afirmar "publicar: ESPERADO viene de verificar" grep -qF 'ESPERADO: ${{ needs.verificar.outputs.sha256 }}' <<<"$P"
+afirmar "publicar: ESPERADO_FUENTE viene de empaquetar" grep -qF 'ESPERADO_FUENTE: ${{ needs.empaquetar.outputs.sha256 }}' <<<"$P"
+# Las comparaciones en sí, con su salida de error: declarar ESPERADO no compara nada.
+compara() { grep -nE "^ +$1 \|\| \{ .*exit 1; \}$" <<<"$P" | head -1 | cut -d: -f1; }
+c1=$(compara '\[ "\$real" = "\$ESPERADO" \]'); c2=$(compara '\[ "\$fuente" = "\$ESPERADO_FUENTE" \]')
+afirmar "publicar: real sale del SHA256SUMS descargado" grep -qE '^ +real=\$\(sha256sum SHA256SUMS ' <<<"$P"
+afirmar "publicar: fuente sale del tarball descargado" grep -qF 'fuente=$(sha256sum "ffmpeg-fuente-correspondiente-$REV.tar.xz"' <<<"$P"
+afirmar "publicar: compara SHA256SUMS con verificar y falla si difiere" test -n "$c1"
+afirmar "publicar: compara el tarball con empaquetar y falla si difiere" test -n "$c2"
+afirmar "publicar: sha256sum -c SHA256SUMS" grep -qE '^ +sha256sum -c SHA256SUMS$' <<<"$P"
 afirmar "publicar: SHA256SUMS con exactamente dos ficheros" grep -qF '"ffmpeg.exe ffprobe.exe"' <<<"$P"
+atesta=$(grep -n 'attest-build-provenance' <<<"$P" | cut -d: -f1); crea=$(grep -n 'gh release create' <<<"$P" | cut -d: -f1)
+afirmar "publicar: compara antes de atestar y atesta antes de la release" test "${c1:-999}" -lt "${atesta:-0}" -a "${c2:-999}" -lt "${atesta:-0}" -a "${atesta:-999}" -lt "${crea:-0}"
 negar "publicar no ejecuta scripts del árbol" grep -q 'bash video-mcp-server' <<<"$P"
 
 # verificar: SHA-256 antes de ejecutar nada y el binario sin acceso a GITHUB_* (LOW-7).

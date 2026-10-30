@@ -155,11 +155,18 @@ EOF
 
 instalar_nvcodec() { NV=$(extraer nv-codec-headers); make -C "$NV" install PREFIX="$PREFIX"; }
 
-instalar_amf() {
-  local d; d=$(extraer amf-headers)
-  mkdir -p "$PREFIX/include/AMF"
-  cp -r "$d/amf/public/include/." "$PREFIX/include/AMF/"
+# configure busca AMF/core/Version.h: copia el directorio que contiene core/Version.h, esté donde
+# esté dentro del asset (el reparto exacto se confirma en la Tarea 10). Si no hay uno y solo uno,
+# falla.
+copiar_amf() { # <árbol extraído> <directorio include>
+  local v
+  v=$(find "$1" -path '*/core/Version.h')
+  [ -n "$v" ] && [ "$(wc -l <<<"$v")" -eq 1 ] || error "AMF: se esperaba exactamente un core/Version.h en el asset"
+  mkdir -p "$2/AMF"
+  cp -r "${v%/core/Version.h}/." "$2/AMF/"
 }
+
+instalar_amf() { local d; d=$(extraer amf-headers); copiar_amf "$d" "$PREFIX/include"; }
 
 construir_ffmpeg() {
   local d log conf

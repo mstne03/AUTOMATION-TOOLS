@@ -126,6 +126,12 @@ correr k1 origen; debe_fallar "(f) URL http:// → ≠ 0" https
 lock "$(URL2=https://zlib.net@x.invalid/paq-1.0.tar.xz tarfila "$K1")"; correr k1 origen; debe_fallar "URL con usuario (@) → ≠ 0" usuario
 lock "$(URL2=https://zlib.net:8443/paq-1.0.tar.xz tarfila "$K1")"; correr k1 origen; debe_fallar "URL con puerto → ≠ 0" puerto
 lock "$(tarfila "$K1" "debian:paq=$K1;https://ZLIB.net./claves.html=$K1")"; correr k1 origen; debe_fallar "anclaje en ZLIB.net. (mismo host normalizado) → ≠ 0" operador
+# Lista blanca del host: nada que haga que la URL parezca de un operador y curl vaya a otro.
+for mala in 'https://zlib.net?.debian.org/x' 'https://zlib.net#.debian.org/x' 'https://zlib.net\.debian.org/x' \
+  'https://zlib.net%2f.debian.org/x' 'https://evil.com?.zlib.net/x'; do
+  lock "$(fila paq 1.0 tar "$mala" "$SHA" - - "$URL.asc" "$K1" "$(anc "$K1")" -)"; correr k1 origen; debe_fallar "URL $mala → ≠ 0" "host válido"
+  lock "$(fila paq 1.0 tar "$URL" "$SHA" - - "$URL.asc" "$K1" "debian:paq=$K1;$mala=$K1" -)"; correr k1 origen; debe_fallar "anclaje $mala → ≠ 0" anclaje
+done
 
 # (g) git: la etiqueta apunta a otro commit; espejo falso; canal2 no comparable o del mismo operador.
 lock "$(fila cab v2 git "$GURL" "$GSHA" "$C1" inc - - - "$ESPEJO")"; correr k1 origen; debe_fallar "(g) commit distinto del de la etiqueta → ≠ 0" commit
@@ -147,10 +153,47 @@ lock "$(tarfila "$K1")"; correr k1 origen deb-mal; debe_fallar ".dsc que no coin
 correr k1 origen; debe_fallar "anclaje debian sin InRelease anclado → ≠ 0"
 
 # Tarball sin firma: canal2 (un .sha256 de otro operador) debe confirmar el SHA-256 (R1 M-6).
-mkdir -p "$T/o-sf"; cp "$T/tarball" "$T/o-sf/paq-1.0.tar.xz"; echo "$SHA  paq-1.0.tar.xz" >"$T/o-sf/paq.sha256"
-lock "$(fila paq 1.0 tar "$URL" "$SHA" - - - - - https://github.com/x/paq.sha256)"; correr k1 o-sf; debe_ir "tar sin firma con canal2 que confirma el SHA → 0"
-echo "0000  paq-1.0.tar.xz" >"$T/o-sf/paq.sha256"
-correr k1 o-sf; debe_fallar "tar sin firma con canal2 que no lo confirma → ≠ 0" canal2
+# Forma de la fila amf-headers: asset de GitHub y PKGBUILD de Arch fijado a commit (ruling AMF).
+GHURL=https://github.com/GPUOpen/AMF/releases/download/v1/paq-1.0.tar.xz
+mkdir -p "$T/o-sf"; cp "$T/tarball" "$T/o-sf/paq-1.0.tar.xz"; printf "sha256sums=('%s')\n" "$SHA" >"$T/o-sf/PKGBUILD"
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - "$ARCH")"; correr k1 o-sf; debe_ir "asset sin firma con PKGBUILD que contiene el SHA → 0"
+afirmar "…y el tarball pasa a --salida" test -f "$T/salida/paq-1.0.tar.xz"
+printf "sha256sums=('%064d')\n" 0 >"$T/o-sf/PKGBUILD"
+correr k1 o-sf; debe_fallar "PKGBUILD que no contiene el SHA → ≠ 0" canal2
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://gitlab.archlinux.org/archlinux/packaging/packages/paq/-/raw/main/PKGBUILD)"
+correr k1 o-sf; debe_fallar "canal2 de Arch sin commit fijado → ≠ 0" commit
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://raw.githubusercontent.com/x/y/PKGBUILD)"
+correr k1 o-sf; debe_fallar "canal2 del mismo operador que el asset (github) → ≠ 0" operador
+
+# Redirecciones (solo en descargas reales): un curl falso registra cada petición. Los assets de
+# GitHub saltan a githubusercontent; a otro operador no se llega a conectar.
+mkdir -p "$T/stub"
+cat >"$T/stub/curl" <<EOF
+#!/usr/bin/env bash
+for a; do [ "\$p" = -o ] && o=\$a; p=\$a; done; u=\$a
+echo "\$u" >>"$T/peticiones"
+case "\$u" in
+  https://github.com/bien/*) printf '302 https://objects.githubusercontent.com/f?sig=1' ;;
+  https://github.com/mala/*) printf '302 https://evil.invalid/x' ;;
+  https://github.com/plana/*) printf '302 http://objects.githubusercontent.com/x' ;;
+  https://github.com/bucle/*) printf '302 https://github.com/bucle/x' ;;
+  https://objects.githubusercontent.com/*) cp "$T/tarball" "\$o"; printf '200 ' ;;
+  https://gitlab.archlinux.org/*) printf "sha256sums=('$SHA')\n" >"\$o"; printf '200 ' ;;
+  *) printf '404 ' ;;
+esac
+EOF
+chmod +x "$T/stub/curl"
+red() { # red <ruta de GitHub>: descarga «real» con el curl falso
+  rm -rf "$T/salida" "$T/peticiones"
+  lock "$(fila paq 1.0 tar "https://github.com/$1/paq-1.0.tar.xz" "$SHA" - - - - - "$ARCH")"
+  ejecutar env PATH="$T/stub:$PATH" bash "$D" --lock "$T/fuentes.lock" --claves "$T/claves-k1" --salida "$T/salida"
+}
+red bien; debe_ir "redirección dentro del operador → 0"
+afirmar "…se siguió el salto" grep -q objects.githubusercontent.com "$T/peticiones"
+red mala; debe_fallar "redirección a otro operador → ≠ 0" "otro operador"
+negar "…sin conectar con el otro host" grep -q evil.invalid "$T/peticiones"
+red plana; debe_fallar "redirección a http:// → ≠ 0" "no https"
+red bucle; debe_fallar "bucle de redirecciones → ≠ 0" demasiadas
 
 # La puerta va antes de la red: con una fila mala no se descarga ni la buena.
 lock "$(tarfila "$K1")" "$(fila cab v2 git "$GURL" PENDIENTE-TAREA-10 "$C2" inc - - - "$ESPEJO")"

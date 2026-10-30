@@ -127,6 +127,14 @@ for o in '--cap-drop ALL' '--security-opt no-new-privileges' '--read-only' '--us
 done
 afirmar "ffmpeg-build montado solo lectura en ambos" test "$(grep -c '/build/ffmpeg-build:ro' <<<"$logica")" -ge 2
 negar "sin socket de Docker ni GITHUB_WORKSPACE" grep -qE 'docker.sock|GITHUB_WORKSPACE' "$B"
-negar "--sin-descarga con --fuentes vacío → ≠ 0 (antes de Docker)" bash -c "cd '$TMP_TEST' && sed 's#bash \"\$AQUI/comprobar-pendientes.sh\"#:#' '$B' >c.sh && bash c.sh --sin-descarga --fuentes vacio --salida s"
+ejecutar bash -c "cd '$TMP_TEST' && sed 's#bash \"\$AQUI/comprobar-pendientes.sh\"#:#' '$B' >c.sh && bash c.sh --sin-descarga --fuentes vacio --salida s"
+if [ "$CODIGO" -ne 0 ] && grep -q -- '--sin-descarga y .*vacía' <<<"$SALIDA"; then ok "--sin-descarga con --fuentes vacío → ≠ 0 antes de Docker"; else mal "--sin-descarga vacío: $SALIDA"; fi
+
+# --- copiar_amf: la raíz de las cabeceras sale de core/Version.h (ruling AMF) ----------------
+amf() { mkdir -p "$TMP_TEST/$1/$2/core"; echo v >"$TMP_TEST/$1/$2/core/Version.h"; }
+amf a1 .; afirmar "AMF con core/ en la raíz" con "copiar_amf '$TMP_TEST/a1' '$TMP_TEST/i1' && test -f '$TMP_TEST/i1/AMF/core/Version.h'"
+amf a2 amf/public/include; afirmar "AMF con core/ bajo amf/public/include" con "copiar_amf '$TMP_TEST/a2' '$TMP_TEST/i2' && test -f '$TMP_TEST/i2/AMF/core/Version.h'"
+mkdir -p "$TMP_TEST/a3"; negar "AMF sin core/Version.h → ≠ 0" con "copiar_amf '$TMP_TEST/a3' '$TMP_TEST/i3'"
+amf a4 x; amf a4 y; negar "AMF con dos core/Version.h → ≠ 0" con "copiar_amf '$TMP_TEST/a4' '$TMP_TEST/i4'"
 
 fin

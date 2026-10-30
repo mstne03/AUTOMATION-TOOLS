@@ -24,9 +24,11 @@ epoch=$(awk -F'\t' '$1 == "source-date-epoch" {print $2}' "$LOCK")
 bash "$AQUI/compilar.sh" --comprobar-fuentes "$FUENTES" "$LOCK" >/dev/null
 esperados=" $(awk -F'\t' '$3 == "tar" { n = split($4, u, "/"); print u[n]; if ($8 != "-") print u[n] ".asc" }
   $3 == "git" { print $1 "-" $2 ".tar" }' "$LOCK" | tr '\n' ' ') "
+shopt -s dotglob   # también los ocultos: cp -r los empaquetaría
 for f in "$FUENTES"/*; do
   [[ "$esperados" == *" $(basename "$f") "* ]] || { echo "ERROR: fichero ajeno al lock en las fuentes: $(basename "$f")" >&2; exit 1; }
 done
+shopt -u dotglob
 
 nombre=ffmpeg-fuente-correspondiente-$REV
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT

@@ -20,7 +20,7 @@
 #   - `publicar` no ejecuta nada del árbol: descarga los artefactos de ESTA ejecución, comprueba que
 #     son los bytes que verificaron `verificar` y `empaquetar`, atesta y crea la release.
 # Marcadores de la Tarea 10: la puerta de `construir` falla mientras quede alguno, antes de
-# descargar nada (incluidos los SHA de dos acciones, que se fijan en la Tarea 10).
+# descargar nada.
 name: ffmpeg-lgpl
 
 on:
@@ -96,11 +96,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build-a
           path: ${{ runner.temp }}/a
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build-b
           path: ${{ runner.temp }}/b
@@ -135,11 +135,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build-a
           path: ${{ runner.temp }}/a
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: fuentes
           path: ${{ runner.temp }}/fuentes
@@ -186,11 +186,11 @@ jobs:
           [ "$REPO_FUENTE" = "$GITHUB_REPOSITORY" ] \
             || { echo "::error::Solo se publica desde el repositorio público de la oferta (REPO_FUENTE, R7)"; exit 1; }
           echo "rev=$(awk -F'\t' '$1 == "ffmpeg" {print $2}' video-mcp-server/ffmpeg-build/fuentes.lock)-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build-a
           path: ${{ runner.temp }}/dist
-      - uses: actions/download-artifact@PENDIENTE-TAREA-10 # v4.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: publicacion
           path: ${{ runner.temp }}/dist
@@ -208,7 +208,7 @@ jobs:
           sha256sum -c SHA256SUMS
           fuente=$(sha256sum "ffmpeg-fuente-correspondiente-$REV.tar.xz" | cut -d' ' -f1)
           [ "$fuente" = "$ESPERADO_FUENTE" ] || { echo "::error::tarball de fuente $fuente ≠ empaquetado $ESPERADO_FUENTE"; exit 1; }
-      - uses: actions/attest-build-provenance@PENDIENTE-TAREA-10 # v2.x: fijar el SHA de una tag con ≥ 2 semanas
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
             ${{ runner.temp }}/dist/ffmpeg.exe

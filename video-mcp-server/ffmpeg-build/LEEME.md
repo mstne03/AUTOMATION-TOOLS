@@ -4,9 +4,9 @@ Build reproducible de `ffmpeg.exe` + `ffprobe.exe` para win64, LGPL-2.1-o-poster
 que usan HyperFrames y el motor de vídeo. Sustituirá al ffmpeg de BtbN del instalador en W3.2.
 
 **Estado:** tareas 1–9 hechas sin red. Quedan marcadores `PENDIENTE-TAREA-10` (hashes, commits,
-huellas, anclajes, digest de la imagen, snapshot de Debian, versiones de paquetes, SHA de dos
-acciones). Ninguna construcción real arranca mientras quede uno: `comprobar-pendientes.sh` es la
-primera orden de `construir.sh` y del job `construir`, antes de cualquier descarga.
+huellas, anclajes, digest de la imagen, snapshot de Debian y versiones de paquetes). Ninguna
+construcción real arranca mientras quede uno: `comprobar-pendientes.sh` es la primera orden de
+`construir.sh` y del job `construir`, antes de cualquier descarga.
 
 ## Archivos
 
@@ -19,11 +19,12 @@ primera orden de `construir.sh` y del job `construir`, antes de cualquier descar
 | `Dockerfile` | Imagen de construcción: base por digest, paquetes del snapshot con versión exacta, usuario no root |
 | `comprobar-pendientes.sh` | Puerta: ningún `PENDIENTE-TAREA-10` en las entradas del build |
 | `comprobar-inrelease.sh` | Ancla el InRelease del snapshot (SHA-256 y `Date:` ≤ marca de tiempo) |
-| `descargar-fuentes.sh` | Única fase con red: HTTPS sin redirecciones, SHA-256, GPG con huella exacta y anclaje en dos canales, git por commit + `git archive` + espejo |
+| `descargar-fuentes.sh` | Única fase con red: HTTPS, redirecciones solo dentro del operador, SHA-256, GPG con huella exacta y anclaje en dos canales, git por commit + `git archive` + espejo |
 | `compilar.sh` | Dentro del contenedor y sin red: zlib → dav1d → nv-codec-headers → AMF → ffmpeg |
 | `construir.sh` | Orquesta: puerta, imagen, descarga (un contenedor) y compilación (otro, `--network none`) |
 | `verificar-configuracion.sh` | Puerta de licencia y superficie sobre `-buildconf`/`FFMPEG_CONFIGURATION` |
 | `verificar-binario.sh` | Sobre el `.exe` real en Windows: listados exactos, `-L`, PE, decodificación, tubería, protocolos, rutas |
+| `pe.sh` | Lector PE32+ (banderas y tabla de importación) y lista cerrada de DLL; lo carga `verificar-binario.sh` |
 | `recopilar-avisos.sh`, `empaquetar-fuente.sh` | `LICENSES/`, `LEEME-FFMPEG.txt` y el tarball reproducible del código fuente correspondiente |
 | `comparar-builds.sh` | Dos construcciones deben ser idénticas bit a bit |
 | `tests/` | `run.sh` y un `*.test.sh` por pieza; `muestras/` (≤ 30 KB, sintéticas, ver `PROCEDENCIA.md`) |
@@ -65,17 +66,22 @@ resumen qué pasó (con el `safe=1` por defecto del demuxer concat, BtbN la rech
 NVENC y AMF cargan su DLL en tiempo de ejecución: `compilar.sh` exige que sea por `win32_dlopen`,
 que llama a `LoadLibraryExW` con `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`.
 Con esas banderas **la carpeta del `.exe` se busca antes que System32**: una `nvEncodeAPI64.dll` o
-`amfrt64.dll` plantada junto a `ffmpeg.exe` se cargaría en lugar de la del driver. Nunca se usan
-el cwd ni el PATH. Lo que lo cierra es requisito de W3.2: el ffmpeg vive en una carpeta propia de
-la instalación con un manifiesto cerrado de ficheros (SHA-256 de `ffmpeg.exe`/`ffprobe.exe` y
-nada más), y el motor rechaza cualquier `.dll` extra en ella antes de invocarlo, como hace con el
-navegador (I4). `verificar-binario.sh` comprueba además que la tabla de importación solo nombra
-DLL de System32 de una lista cerrada.
+`amfrt64.dll` plantada junto a `ffmpeg.exe` se cargaría en lugar de la del driver. Por `dlopen`
+nunca se usan el cwd ni el PATH; eso vale solo para esa vía: las DLL de la tabla de importación
+estática las resuelve el cargador de Windows con su orden normal, que también empieza por la
+carpeta del `.exe`. Lo que cierra ambas vías es requisito de W3.2: el ffmpeg vive en una carpeta
+propia de la instalación con un manifiesto cerrado de ficheros (SHA-256 de
+`ffmpeg.exe`/`ffprobe.exe` y nada más), y el motor rechaza cualquier `.dll` extra en ella antes de
+invocarlo, como hace con el navegador (I4). `verificar-binario.sh` comprueba además que la tabla
+de importación solo nombra DLL de System32 de una lista cerrada (`pe.sh`); esa lista cubre solo
+la tabla **estática**, no las delay-imports ni lo que se carga en ejecución.
 
 ## Cadena de suministro
 
-- **Fuentes**: versión exacta, HTTPS (`--proto =https --tlsv1.2`, sin redirecciones, tamaño
-  máximo; URL sin usuario ni puerto, host normalizado). Si el proyecto firma, GPG en un
+- **Fuentes**: versión exacta, HTTPS (`--proto =https --tlsv1.2`, tamaño máximo; URL con host en
+  lista blanca de caracteres, sin usuario ni puerto). curl no sigue redirecciones: el script
+  comprueba cada salto antes de hacerlo y debe seguir en HTTPS y en el mismo operador (los assets
+  de GitHub saltan a `*.githubusercontent.com`). Si el proyecto firma, GPG en un
   `GNUPGHOME` temporal: `claves/<nombre>.asc` con exactamente una clave primaria, la de la columna
   `huella`; gpg debe salir con 0; se rechazan `EXPKEYSIG`/`REVKEYSIG`/`BADSIG`/`ERRSIG`/`EXPSIG`
   (gpg sale con 0 con clave caducada o revocada: esa línea es la única barrera, y el test lo
@@ -89,12 +95,16 @@ DLL de System32 de una lista cerrada.
   el canal `debian:<paquete>`**, que el script verifica de verdad: InRelease anclado →
   `Sources.xz` → `.dsc` y `debian.tar.*` por SHA-256 → `debian/upstream/signing-key.asc` debe
   contener la huella.
-- **git** (nv-codec-headers, AMF): commit de 40 hex, la etiqueta debe apuntar a él, SHA-256 del
+- **git** (nv-codec-headers): commit de 40 hex, la etiqueta debe apuntar a él, SHA-256 del
   `git archive` (con `core.autocrlf=false`) y `canal2` debe ser otro repositorio `.git` de otro
   operador que dé el mismo commit y archive (L1). El SHA del `git archive` que se commitea se
-  recalcula **dentro de la imagen fijada** (con su git) antes de escribirlo en el lock. AMF: solo
-  el subárbol `amf/public/include`; necesita un espejo comparable para `canal2` (Tarea 10).
-  Un tarball sin firma necesita `canal2` con un `.sha256` de otro operador que contenga el hash.
+  recalcula **dentro de la imagen fijada** (con su git) antes de escribirlo en el lock.
+- **Tarball sin firma** (AMF, ruling del orquestador): asset `AMF-headers-v….tar.gz` de la release
+  de GitHub, con SHA-256 y `canal2` = PKGBUILD de Arch fijado a commit, cuyo `sha256sums` debe
+  contener ese hash. A confirmar en la Tarea 10: la URL exacta del asset; el reparto del tarball
+  (`copiar_amf` toma el directorio que contiene `core/Version.h`, esté donde esté) y que
+  `core/Platform.h` existe a un nivel de la raíz con el MIT en la cabecera (regla de
+  `recopilar-avisos.sh`). Si no cuadra, el build o los avisos fallan, no se omite nada.
 - **Imagen**: base por digest; apt solo de `snapshot.debian.org` con marca de tiempo fija, cada
   paquete con `=versión` y el InRelease anclado por SHA-256 (fija también las dependencias);
   `apt-get update --error-on=any` sin redirecciones, y nada de `trusted=yes` ni repositorios
@@ -151,8 +161,9 @@ pendiente de Marc), sin PAT:
    la etiqueta en GitHub). El SHA del `git archive` que se escribe en el lock es el calculado
    **dentro de la imagen fijada** (`docker run … descargar-fuentes.sh --arranque`), no en Windows.
 2. AMF: leer en el `configure` de 7.1.5 la versión mínima (`grep -n "AMF_VERSION" configure`),
-   fijar en `version` la etiqueta mínima que la cumpla (candidata `v1.4.36`) y repetir el paso 1
-   para esa fila. Comprobar también el mínimo de nv-codec-headers (`n12.1.14.0`).
+   fijar en `version` y en la URL del asset la release mínima que la cumpla (candidata `v1.4.36`),
+   elegir el commit del PKGBUILD de `amf-headers` que lleve esa versión (columna `canal2`) y
+   repetir el paso 1 para esa fila. Comprobar también el mínimo de nv-codec-headers (`n12.1.14.0`).
 3. Claves: exportar cada una a `claves/<nombre>.asc`, comparar su huella con los dos canales de
    anclaje (tabla en `claves/LEEME.md`) y escribir `huella` y `anclaje` en `fuentes.lock`.
 4. `SOURCE_DATE_EPOCH` = fecha de la release de ffmpeg 7.1.5 (p. ej. la mtime de su `VERSION`).
@@ -161,16 +172,13 @@ pendiente de Marc), sin PAT:
 
 5. Digest de `debian:trixie-slim`, marca de tiempo del snapshot, versión exacta de cada paquete
    en ese snapshot y SHA-256 de su `InRelease` (en `Dockerfile` y `fuentes.lock`).
-6. SHA de `actions/download-artifact` (v4) y `actions/attest-build-provenance` (v2) de una
-   etiqueta con ≥ 2 semanas (`gh api repos/actions/<acción>/git/ref/tags/<tag>`), comprobados
-   con zizmor.
-7. `bash tests/run.sh --estricto` en verde → `workflow_dispatch`. `comparar-builds` debe dar
+6. `bash tests/run.sh --estricto` en verde → `workflow_dispatch`. `comparar-builds` debe dar
    idéntico; si no, diffoscope antes de seguir (aceptar un residuo exige una lista cerrada de
    secciones PE en `comparar-builds.sh`, con test).
-8. Revisar los listados reales contra `autoseleccionados.txt` y quitar su línea `PENDIENTE`.
-9. **Testigo (M5):** Marc ejecuta `construir.sh` en su máquina; su `SHA256SUMS` debe coincidir con
+7. Revisar los listados reales contra `autoseleccionados.txt` y quitar su línea `PENDIENTE`.
+8. **Testigo (M5):** Marc ejecuta `construir.sh` en su máquina; su `SHA256SUMS` debe coincidir con
    el de CI. Marc prueba `h264_nvenc` y `h264_mf` (RTX 4060). QSV fuera; AMF sin GPU AMD dedicada.
-10. Anotar aquí los SHA-256 de `ffmpeg.exe`/`ffprobe.exe` y la URL del asset para W3.2.
+9. Anotar aquí los SHA-256 de `ffmpeg.exe`/`ffprobe.exe` y la URL del asset para W3.2.
 
 ### Descargas que pedirá la Tarea 10
 
@@ -181,7 +189,7 @@ pendiente de Marc), sin PAT:
 | 3 | `dav1d-1.5.4.tar.xz` + `.asc` + `.sha256` | https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/ | ~1 MB | A |
 | 4 | `zlib-1.3.2.tar.xz` + `.asc` | https://zlib.net/ | ~1,3 MB | A |
 | 5 | nv-codec-headers `n12.1.14.0` (clon parcial) | GitHub FFmpeg/nv-codec-headers y git.videolan.org | ~1 MB ×2 | A |
-| 6 | AMF headers (clon parcial, solo `amf/public/include`) | GitHub GPUOpen-LibrariesAndSDKs/AMF | ~1–5 MB | A |
+| 6 | `AMF-headers-v….tar.gz` y el PKGBUILD de `amf-headers` fijado a commit | GitHub GPUOpen-LibrariesAndSDKs/AMF (releases), gitlab.archlinux.org | < 1 MB | A |
 | 7 | Anclajes: `InRelease`, `Sources.xz`, `.dsc` y `debian.tar.*` de ffmpeg, dav1d y zlib del snapshot (los baja y verifica el propio script); PKGBUILD de Arch fijados a commit | snapshot.debian.org, gitlab.archlinux.org | ~3 MB | A |
 | 8 | Imagen `debian:trixie-slim` | Docker Hub (por digest) | ~30 MB | B |
 | 9 | Paquetes de Debian (MinGW-w64, nasm, meson, ninja, pkgconf, gpg, git, curl…) | snapshot.debian.org | ~400–600 MB, ~1,2 GB instalados | B |

@@ -29,18 +29,19 @@ error() { echo "ERROR: $*" >&2; exit 1; }
 export GIT_TERMINAL_PROMPT=0 LC_ALL=C
 hex() { [[ "$1" =~ ^[0-9a-f]{$2}$ ]]; }
 
-# Autoridad de una URL https://, normalizada (minúsculas, sin punto final). Sin usuario (@) ni
-# puerto (:): con ellos «https://zlib.net@otro/» parecería zlib.net y no lo es.
+# Autoridad de una URL https://, normalizada (minúsculas, sin punto final). Lista blanca de
+# caracteres: con @, :, ?, #, \ o %, «https://zlib.net?.debian.org/» parecería de un host y curl
+# iría a otro.
 host() {
-  local a=${1#https://}; a=${a%%/*}
-  [[ -n "$a" && "$a" != *[@:]* ]] || return 1
-  a=${a,,}; echo "${a%.}"
+  local a=${1#https://}; a=${a%%/*}; a=${a,,}
+  [[ "$a" =~ ^[a-z0-9.-]+$ ]] || return 1
+  echo "${a%.}"
 }
 # Independencia por OPERADOR, no por nombre de host: tabla cerrada. Un host fuera de ella no vale
 # como canal (tampoco los keyservers). Subdominios incluidos (downloads.videolan.org → videolan).
 declare -A OPERADORES=(
   [ffmpeg.org]=ffmpeg [videolan.org]=videolan [zlib.net]=zlib-madler [madler.net]=zlib-madler
-  [github.com]=github [debian.org]=debian [archlinux.org]=arch
+  [github.com]=github [githubusercontent.com]=github [debian.org]=debian [archlinux.org]=arch
 )
 operador() { # <host> → operador, o falla si no está en la tabla
   local d
@@ -76,12 +77,12 @@ validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
 validar_fila() { # campos de la fila
   local nombre=$1 version=$2 tipo=$3 url=$4 sha=$5 commit=$6 ruta=$7 firma=$8 huella=$9 anclaje=${10} canal2=${11}
   if [ "$ARRANQUE" = 0 ] && [[ "$*" == *PENDIENTE* ]]; then error "$nombre: celda PENDIENTE en fuentes.lock (Tarea 10)"; fi
-  host "$url" >/dev/null && [[ "$url" == https://* ]] || error "$nombre: la URL debe ser https:// sin usuario ni puerto ($url)"
+  host "$url" >/dev/null && [[ "$url" == https://* ]] || error "$nombre: la URL debe ser https:// con host válido, sin usuario ni puerto ($url)"
   [ "$firma" = - ] || { host "$firma" >/dev/null && [[ "$firma" == https://* ]]; } || error "$nombre: firma no válida ($firma)"
   [ "$ARRANQUE" = 1 ] && return 0
   hex "$sha" 64 || error "$nombre: sha256 no válido"
   case "$tipo" in
-    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un .sha256 de otro operador)" ;;
+    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)" ;;
     git) hex "$commit" 40 || error "$nombre: commit de 40 hex obligatorio"
          [[ "$canal2" == https://*.git ]] || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable" ;;
     *) error "$nombre: tipo '$tipo' desconocido" ;;
@@ -91,6 +92,7 @@ validar_fila() { # campos de la fila
     op2=$(operador_url "$canal2") || error "$nombre: canal2 no es de un operador conocido ($canal2)"
     op=$(operador_url "$url") || error "$nombre: la URL no está en la tabla de operadores"
     [ "$op2" != "$op" ] || error "$nombre: canal2 es del mismo operador que la descarga ($op)"
+    [ "$op2" != arch ] || [[ "$canal2" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$nombre: canal2: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)"
   fi
   if [ "$firma" != - ]; then
     [[ "$huella" =~ ^[0-9A-F]{40}$ ]] || error "$nombre: huella de 40 hex en mayúsculas obligatoria"
@@ -102,15 +104,30 @@ validar_fila() { # campos de la fila
   fi
 }
 
+# curl nunca sigue una redirección por su cuenta: cada salto se comprueba antes de hacer la
+# petición y debe quedarse en el mismo operador (los assets de GitHub saltan a
+# *.githubusercontent.com). A otro operador no se llega a conectar.
 obtener() { # <url> <destino>
   if [ -n "$ORIGEN" ]; then
     cp "$ORIGEN/$(basename "$1")" "$2" 2>/dev/null || error "no está en el origen: $(basename "$1")"
-  else
-    local codigo
-    codigo=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-redirs 0 \
-      --max-filesize 209715200 -o "$2" -w '%{http_code}' "$1") || error "descarga fallida: $1"
-    [ "$codigo" = 200 ] || error "respuesta $codigo (sin redirecciones) para $1"
+    return 0
   fi
+  local u=$1 op r codigo siguiente
+  op=$(operador_url "$u") || error "la URL no está en la tabla de operadores: $u"
+  for _ in 1 2 3 4; do
+    r=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-redirs 0 \
+      --max-filesize 209715200 -o "$2" -w '%{http_code} %{redirect_url}' "$u") || error "descarga fallida: $u"
+    codigo=${r%% *}; siguiente=${r#* }
+    case "$codigo" in
+      200) return 0 ;;
+      301 | 302 | 303 | 307 | 308) ;;
+      *) error "respuesta $codigo para $u" ;;
+    esac
+    [[ "$siguiente" == https://* ]] || error "redirección no https desde $u: $siguiente"
+    [ "$(operador_url "$siguiente" || true)" = "$op" ] || error "redirección a otro operador desde $u: $siguiente"
+    u=$siguiente
+  done
+  error "demasiadas redirecciones: $1"
 }
 
 # Firma OpenPGP (R0 M4, R1 LOW-5): claves/<nombre>.asc con exactamente una clave primaria, que es la
