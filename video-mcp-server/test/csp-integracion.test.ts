@@ -265,7 +265,7 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     expect(r["preview-sin-csp"].netlog?.instrumento, "el net-log no registra resoluciones: la sonda de dns-prefetch no mide nada").toBe(true);
   });
   fallaConocida("control positivo: sin CSP ni <meta x-dns-prefetch-control>, la preview hace dns-prefetch", "diseño de la preview (el iframe sandbox de headless-shell no prefetchea)", () => r["preview-sin-csp"], (m) =>
-    expect(m.netlog?.prefetch, NO_MIDE).toBe(true),
+    expect(m.netlog!.prefetch, NO_MIDE).toBe(true),
   );
   it.skip("sonda (c): dns-prefetch no resuelve en la preview — sin control positivo posible (ver el control de arriba)", () => {});
 
@@ -289,4 +289,5 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
   fallaConocida("sonda (d): window.open no llega a loopback en el render", "W1.3", () => r["nav-abre"], (m) => expect(m.cuenta.ventana).toBe(0));
   fallaConocida("sonda (d): location no llega a loopback en el render", "W1.3", () => r["nav-abre"], (m) => expect(m.cuenta.location).toBe(0));
   fallaConocida("sonda (d): meta refresh no llega a loopback en el render", "W1.3", () => r["nav-refresco"], (m) => expect(m.cuenta.refresco).toBe(0));
+  it.skip("sonda (d): navegación de primer nivel hacia fuera (window.open, location, meta refresh a 203.0.113.1) — salida real sin medir con sumidero; dueño W1.3", () => {});
 });
