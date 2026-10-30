@@ -39,7 +39,7 @@ afirmar "publicar: environment: release" grep -qx '    environment: release' <<<
 afirmar "publicar: ESPERADO viene de verificar" grep -qF 'ESPERADO: ${{ needs.verificar.outputs.sha256 }}' <<<"$P"
 afirmar "publicar: ESPERADO_FUENTE viene de empaquetar" grep -qF 'ESPERADO_FUENTE: ${{ needs.empaquetar.outputs.sha256 }}' <<<"$P"
 # Las comparaciones en sí, con su salida de error: declarar ESPERADO no compara nada.
-compara() { grep -nE "^ +$1 \|\| \{ .*exit 1; \}$" <<<"$P" | head -1 | cut -d: -f1; }
+compara() { { grep -nE "^ +$1 \|\| \{ .*exit 1; \}$" <<<"$P" || true; } | head -1 | cut -d: -f1; }
 c1=$(compara '\[ "\$real" = "\$ESPERADO" \]'); c2=$(compara '\[ "\$fuente" = "\$ESPERADO_FUENTE" \]')
 afirmar "publicar: real sale del SHA256SUMS descargado" grep -qE '^ +real=\$\(sha256sum SHA256SUMS ' <<<"$P"
 afirmar "publicar: fuente sale del tarball descargado" grep -qF 'fuente=$(sha256sum "ffmpeg-fuente-correspondiente-$REV.tar.xz"' <<<"$P"
