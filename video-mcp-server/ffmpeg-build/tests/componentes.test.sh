@@ -47,7 +47,8 @@ mapfile -t fmts < <(cat "${fuentes_ts[@]}" | grep -oE '"-f", "[a-z0-9_]+"' | sed
 mapfile -t fils < <(cat "${fuentes_ts[@]}" | grep -oE '[]"`,;}][a-z][a-z0-9_]*=' | sed -E 's/^.//; s/=$//' | sort -u)
 [ "${#cods[@]}" -gt 0 ] && [ "${#fils[@]}" -gt 0 ] || mal "la extracción de src/*.ts no encontró nada (¿cambió el formato?)"
 for c in "${cods[@]}"; do cubre "${FF_LISTAS[encoder]}" "$c" "codificador"; done
-for f in "${fmts[@]}"; do cubre "${FF_LISTAS[muxer]}" "$f" "formato"; done
+# `-f` es muxer de salida o dispositivo de entrada (lavfi, de las sondas de render.ts).
+for f in "${fmts[@]}"; do cubre "${FF_LISTAS[muxer]} ${FF_LISTAS[indev]}" "$f" "formato"; done
 for f in "${fils[@]}"; do cubre "${FF_LISTAS[filter]}" "$f" "filtro"; done
 
 fin
