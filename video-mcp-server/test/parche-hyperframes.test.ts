@@ -8,13 +8,17 @@ import http from "node:http";
 import type net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SERVER_ROOT } from "../src/raiz.js";
 import {
+  accesos,
   BYPASS,
   chunk,
   cli,
   conecta,
+  conEspia,
+  copiaSinParche,
   DIST,
   ENTORNO_CERRADO,
   entornoLimpio,
@@ -26,6 +30,7 @@ import {
   MARCADOR,
   PARCHE,
   PROXY_NULO,
+  RENDER_ESPIADO,
   RESOLVER,
   sumidero,
   type Sumidero,
@@ -44,8 +49,12 @@ const PARCHEADOS = [
   "dist/chunk-MFHYBSJC.js",
   "dist/chunk-N7ZMDVAK.js",
   "dist/chunk-OZUAVHFE.js",
+  "dist/chunk-PBNWRWKA.js",
   "dist/chunk-RDDVQSNQ.js",
   "dist/chunk-X7RXXBYM.js",
+  "dist/cli.js",
+  "dist/seo-studio-cierre.js",
+  "dist/warmCheck.js",
 ];
 /** El error de todo hunk que corta una salida de red de Node (I14). */
 const CERRADO = "SEO Studio: HyperFrames no descarga recursos remotos en modo cerrado (I14)";
@@ -64,6 +73,15 @@ function lineasDist(): { fichero: string; linea: number; texto: string }[] {
   return out;
 }
 
+type Linea = { fichero: string; linea: number; texto: string };
+
+/** Diferencia entre lo que casa con `re` en `lineas` y la lista cerrada: lo sin clasificar y lo que falta. */
+function sinClasificar(lineas: Linea[], re: RegExp, lista: Record<string, Record<string, number[]>>): string[] {
+  const halladas = lineas.filter((l) => re.test(l.texto)).map((l) => `${l.fichero}:${l.linea}`);
+  const esperadas = Object.values(lista).flatMap((g) => Object.entries(g).flatMap(([f, ls]) => ls.map((n) => `${f}:${n}`)));
+  return [...halladas.filter((h) => !esperadas.includes(h)), ...esperadas.filter((e) => !halladas.includes(e)).map((e) => `falta ${e}`)];
+}
+
 /** «fichero:línea» de cada línea del dist que casa con `re`. */
 function inventario(re: RegExp): string[] {
   return lineasDist()
@@ -71,37 +89,46 @@ function inventario(re: RegExp): string[] {
     .map((l) => `${l.fichero}:${l.linea}`);
 }
 
-/** Cualquier forma de abrir red desde Node que aparezca en el dist, también por alias o importación. */
-const RED_NODE = /\b(fetch|fetchImpl|doFetch|axios)\b|\bhttps?\.(get|request)\b|\bhttps?(Get|Request)\b|(from |require\()"(node:)?(https?|http2|net|tls|dgram|undici)"/;
+/**
+ * Formas conocidas de abrir red desde Node, también por alias o importación dinámica. No es «cualquier
+ * forma»: PROCESOS_NODE cubre los hijos, y queda fuera lo que no sea dist/*.js de primer nivel
+ * (@puppeteer/browsers y puppeteer-core, por ejemplo).
+ */
+const RED_NODE = /\b(fetch|fetchImpl|doFetch|axios|undici)\b|\bhttps?\.(get|request)\b|\bhttps?(Get|Request)\b|\b(net|tls)\.(connect|createConnection)\b|\bdns\.[a-zA-Z]+|\bnew (dns\.)?Resolver\b|\bnew (WebSocket|EventSource)\b|\b(from|require\(|import\()\s*["'`](node:)?(https?|http2|net|tls|dgram|dns(\/promises)?|undici|ws)["'`]|\bimport\(\s*(?!["'`]\.\.?\/)|["'`](curl|wget|certutil|bitsadmin)(\.exe)?["'`]/;
+/** Toda llamada a child_process y toda importación suya, también con el alias numerado del empaquetador. */
+const PROCESO_NODE = /(?<![\w$])(spawn|spawnSync|execSync|execFile|execFileSync|fork)\d*\(|(?<![.\w$])exec\d*\(|\b(from|require\(|import\()\s*["'`](node:)?child_process["'`]/;
 
 // Lista cerrada de TODAS las coincidencias de RED_NODE en el dist parcheado. Una línea nueva o movida
 // rompe el test: tras subir de versión hay que clasificarla, no copiarla. Detalle en el informe de W1.3.
 const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
   // Alcanzables desde render/check/snapshot y cortadas por un hunk (no llegan a ejecutarse).
   cerradas: {
-    "chunk-L5MFWGGU.js": [6641], // inlineExternalScripts
-    "chunk-N7ZMDVAK.js": [4180, 4199, 4570, 4576], // Google Fonts: fetchFontResource lanza antes
+    "chunk-L5MFWGGU.js": [6643], // inlineExternalScripts
+    "chunk-N7ZMDVAK.js": [4181, 4200, 4571, 4577], // Google Fonts: fetchFontResource lanza antes
     "chunk-RDDVQSNQ.js": [11427], // fetchWithValidatedRedirects: pasa antes por assertPublicHttpsUrl
   },
   // Alcanzables, pero solo contra el servidor propio en 127.0.0.1 o por un par de sockets en memoria.
   loopback: {
     "chunk-2S263R6D.js": [40, 69],
     "chunk-3R6SXPHD.js": [93, 166],
-    "chunk-543U46OR.js": [13, 14, 49, 139, 236, 315, 324, 335, 345, 349, 370, 372, 378, 380],
+    "chunk-543U46OR.js": [13, 14, 49, 139, 228, 236, 315, 324, 335, 345, 349, 370, 372, 378, 380],
     "chunk-AJSU6KGS.js": [259],
-    "chunk-RDDVQSNQ.js": [5743],
+    "chunk-RDDVQSNQ.js": [5744],
   },
   // RESIDUAL: alcanzables, y solo las apaga el entorno (ENTORNO_CERRADO); W1.6 tiene que fijarlo siempre.
   soloEntorno: {
     "chunk-FJW757TF.js": [86, 111], // telemetría: HYPERFRAMES_NO_TELEMETRY / DO_NOT_TRACK
+    "chunk-G6W55MTX.js": [140], // @puppeteer/browsers: ensureBrowser no llega con HYPERFRAMES_BROWSER_PATH (I13, W1.6 la fija siempre)
+    "chunk-K4WIOZFP.js": [9, 19], // hostAnswers: DNS de telemetría, skills y versión, con sus mismas variables
     "chunk-NNLQTG3M.js": [293], // skills: HYPERFRAMES_SKIP_SKILLS / sin comprobación de versión
     "chunk-XOM3XTJ4.js": [198], // versión nueva: HYPERFRAMES_NO_UPDATE_CHECK
+    "renderSetupWorker.js": [49], // ídem: instala el navegador solo si lo pide ensureBrowser
   },
   // Código que corre dentro de Chrome (sujeto a CSP, sandbox y proxy nulo), no en Node.
   enChrome: {
     "capture-KKD5GMAF.js": [1690],
     "chunk-KLIPVNCO.js": [4574],
-    "chunk-RDDVQSNQ.js": [4022, 6135],
+    "chunk-RDDVQSNQ.js": [4023, 6136],
     "hyperframe.runtime.iife.js": [43, 366, 373, 1130],
   },
   // Otros comandos o flags que el motor no usa con render/check/snapshot.
@@ -115,45 +142,139 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-7SXL476O.js": [9328, 9804],
     "chunk-CE7EQUBV.js": [14, 15, 39, 45, 59, 114, 122],
     "chunk-CZUAX3BV.js": [20, 24],
-    "chunk-ELP5QZWL.js": [422, 426, 446, 543, 759, 767, 785, 824, 887, 893, 919, 926, 963, 971],
+    "chunk-ELP5QZWL.js": [422, 426, 446, 543, 664, 759, 767, 785, 824, 887, 893, 919, 926, 963, 971],
     "chunk-HJAJ6W4V.js": [34],
-    "chunk-N7ZMDVAK.js": [528, 529, 577, 578, 2084, 2085, 2133, 2134], // cargador wasm: el binario va en data:
+    "chunk-MNNK7RV5.js": [55],
+    "chunk-N7ZMDVAK.js": [529, 530, 578, 579, 2085, 2086, 2134, 2135], // cargador wasm: el binario va en data:
     "chunk-RDDVQSNQ.js": [9075], // declareProbeFactsUrl: solo renders distribuidos
-    "chunk-SFYLZX5C.js": [33, 34, 35, 196],
+    "chunk-SFYLZX5C.js": [31, 33, 34, 35, 120, 129, 196],
     "chunk-TSJVPPXT.js": [111, 139],
     "chunk-WQ6ZXHFQ.js": [11, 50],
     "chunk-WYB3VKLK.js": [303],
+    "cloudrun-7UOH335V.js": [110, 111],
+    "deploy-NXD3Q3KD.js": [56],
     "feedback-K5ZMMLTA.js": [94, 119],
+    "lambda-SBNUYEQE.js": [245],
+    "progress-PX3PVAIM.js": [23],
     "render-5J5PP3UK.js": [372, 374, 659, 732],
+    "render-QS3YJCBR.js": [50],
+    "render-batch-Q2LQ3D4P.js": [57],
+    "sites-Q2S3DZY4.js": [20],
     "studioServer-ZS5RA6U3.js": [1470],
     "timeline-BDO5DYWP.js": [1264, 1272],
     "usage-HG4WMM7A.js": [2116],
   },
-  // No abren red: homónimos, textos de error, comentarios, servidores y sockets locales.
+  // No abren red: homónimos, textos de error, comentarios, importaciones de librerías locales, servidores y sockets locales.
   sinRed: {
-    "capture-KKD5GMAF.js": [1688],
+    "capture-252WNPCD.js": [155, 269],
+    "capture-KKD5GMAF.js": [378, 1688],
     "catalog-6IJGNN3T.js": [997],
     "chunk-2MLMO25E.js": [6333, 6349, 9871, 9876],
     "chunk-2RY2LWAA.js": [3336, 3340, 3354, 3374, 3383, 3427, 3431],
     "chunk-4DGLKB2H.js": [2853, 2914, 2952, 2955],
-    "chunk-7SXL476O.js": [9938],
+    "chunk-6ZFDNEMY.js": [295],
+    "chunk-7SXL476O.js": [8414, 9938],
+    "chunk-CMDVJP4T.js": [221],
     "chunk-DEVZJ4AL.js": [228],
+    "chunk-DPVXBVLL.js": [14766, 14771, 16138, 16842, 16843, 16844, 16973],
     "chunk-EXAX37XR.js": [242, 243],
-    "chunk-L5MFWGGU.js": [1023, 16101, 17409, 17823],
-    "chunk-MFHYBSJC.js": [840],
-    "chunk-N7ZMDVAK.js": [4119, 4137, 4205],
-    "chunk-RDDVQSNQ.js": [5495, 6215, 11088, 11182, 11457, 11514, 11517, 12642, 18027],
+    "chunk-FULMZCDW.js": [711],
+    "chunk-L5MFWGGU.js": [1024, 16104, 17412, 17826],
+    "chunk-MFHYBSJC.js": [840, 2091],
+    "chunk-MOEGCMKI.js": [93],
+    "chunk-N7ZMDVAK.js": [4120, 4138, 4206],
+    "chunk-RDDVQSNQ.js": [914, 917, 5496, 5818, 6216, 11088, 11182, 11457, 11514, 11517, 12642, 18027, 18312, 18319],
     "chunk-WYB3VKLK.js": [277, 297],
+    "cli.js": [168],
     "get-JVIDYMVP.js": [64],
-    "play-S562STR4.js": [240],
-    "present-PGOHZT3L.js": [204],
-    "preview-JU75H4QN.js": [1792, 1858],
+    "help-XPPSLIRY.js": [134],
+    "logout-JYFWWUGK.js": [90],
+    "motionShot-DC47S7BT.js": [312],
+    "play-S562STR4.js": [213, 214, 240],
+    "present-PGOHZT3L.js": [182, 183, 204],
+    "preview-JU75H4QN.js": [1792, 1858, 1861],
     "render-5J5PP3UK.js": [1510],
     "skills-3RFMPMJA.js": [375],
-    "studioServer-ZS5RA6U3.js": [641],
+    "snapshot-5PHA43DK.js": [412, 895],
+    "studioServer-ZS5RA6U3.js": [641, 1224],
+    "timeline-BDO5DYWP.js": [1267, 1268],
     "video-ECWXMY4F.js": [63],
-    "warmCheck.js": [122],
+    "warmCheck.js": [123, 160],
     "warmCheckClient.js": [24],
+  },
+};
+
+// Lista cerrada de todo proceso hijo e importación de child_process: un spawn nuevo, aunque no nombre la red
+// (npm, curl con la orden en una variable), rompe el test y hay que clasificarlo.
+const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
+  // RESIDUAL: npm install de opcionales (HYPERFRAMES_NO_OPTIONAL_INSTALL), autoactualización y comprobaciones
+  // en segundo plano (HYPERFRAMES_NO_AUTO_INSTALL, HYPERFRAMES_NO_UPDATE_CHECK) y envío de telemetría.
+  soloEntorno: {
+    "autoUpdate-GJUDDLLO.js": [29, 56, 112, 172],
+    "backgroundChecks-BTMSW34Z.js": [26, 48],
+    "chunk-EXAX37XR.js": [187],
+    "chunk-FJW757TF.js": [107],
+  },
+  // Del grafo de render/check/snapshot: ffmpeg, ffprobe, Chrome, sondas de sistema con orden constante, y
+  // ramas que no se dan en el motor (docker con --docker, apt-get y ps fuera de Windows). Sin red propia.
+  locales: {
+    "chunk-2MLMO25E.js": [3893, 10843],
+    "chunk-4CY5RXXC.js": [18, 34, 57, 88, 110, 126, 140, 169],
+    "chunk-4UMPIPCQ.js": [9, 55],
+    "chunk-543U46OR.js": [15],
+    "chunk-5QKJPCQ4.js": [21],
+    "chunk-7FMUTGOH.js": [9, 184],
+    "chunk-7SXL476O.js": [424, 436, 3682, 3689, 4322, 8913, 9177],
+    "chunk-AXEEZKIL.js": [43, 46, 382, 843, 1189],
+    "chunk-CMDVJP4T.js": [41, 558],
+    "chunk-EXAX37XR.js": [12],
+    "chunk-FJW757TF.js": [43],
+    "chunk-G6W55MTX.js": [24, 300, 443],
+    "chunk-KGPLIH7B.js": [9, 46, 68],
+    "chunk-L5MFWGGU.js": [8783, 9174, 13968, 14190],
+    "chunk-QSFWGZG6.js": [15, 392, 397],
+    "chunk-RDDVQSNQ.js": [679, 1489, 4767, 4928, 4989, 4996, 8262, 8490, 8576, 8710, 8774, 8826, 8905, 9099, 10502, 10748, 14852, 14893, 17220],
+    "chunk-T6SD37JZ.js": [32, 37, 53],
+    "chunk-UIOZIIB7.js": [9, 109],
+    "chunk-VAS6HQX3.js": [9, 97],
+    "chunk-VDVVQNTK.js": [28],
+    "chunk-VEA7Z4PZ.js": [21, 46, 49, 151],
+    "chunk-WMQNIQDJ.js": [407],
+    "chunk-X7A7C4JS.js": [66, 71, 77, 96, 151],
+    "chunk-XDMZY3H7.js": [42, 214],
+    "chunk-ZF3R2IPC.js": [1132],
+    "render-5J5PP3UK.js": [183],
+    "render-VUVTK2JM.js": [971, 974, 990, 1031, 1624, 1646, 1758],
+    "seo-studio-cierre.js": [7],
+  },
+  // Fuera del grafo de render/check/snapshot.
+  otrosComandos: {
+    "audio-VYWWM4DB.js": [118],
+    "chunk-2RT7MXFL.js": [18, 110],
+    "chunk-5ETJX6WM.js": [9, 12, 32, 39, 59, 74],
+    "chunk-BBUK6A7Q.js": [57, 68, 80, 196],
+    "chunk-CPSGXAYD.js": [41, 124, 294],
+    "chunk-DEVZJ4AL.js": [58, 77, 88],
+    "chunk-HU2SPFNG.js": [12, 28, 34],
+    "chunk-JZIEZCQM.js": [15, 33, 49],
+    "chunk-MNNK7RV5.js": [18, 46],
+    "chunk-NNLQTG3M.js": [20],
+    "chunk-RW4DMP2Y.js": [30, 503],
+    "chunk-SFYLZX5C.js": [30, 135],
+    "chunk-X5HHHFTX.js": [34, 151, 278, 464, 486],
+    "chunk-XNFDDVJS.js": [9, 14, 23, 80, 97, 119, 156],
+    "cloudrun-7UOH335V.js": [57, 303, 309, 347],
+    "deploy-NXD3Q3KD.js": [36, 125, 140, 183, 206, 339],
+    "history-OFOPRD27.js": [62, 204],
+    "init-NTIXWA3D.js": [186, 328, 393],
+    "media-treatment-4OLWVHUY.js": [110, 153, 323],
+    "media-use-JBN57JE3.js": [18, 78],
+    "preview-JU75H4QN.js": [126, 146, 273, 1705, 1738],
+    "skills-3RFMPMJA.js": [61, 349, 357, 366],
+    "synthesize-QCRP3NI7.js": [24, 144],
+    "upgrade-KIF5Z4J3.js": [43, 217],
+    "usage-HG4WMM7A.js": [1725, 1965],
+    "warmCheckClient.js": [21, 126],
   },
 };
 
@@ -217,6 +338,19 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       }
     });
 
+    it("LOW-6: falla con error claro si git solo se resuelve dentro de la carpeta destino", () => {
+      const raiz = copia();
+      try {
+        fs.writeFileSync(path.join(raiz, process.platform === "win32" ? "git.exe" : "git"), "");
+        const env = { ...entornoLimpio(process.env, { PATH: raiz }) };
+        const r = spawnSync(process.execPath, [script, raiz], { encoding: "utf8", windowsHide: true, cwd: raiz, env });
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("git no se resuelve fuera de");
+      } finally {
+        fs.rmSync(raiz, { recursive: true, force: true });
+      }
+    });
+
     it("falla con un dist que no cuadra", () => {
       const raiz = copia();
       try {
@@ -238,8 +372,8 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       "capture-KKD5GMAF.js:199", // captura de webs, solo Linux (I14: el motor no la usa)
       "chunk-4UMPIPCQ.js:54", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
       "chunk-K4MJX7SR.js:28", // el propio hunk A (lo detecta para quitarlo)
-      "chunk-RDDVQSNQ.js:1252", // getHardwareGpuProbeArgs → marcador
-      "chunk-RDDVQSNQ.js:1529", // buildChromeArgs → marcador
+      "chunk-RDDVQSNQ.js:1253", // getHardwareGpuProbeArgs → marcador
+      "chunk-RDDVQSNQ.js:1530", // buildChromeArgs → marcador
       "chunk-RDDVQSNQ.js:15808", // efectos de audio → marcador
       "chunk-RDDVQSNQ.js:18342", // buildHdrChromeArgs → marcador (HDR cerrado por el hunk B2)
     ]);
@@ -248,7 +382,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
   it("inventario: spawn/execFile de un ejecutable de navegador solo en los sitios conocidos", () => {
     expect(inventario(/\b(spawn|spawnSync|execFile|execFileSync|runCancellableProcess)\(\s*(options\.)?(binary|executablePath|browserPath|chromePath)\s*,/)).toEqual([
       "chunk-4UMPIPCQ.js:55", // shellStarts (ver arriba)
-      "chunk-L5MFWGGU.js:14187", // ffmpeg -version (no es un navegador; casa por el nombre `binary`)
+      "chunk-L5MFWGGU.js:14190", // ffmpeg -version (no es un navegador; casa por el nombre `binary`)
       "chunk-MNNK7RV5.js:46", // openBrowser de la vista previa de HyperFrames (el motor no la usa)
       "chunk-QVTCXN42.js:216", // preflight `--version` del navegador
     ]);
@@ -257,9 +391,9 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
   it("inventario: todo .launch del dist es conocido y los que lanzan Chrome pasan por el marcador", () => {
     const sitios = inventario(/\.launch\b/);
     expect(sitios).toEqual([
-      "chunk-RDDVQSNQ.js:810", // this.options.launch: delega en launchManagedBrowser
-      "chunk-RDDVQSNQ.js:936", // sonda de GPU (probeLifecycle.launch / ppt.launch)
-      "chunk-RDDVQSNQ.js:1402", // launchBrowser del render
+      "chunk-RDDVQSNQ.js:811", // this.options.launch: delega en launchManagedBrowser
+      "chunk-RDDVQSNQ.js:937", // sonda de GPU (probeLifecycle.launch / ppt.launch)
+      "chunk-RDDVQSNQ.js:1403", // launchBrowser del render
       "chunk-RDDVQSNQ.js:18329", // HDR
       "chunk-T6SD37JZ.js:163", // launchOwnedBrowser (check, snapshot, sonda gestionada)
     ]);
@@ -468,6 +602,13 @@ describe("I13: HyperFrames no busca otro navegador", () => {
       fallaSinSenuelo(buscar({ HYPERFRAMES_BROWSER_PATH: "\\\\127.0.0.1\\c$\\x\\chrome.exe" }));
     });
 
+    it("LOW-3: la forma se comprueba antes de tocar el disco; un UNC no llega a lstat", () => {
+      const log = path.join(tmp, "lstat.log");
+      const env = conEspia(entorno({ HYPERFRAMES_BROWSER_PATH: "\\\\h.invalid\\s\\chrome.exe" }), log);
+      fallaSinSenuelo(enHijo(llamada("chunk-G6W55MTX.js", "m.findBrowser()"), env));
+      expect(accesos(log)).toEqual([]);
+    });
+
     it("flujo alternativo (ADS, «:» fuera de la unidad): error", () => {
       fs.writeFileSync(`${senuelo}:flujo`, "x");
       fallaSinSenuelo(buscar({ HYPERFRAMES_BROWSER_PATH: `${senuelo}:flujo` }), "HYPERFRAMES_BROWSER_PATH", `${senuelo}:flujo`);
@@ -602,15 +743,235 @@ describe("I14: HyperFrames no sale a la red desde Node", () => {
     expect(errorDe("chunk-N7ZMDVAK.js", con("failClosedFontFetch: true,"))).toContain("(I14)");
   });
 
-  it("inventario: toda salida de red de Node está clasificada, por fichero y línea", () => {
-    const halladas: Record<string, number[]> = {};
-    for (const l of lineasDist()) if (RED_NODE.test(l.texto)) (halladas[l.fichero] ??= []).push(l.linea);
-    const esperadas: Record<string, number[]> = {};
-    for (const grupo of Object.values(SALIDAS_NODE)) {
-      for (const [f, lineas] of Object.entries(grupo)) (esperadas[f] ??= []).push(...lineas);
+  it("inventario: toda salida de red de Node y todo proceso hijo están clasificados, por fichero y línea", () => {
+    expect(sinClasificar(lineasDist(), RED_NODE, SALIDAS_NODE)).toEqual([]);
+    expect(sinClasificar(lineasDist(), PROCESO_NODE, PROCESOS_NODE)).toEqual([]);
+  });
+
+  // Sobre una copia del texto: ninguna de estas líneas se ejecuta.
+  it.each([
+    `fetch("https://nuevo.invalid/");`,
+    `import("node:dns").then((d) => d.lookup("nuevo.invalid", () => {}));`,
+    `import("node:https").then((h) => h.default.get("https://nuevo.invalid/"));`,
+    `import("node:tls").then((t) => t.connect(443, "nuevo.invalid"));`,
+    `import("node:net").then((n) => n.createConnection(443, "nuevo.invalid"));`,
+    `new WebSocket("wss://nuevo.invalid/");`,
+    `new EventSource("https://nuevo.invalid/");`,
+    `import("node:child_process").then((c) => c.spawn("curl", ["https://nuevo.invalid/"]));`,
+    `const r = require("node:dns");`,
+    `const r = require('https');`,
+    `const r = require("net");`,
+    `const r = require('tls');`,
+    `import { lookup } from "dns";`,
+    `import { request } from 'undici';`,
+    `undici.request(u);`,
+    `net.connect(443, h);`,
+    `tls.connect(443, h);`,
+    `dns.lookup(h, cb);`,
+    `dns.resolve4(h, cb);`,
+    `spawn("wget", [u]);`,
+    `spawnSync("certutil.exe", ["-urlcache", u]);`,
+    `execFile("bitsadmin", ["/transfer", u]);`,
+    `spawn(orden, args);`,
+    `spawn3(orden, args);`,
+    `import(modulo);`,
+    `const c = require("child_process");`,
+  ])("el inventario no deja pasar: %s", (texto) => {
+    const mutado = [...lineasDist(), { fichero: "chunk-MFHYBSJC.js", linea: 999999, texto }];
+    const nuevas = [...sinClasificar(mutado, RED_NODE, SALIDAS_NODE), ...sinClasificar(mutado, PROCESO_NODE, PROCESOS_NODE)];
+    expect(nuevas).toContain("chunk-MFHYBSJC.js:999999");
+  });
+
+  it.each([`import("./chunk-X.js");`, `const a = /x/.exec(y);`, `const texto = "red";`])("control: el inventario no salta con %s", (texto) => {
+    expect(sinClasificar([{ fichero: "x.js", linea: 1, texto }], RED_NODE, {})).toEqual([]);
+    expect(sinClasificar([{ fichero: "x.js", linea: 1, texto }], PROCESO_NODE, {})).toEqual([]);
+  });
+
+  it("LOW-5: el error nombra I14 y la URL truncada, sin su consulta", () => {
+    const larga = `https://example.invalid/${"a".repeat(200)}.png?texto=secreto`;
+    const error = errorDe("chunk-RDDVQSNQ.js", `m.assertPublicHttpsUrl(${JSON.stringify(larga)})`);
+    expect(error).toContain(CERRADO);
+    expect(error).toContain("https://example.invalid/aaa");
+    expect(error!.length).toBeLessThan(CERRADO.length + 200);
+    expect(errorDe("chunk-RDDVQSNQ.js", `m.assertPublicHttpsUrl("https://example.invalid/x.png?texto=secreto")`)).not.toContain("secreto");
+  });
+});
+
+describe.runIf(process.platform === "win32")("I14: rutas UNC y referencias con otro esquema", () => {
+  const FORMAS = [
+    "//h.invalid/s/x",
+    "\\\\h.invalid\\s\\x",
+    "/\\h.invalid\\s\\x",
+    "\\/h.invalid/s/x",
+    "\\\\?\\UNC\\h.invalid\\s\\x",
+    "\\\\.\\UNC\\h.invalid\\s\\x",
+    "%5C%5Ch.invalid%5Cs%5Cx",
+    "file://h.invalid/s/x",
+    "smb://h.invalid/s/x",
+  ];
+  const ETIQUETAS: [string, (r: string) => string][] = [
+    ["<video>", (r) => `<video id="v" src="${r}.mp4" data-start="0" data-duration="1"></video>`],
+    ["<video> sin duración", (r) => `<video id="v" src="${r}.mp4" data-start="0"></video>`],
+    ["<audio>", (r) => `<audio id="a" src="${r}.mp3" data-start="0" data-duration="1"></audio>`],
+    ["<img>", (r) => `<img src="${r}.png" alt="">`],
+    ["<img> gif", (r) => `<img src="${r}.gif" alt="">`],
+    ["CSS url() en <style>", (r) => `<style>#root{background:url(${r}.png)}</style>`],
+    ["CSS url() en style=", (r) => `<div style="background:url(${r}.png)"></div>`],
+    ["@font-face", (r) => `<style>@font-face{font-family:x;src:url(${r}.woff2)}</style>`],
+    ["@import", (r) => `<style>@import url(${r}.css);</style>`],
+    ["<link>", (r) => `<link rel="stylesheet" href="${r}.css">`],
+    ["<script>", (r) => `<script src="${r}.js"></script>`],
+    ["subcomposición", (r) => `<div data-composition-src="${r}.html" data-composition-id="s" data-start="0" data-duration="1"></div>`],
+  ];
+  let tmp: string;
+  let sin: { bin: string; borrar(): void };
+  let n = 0;
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "video unc "));
+    sin = copiaSinParche();
+  });
+  afterAll(() => {
+    sin?.borrar();
+    if (tmp?.startsWith(os.tmpdir())) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /** Render sin Chrome ni ffprobe (el espía bloquea los hijos): compila y falla o llega a lanzar el navegador. */
+  async function render(cuerpo: string, url = chunk("chunk-L5MFWGGU.js")) {
+    const dir = path.join(tmp, `c${n++}`);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(
+      path.join(dir, "index.html"),
+      `<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="540" data-height="960" style="width:540px;height:960px">${cuerpo}</div><script>window.__timelines={};</script></body></html>`,
+    );
+    const log = path.join(dir, "espia.log");
+    const env = conEspia(entornoLimpio(process.env, { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: path.join(tmp, "falso.exe") }), log);
+    const r = await cli([url, dir], { cwd: dir, env, timeoutMs: 120000, bin: RENDER_ESPIADO });
+    return { salida: r.stdout + r.stderr, ok: r.stdout.includes('{"ok":true}'), accesos: accesos(log) };
+  }
+  const sinParche = (cuerpo: string) => render(cuerpo, pathToFileURL(path.join(path.dirname(sin.bin), "..", "dist", "chunk-L5MFWGGU.js")).href);
+
+  it.each(ETIQUETAS)("%s: 0 accesos y el render falla con I14, en cada forma", async (_n, html) => {
+    const r = await Promise.all(FORMAS.map(async (f) => ({ f, ...(await render(html(f))) })));
+    for (const { f, salida, ok, accesos: vistos } of r) {
+      expect(vistos, f).toEqual([]);
+      expect(ok, f).toBe(false);
+      expect(salida, f).toContain("(I14)");
     }
-    for (const lineas of Object.values(esperadas)) lineas.sort((a, b) => a - b);
-    expect(halladas).toEqual(esperadas);
+  }, 180000);
+
+  it.each(ETIQUETAS.slice(0, 7))("control sin parche, %s: el espía ve el acceso y no hay error de I14", async (_n, html) => {
+    const r = await sinParche(html(FORMAS[1]));
+    expect(r.accesos.join("\n"), r.salida.slice(-500)).toMatch(/h\.invalid/);
+    expect(r.salida).not.toContain("(I14)");
+  }, 120000);
+
+  it("control sin parche: <video> con // también llega a ffprobe o a fs", async () => {
+    expect((await sinParche(ETIQUETAS[0][1](FORMAS[0]))).accesos.join("\n")).toMatch(/h\.invalid/);
+  }, 120000);
+
+  it("fuentes: League Gothic e Inter salen de la cara incrustada, sin red ni aviso; sin parche, antes piden Google Fonts", () => {
+    const html = `<html><head><style>h1{font-family:"League Gothic",sans-serif}p{font-family:"Inter",sans-serif}</style></head><body><h1>x</h1><p>y</p></body></html>`;
+    const expr = `(async () => { let llamadas = 0; const avisos = []; const h = await m.injectDeterministicFontFaces(${JSON.stringify(html)}, { logger: { warn: (t) => avisos.push(t), info() {}, error() {}, debug() {} }, fetchImpl: async () => { llamadas++; return new Response("", { status: 404 }); } }); return { executablePath: JSON.stringify({ llamadas, avisos: avisos.length, caras: h.match(/@font-face/g)?.length ?? 0 }) }; })()`;
+    const entorno = entornoLimpio(process.env, { ...ENTORNO_CERRADO, HYPERFRAMES_FONT_CACHE_DIR: path.join(tmp, "fuentes") });
+    const con = JSON.parse(enHijo(llamada("chunk-N7ZMDVAK.js", expr), entorno).ruta!);
+    expect(con.llamadas).toBe(0);
+    expect(con.avisos).toBe(0);
+    expect(con.caras).toBeGreaterThan(0);
+    const urlSin = pathToFileURL(path.join(path.dirname(sin.bin), "..", "dist", "chunk-N7ZMDVAK.js")).href;
+    const sinP = JSON.parse(enHijo(llamada("chunk-N7ZMDVAK.js", expr).replace(chunk("chunk-N7ZMDVAK.js"), urlSin), entorno).ruta!);
+    expect(sinP.llamadas).toBeGreaterThan(0);
+    expect(sinP.caras).toBeGreaterThan(0);
+  });
+
+  it("control: rutas relativas, data: y file: relativo no disparan I14", async () => {
+    for (const ref of ["assets/mi vídeo.png", "./a.png", "../a.png", "file:a.png", "data:image/gif;base64,R0lGODlhAQABAAAAACw=", "a.png?v=1#t=0:10"]) {
+      const r = await render(`<img src="${ref}" alt="">`);
+      expect(r.salida, ref).not.toContain("(I14)");
+      expect(r.accesos, ref).toEqual([]);
+    }
+  }, 180000);
+
+  it("texto plano con una ruta UNC no aborta: no es una referencia", async () => {
+    const r = await render(`<p>url(\\\\h.invalid\\s\\x.png) \\\\h.invalid\\s\\x.mp4</p>`);
+    expect(r.salida).not.toContain("(I14)");
+    expect(r.accesos).toEqual([]);
+  }, 120000);
+
+  it("LOW-5: un texto del guion con background:url(https://…) da un error legible", async () => {
+    const r = await render(`<p>background:url(HTTPS://example.invalid/fondo.png)</p>`);
+    expect(r.ok).toBe(false);
+    expect(r.salida).toContain(CERRADO);
+    expect(r.salida).toContain("HTTPS://example.invalid/fondo.png");
+    expect(r.accesos).toEqual([]);
+  }, 120000);
+
+  it("LOW-1: resolveMediaDuration aborta ella misma, sin esperar a localizeRemoteMediaSources", async () => {
+    const r = await render(`<video id="v" src="https://example.invalid/x.mp4" data-start="0"></video>`);
+    expect(r.accesos).toEqual([]);
+    expect(r.salida).toContain(CERRADO);
+    expect(r.salida).toContain("resolveMediaDuration");
+  }, 120000);
+
+  it.each([
+    ["resolveProjectRelativeSrc", "chunk-PBNWRWKA.js", (r: string) => `m.resolveProjectRelativeSrc(${JSON.stringify(r)}, ".", ".")`],
+    ["collectSubCompositionSrcs", "chunk-PBNWRWKA.js", (r: string) => `m.collectSubCompositionSrcs(${JSON.stringify(`<div data-composition-src="${r}.html"></div>`)})`],
+    ["mediaPath", "chunk-X7RXXBYM.js", (r: string) => `m.mediaPath(${JSON.stringify(r)}, ".")`],
+    [
+      "resolveMediaSrc",
+      "chunk-MFHYBSJC.js",
+      (r: string) =>
+        `m.compileHtml(${JSON.stringify(`<div data-composition-id="m" data-start="0" data-duration="1"><video id="v" src="${r}.mp4" data-start="0"></video></div>`)}, ".", async () => { throw new Error("ha sondeado"); })`,
+    ],
+  ])("%s rechaza cada forma", (_n, fichero, expr) => {
+    for (const f of FORMAS) expect(enHijo(llamada(fichero, expr(f)), entornoLimpio(process.env, ENTORNO_CERRADO)).error, f).toContain("(I14)");
+  }, 120000);
+
+  describe("barrera de fs y child_process (ruta ya resuelta)", () => {
+    const UNC = JSON.stringify("\\\\h.invalid\\s\\x");
+    const CASOS: [string, string][] = [
+      ["existsSync, aunque se trague el error", `try { fs.existsSync(${UNC}); } catch {}`],
+      ["statSync", `try { fs.statSync(${UNC}); } catch {}`],
+      ["readFileSync con /\\", `try { fs.readFileSync(${JSON.stringify("/\\h.invalid\\s\\x")}); } catch {}`],
+      ["promises.stat", `await fs.promises.stat(${UNC}).catch(() => {});`],
+      ["promises.readFile", `await fs.promises.readFile(${UNC}).catch(() => {});`],
+      ["createReadStream", `try { fs.createReadStream(${UNC}).on("error", () => {}); } catch {}`],
+      ["realpathSync.native", `try { fs.realpathSync.native(${UNC}); } catch {}`],
+      ["copyFileSync al destino", `try { fs.copyFileSync("a", ${UNC}); } catch {}`],
+      ["URL file://host", `try { fs.existsSync(new URL("file://h.invalid/s/x")); } catch {}`],
+      ["spawn", `try { cp.spawn("ffprobe.exe", ["-i", ${UNC}]).on("error", () => {}); } catch {}`],
+      ["execFileSync", `try { cp.execFileSync("ffprobe.exe", [${UNC}]); } catch {}`],
+      ["ffprobe con URL", `try { cp.spawn("C:/x/ffprobe.exe", ["--", "http://h.invalid/x.mp4"]).on("error", () => {}); } catch {}`],
+      ["ffmpeg con rtmp://", `try { cp.execFile("ffmpeg", ["-i", "rtmp://h.invalid/x"], () => {}).on("error", () => {}); } catch {}`],
+    ];
+    const corre = (codigo: string, cierre: boolean) => {
+      const log = path.join(tmp, `barrera${n++}.log`);
+      const pre = cierre ? `await import(${JSON.stringify(chunk("seo-studio-cierre.js"))});` : "";
+      const fuente = `import fs from "node:fs"; import cp from "node:child_process"; ${pre} ${codigo} console.log("SIGUIÓ"); await new Promise((r) => setTimeout(r, 200));`;
+      const r = spawnSync(process.execPath, ["--input-type=module", "-e", fuente], { env: conEspia(process.env, log), encoding: "utf8", windowsHide: true, timeout: 30000 });
+      return { r, vistos: accesos(log) };
+    };
+
+    it.each(CASOS)("%s: aborta con I14 y no llega al espía", (_n, codigo) => {
+      const { r, vistos } = corre(codigo, true);
+      expect(r.status, r.stderr).toBe(1);
+      expect(r.stderr).toContain("(I14)");
+      expect(r.stdout).not.toContain("SIGUIÓ");
+      expect(vistos).toEqual([]);
+    });
+
+    it.each(CASOS)("control sin barrera, %s: el espía lo ve", (_n, codigo) => {
+      const { r, vistos } = corre(codigo, false);
+      expect(r.stdout, r.stderr).toContain("SIGUIÓ");
+      expect(vistos.length).toBeGreaterThan(0);
+    });
+
+    it("no molesta a rutas locales ni a datos que empiezan por //", () => {
+      const f = JSON.stringify(path.join(tmp, "local.txt"));
+      const { r, vistos } = corre(`fs.writeFileSync(${f}, "// comentario"); fs.statSync(${f}); fs.readFileSync(${f});`, true);
+      expect(r.stdout, r.stderr).toContain("SIGUIÓ");
+      expect(vistos).toEqual([]);
+    });
   });
 });
 
@@ -649,8 +1010,8 @@ describe("I7: servidores de HyperFrames solo en loopback", () => {
     expect(sinHost).toEqual([
       "chunk-543U46OR.js:28", // probe.listen({ port, host }): host = 127.0.0.1 salvo HYPERFRAMES_PREVIEW_HOST (fuera de la lista blanca de I5)
       "chunk-543U46OR.js:249", // server.listen(port, host): ídem (vista previa de HyperFrames)
-      "chunk-L5MFWGGU.js:17823", // startServer del producer: servidor HTTP aparte, la CLI no lo arranca
-      "warmCheck.js:210", // tubería con nombre, no TCP
+      "chunk-L5MFWGGU.js:17826", // startServer del producer: servidor HTTP aparte, la CLI no lo arranca
+      "warmCheck.js:211", // tubería con nombre, no TCP
     ]);
   });
 });

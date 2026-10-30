@@ -105,9 +105,23 @@ export function copiaSinParche(): { bin: string; borrar(): void } {
     env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(hf) },
     encoding: "utf8",
   });
-  if (r.status !== 0) throw new Error(`no se pudo quitar el parche de la copia: ${r.stderr}`);
+  if (r.status !== 0) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw new Error(`no se pudo quitar el parche de la copia: ${r.stderr}`);
+  }
   return { bin: path.join(hf, path.relative(HF, HYPERFRAMES_BIN)), borrar: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
+
+/** Entorno para correr un hijo de Node con test/espia-red.mjs, que anota y bloquea en `log`. */
+export const conEspia = (env: NodeJS.ProcessEnv, log: string): NodeJS.ProcessEnv => ({
+  ...env,
+  ESPIA_LOG: log,
+  NODE_OPTIONS: `--import=${pathToFileURL(path.join(SERVER_ROOT, "test", "espia-red.mjs")).href}`,
+});
+export const RENDER_ESPIADO = path.join(SERVER_ROOT, "test", "render-espiado.mjs");
+/** Lo que anotó el espía, sin repetidos. */
+export const accesos = (log: string): string[] =>
+  fs.existsSync(log) ? [...new Set(fs.readFileSync(log, "utf8").split("\n").filter(Boolean))] : [];
 
 /** Primera IPv4 no interna del equipo; sin ella no se puede observar una fuga fuera de loopback. */
 export function ipNoInterna(): string {

@@ -1,13 +1,17 @@
 {
   "version": "0.8.206",
   "ficheros": {
-    "dist/chunk-4UMPIPCQ.js": "78763241d8206a3b034101731169c31e9dcec2afc2877c999e9870316e438f34",
+    "dist/chunk-4UMPIPCQ.js": "1e474fffe198450def33e36067e4bbef83af65a85e82539ed9c27afe5806520f",
     "dist/chunk-K4MJX7SR.js": "4b0ba6b516ff2cce3242127e0818a441fa3b81ab58225ac7eb1533be4148b1ff",
-    "dist/chunk-L5MFWGGU.js": "d709e2ebbec785a2fb5c01c42bec36db32b8ea86fe2b20b46b17d614cac5c416",
-    "dist/chunk-MFHYBSJC.js": "ceeb4d472bd1d4fc390d90a6755a40cafae28c2995a9ced182d5b4b0cbebf6da",
-    "dist/chunk-N7ZMDVAK.js": "e80dd4cbfeac137cde498497c0169f1409afb3f3349fb72bc113084c08d23aca",
+    "dist/chunk-L5MFWGGU.js": "ec1ce21d73afde292700123d0b72be8584172491fe75756c8ebd614eb87f4f52",
+    "dist/chunk-MFHYBSJC.js": "5ebd973dc15ebfa30a4c618cc60ffd604156cd9dd6f5c6c17427ce41058b8510",
+    "dist/chunk-N7ZMDVAK.js": "c7411cbdee818ae4eedb0b6b6b37512d09f7217b42fc18447c295a55ee918f29",
     "dist/chunk-OZUAVHFE.js": "f95c87344193878fc78a253eeb6476d79e3bc1ed10af82199d15e4ee7dfa36b9",
-    "dist/chunk-RDDVQSNQ.js": "ae6a96633ecb8d5f4049186f3bdebd8ef95a87d957824268c845d92fc522d4d8",
-    "dist/chunk-X7RXXBYM.js": "52a0232e5d41549231fdaa5ff1b8907806a32e9e72b1eadcf4cdce5f2618de7f"
+    "dist/chunk-PBNWRWKA.js": "715ebfe371e51a3547f58d57811a617fc10aa9be1d0c42eee7b4acd72b76178e",
+    "dist/chunk-RDDVQSNQ.js": "191760afa4dc3e2d5d7e9cd1549d79fe8c2c9d6e30df39fa76245dbacd1e37d6",
+    "dist/chunk-X7RXXBYM.js": "8fd11b7c74133b76e4e9d439de11cb4a1658dfac272fbe6cbbc20604c3cfc142",
+    "dist/cli.js": "fa8ed3bea5de2f9698cba539b7c584f593a3f7c0dac05fbfed76d2cb96c37bc9",
+    "dist/seo-studio-cierre.js": "1167bec4e465bc49016709ee5847b7a14ed9de743e395abea51b3307caa7cf5d",
+    "dist/warmCheck.js": "241dc233b1d2c5c8f97e03b5949be9f4f8355e974beed75dac1397317c5d0151"
   }
 }

@@ -13,8 +13,10 @@ import { SERVER_ROOT } from "../src/raiz.js";
 import { entornoConFfmpeg, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
 import {
   MARCADOR,
+  accesos,
   chunk,
   cli,
+  conEspia,
   copiaSinParche,
   ENTORNO_CERRADO,
   entornoLimpio,
@@ -285,7 +287,6 @@ function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: numbe
 <style>*{margin:0;padding:0}html,body{width:540px;height:960px;overflow:hidden;background:#123}#root{position:relative;width:540px;height:960px;overflow:hidden}</style></head>
 <body><div id="root" data-composition-id="main" data-start="0" data-duration="2" data-width="540" data-height="960">
 <p style="color:#fff;font:48px sans-serif">fuga</p>
-${fugas === "js" ? `<img src="//ejemplo.test/x.png" alt="">` : ""}
 </div><script>
 window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});
 ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
@@ -294,11 +295,14 @@ ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 }
 
 /** Intentos de salida de la spec y los observables en los sumideros. */
-const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number, udpWt: number) => `
+// `externos`: destinos que saldrían del equipo sin proxy nulo (DNS de ejemplo.test, 203.0.113.1). Solo con los
+// flags del marcador puestos; los controles sin flags los omiten y usan solo sumideros propios.
+const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, externos = true) => `
 const nada = () => {};
 try { document.body.append(Object.assign(document.createElement("img"), { src: "http://${ip}:${tcp}/x.png" })); } catch (e) {}
-try { fetch("http://203.0.113.1/").catch(nada); } catch (e) {}
+${externos ? `try { fetch("http://203.0.113.1/").catch(nada); } catch (e) {}
 try { new WebSocket("ws://ejemplo.test/w"); } catch (e) {}
+try { new Image().src = "//ejemplo.test/x.png"; } catch (e) {}` : ""}
 try { fetch("http://${ip}:${tcp}/f").catch(nada); } catch (e) {}
 try { new WebSocket("ws://${ip}:${tcp}/w"); } catch (e) {}
 try { fetch("http://127.0.0.2:${tcp2}/f").catch(nada); } catch (e) {}
@@ -466,7 +470,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     "control: sin los flags la fuga llega a los sumideros (TCP, 127.0.0.2 y STUN por UDP); con los del marcador, no",
     async () => {
       await abrirSumideros();
-      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto)}</script></body></html>`);
+      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, false)}</script></body></html>`);
       try {
         const lanzar = (args: string[]) => {
           const dd = path.join(RAIZ, `dd-${Date.now()}`);
@@ -675,6 +679,45 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       expect(r.code, r.stdout + r.stderr).not.toBe(0);
       expect(r.stdout + r.stderr).toContain(CERRADO);
     }, 240000);
+
+    // Render real por la CLI con el espía. Sin control aquí: sin parche Chrome resolvería el host. El control
+    // de la misma ruta, sin hijos reales, está en parche-hyperframes.test.ts.
+    it.each([
+      ["video", `<video id="v" src="//h.invalid/s/x.mp4" data-start="0" data-duration="1"></video>`, ""],
+      ["video-inv", String.raw`<video id="v" src="\\h.invalid\s\x.mp4" data-start="0" data-duration="1"></video>`, ""],
+      ["audio-inv", String.raw`<audio id="a" src="\\h.invalid\s\x.mp3" data-start="0" data-duration="1"></audio>`, ""],
+      ["img-inv", String.raw`<img src="\\h.invalid\s\x.png" alt="">`, ""],
+      ["css-inv", "", String.raw`<style>#root{background:url(\\h.invalid\s\x.png)}</style>`],
+    ])("UNC %s: render, check y snapshot, 0 accesos; el render falla con I14", async (nombre, cuerpo, cabeza) => {
+      const comp = proyecto(`unc-${nombre}`, cuerpo, cabeza);
+      const log = path.join(RAIZ, `espia-${nombre}.log`);
+      const env = { ...conEspia(entorno, log), ESPIA_HIJOS: "1" };
+      const r = await cli(["render", comp, "-o", path.join(comp, "salida.webm"), "--fps", "30", "--format", "webm", "--quality", "delivery"], { cwd: comp, env, timeoutMs: 180000 });
+      expect(r.timeout).toBe(false);
+      expect(r.code, r.stdout + r.stderr).not.toBe(0);
+      expect(r.stdout + r.stderr).toContain("(I14)");
+      expect(accesos(log)).toEqual([]);
+      const c = await cli(["check", comp, "--json", "--no-contrast"], { cwd: comp, env, timeoutMs: 180000 });
+      expect(c.timeout).toBe(false);
+      expect(accesos(log), c.stdout + c.stderr).toEqual([]);
+      const s = await cli(["snapshot", comp, "--frames", "1", "--no-end"], { cwd: comp, env, timeoutMs: 180000 });
+      expect(s.timeout).toBe(false);
+      expect(accesos(log), s.stdout + s.stderr).toEqual([]);
+    }, 560000);
+
+    it("snapshot: <video> con URL no llega a ffprobe (ruta sin urlInputArgs); sin el parche, GET de Lavf", async () => {
+      tcp = await sumidero("127.0.0.1");
+      const comp = proyecto("snapshot-url", `<video id="v" src="http://127.0.0.1:${tcp.puerto}/x.mp4" data-start="0" data-duration="1"></video>`);
+      const snapshot = (bin?: string) => cli(["snapshot", comp, "--frames", "1", "--no-end"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
+      const r = await snapshot();
+      expect(r.timeout).toBe(false);
+      expect(tcp.peticiones().filter((p) => /User-Agent: Lavf\//i.test(p)), r.stdout + r.stderr).toEqual([]);
+      expect(r.code, r.stdout + r.stderr).not.toBe(0);
+      expect(r.stdout + r.stderr).toContain("(I14)");
+      const control = await snapshot(sinParche.bin);
+      expect(control.timeout).toBe(false);
+      expect(await hasta(() => tcp.peticiones().some((p) => /User-Agent: Lavf\//i.test(p)), 5000), tcp.peticiones().join("\n")).toBe(true);
+    }, 420000);
 
     it("check: <img>, <video> y <audio> con URL no llegan a ffprobe; sin el parche, GET de Lavf", async () => {
       await abrirSumideros();
