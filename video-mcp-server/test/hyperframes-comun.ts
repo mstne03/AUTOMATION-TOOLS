@@ -21,6 +21,7 @@ export const QUIC = "--disable-quic";
 export const SIN_DECODIFICADOR = "--disable-accelerated-video-decode";
 export const GPU_SIN_SANDBOX = "--disable-gpu-sandbox";
 export const MARCADOR = "--hyperframes-owned-browser";
+/** Los que van en todo lanzamiento en Windows (red cerrada y sin decodificación de vídeo por GPU). */
 export const FLAGS_RED = [PROXY_NULO, BYPASS, RESOLVER, WEBRTC, QUIC, SIN_DECODIFICADOR];
 
 /** URL importable de un chunk del dist (el `exports` del paquete no los expone). */
@@ -66,19 +67,23 @@ export interface Sumidero {
   host: string;
   puerto: number;
   conexiones(): number;
+  /** Primer trozo de cada conexión (la línea de la petición y las cabeceras, p. ej. el User-Agent). */
+  peticiones(): string[];
   cerrar(): Promise<void>;
 }
 
-/** Servidor TCP que solo cuenta conexiones (no sirve datos). */
+/** Servidor TCP que cuenta conexiones y guarda su primer trozo (no responde nada). */
 export function sumidero(host = "127.0.0.1"): Promise<Sumidero> {
   let n = 0;
+  const textos: string[] = [];
   const sockets = new Set<net.Socket>();
   const s = net.createServer((c) => {
     n++;
     sockets.add(c);
     c.on("error", () => {});
     c.on("close", () => sockets.delete(c));
-    c.destroy();
+    c.once("data", (d: Buffer) => textos.push(d.toString("latin1").slice(0, 500)));
+    setTimeout(() => c.destroy(), 300);
   });
   return new Promise((ok, mal) => {
     s.once("error", mal);
@@ -87,6 +92,7 @@ export function sumidero(host = "127.0.0.1"): Promise<Sumidero> {
         host,
         puerto: (s.address() as net.AddressInfo).port,
         conexiones: () => n,
+        peticiones: () => [...textos],
         cerrar: () =>
           new Promise<void>((r) => {
             for (const c of sockets) c.destroy();
