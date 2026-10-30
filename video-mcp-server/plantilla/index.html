@@ -3,14 +3,33 @@
   Raíz 1080×1920 de video-mcp-server: solo hosts de subcomposiciones, audio y variables del tema.
   composicion.ts sustituye los marcadores {{…}}; los textos del guion nunca se concatenan sin escapar.
   Orden de pintado: bloques y fondos (11-23) → capas (40) → gancho y etiqueta (50) → subtítulos (60) → flash (70).
+
+  CSP (I2 a, SEO-111): la composición no usa la red, y lo impone el navegador. Ninguna directiva admite un origen
+  de red; la preview envía la misma política como cabecera, con 'self' cambiado por el origen exacto de la
+  preview (127.0.0.1 y su puerto). Relajaciones, cada una medida con scripts/sondear-preview.mjs (política
+  estricta → violaciones) y con el render real:
+  - script-src 'unsafe-inline': el runtime de HyperFrames vuelve a insertar los <script> en línea de cada pieza al
+    montarla (26 violaciones script-src-elem con origen el runtime) y la raíz lleva el importmap de three.js en línea;
+    sin ello no se anima ninguna pieza. Nonces y hashes no sirven: los datos de cada pieza cambian en cada vídeo y
+    HyperFrames reescribe e incrusta las piezas.
+  - style-src 'unsafe-inline': el <style> de esta raíz (variables del tema) y el de cada pieza, los style="" de los hosts
+    y los estilos que pone el runtime (154 violaciones style-src-elem/style-src-attr).
+  - font-src data: (no 'unsafe-inline'): `hyperframes check` y el render incrustan las fuentes de @font-face como
+    data:font/woff2;base64 (10 errores console_error de check con font-src 'self', que bloquean el render).
+  Con 'unsafe-inline' la CSP limita la red, no la ejecución: frente a XSS la defensa es I1 (escape por contexto).
+  Violación conocida y aceptada sin relajar: shaders.iife.js prueba new Function() dentro de un try (detección de
+  capacidad); no se añade 'unsafe-eval'. frame-ancestors, report-uri y sandbox no funcionan en <meta>.
 -->
 <html lang="en" data-resolution="portrait">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta http-equiv="x-dns-prefetch-control" content="off" />
     <meta name="viewport" content="width=1080, height=1920" />
     <title>{{TITULO}}</title>
 {{IMPORTMAP}}
     <script src="assets/gsap.min.js"></script>
+    <script src="assets/hf-tiempo.js"></script>
     <style>
       :root {
         {{TEMA_CSS}}
@@ -41,14 +60,10 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
+    <div id="root" data-composition-id="main" data-no-timeline data-start="0" data-duration="{{DURACION}}" data-width="1080" data-height="1920">
       <div id="suelo" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-ignore></div>
 {{HOSTS}}
 {{AUDIO}}
     </div>
-    <script>
-      window.__timelines = window.__timelines || {};
-      window.__timelines["main"] = gsap.timeline({ paused: true });
-    </script>
   </body>
 </html>
