@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { config, faltanParaVoz } from "./config.js";
 import { log } from "./log.js";
-import { herramientasFfmpeg } from "./proceso.js";
+import { esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
 
@@ -160,15 +160,18 @@ server.registerTool(
   () => envolver("video_musica", () => h.musica(config)),
 );
 
-server.registerTool(
-  "video_catalogo",
-  {
-    title: "Buscar en el catálogo HyperFrames",
-    description: "Busca bloques y componentes del catálogo de HyperFrames (solo lectura) e indica cuáles ya están adaptados en plantilla/piezas/.",
-    inputSchema: { consulta: z.string().min(1).describe('Palabras de búsqueda, por ejemplo "map" o "caption".') },
-  },
-  (a) => envolver("video_catalogo", () => h.catalogo(config, a)),
-);
+// I14: el catálogo consulta la red de HyperFrames; en el producto integrado no existe.
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_catalogo",
+    {
+      title: "Buscar en el catálogo HyperFrames",
+      description: "Busca bloques y componentes del catálogo de HyperFrames (solo lectura) e indica cuáles ya están adaptados en plantilla/piezas/.",
+      inputSchema: { consulta: z.string().min(1).describe('Palabras de búsqueda, por ejemplo "map" o "caption".') },
+    },
+    (a) => envolver("video_catalogo", () => h.catalogo(config, a)),
+  );
+}
 
 async function main() {
   log.info(`video-mcp-server arrancando. VIDEO_ROOT=${config.videoRoot}`);

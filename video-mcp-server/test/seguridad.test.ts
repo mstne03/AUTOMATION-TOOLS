@@ -25,6 +25,12 @@ setInterval(() => {}, 1000); // render: se cuelga
   process.env.VIDEO_HYPERFRAMES_BIN = script;
   process.env.VIDEO_TIMEOUT_RENDER_S = "2";
   process.env.VIDEO_FORZAR_SIN_GPU = "1";
+  // Sin navegador, ninguna CLI se lanza (I4): basta un fichero que exista (no hay manifiesto en desarrollo).
+  const navegador = nodePath.join(dir, "nav", "chrome-headless-shell.exe");
+  nodeFs.mkdirSync(nodePath.dirname(navegador));
+  nodeFs.writeFileSync(navegador, "exe");
+  process.env.HYPERFRAMES_BROWSER_PATH = navegador;
+  process.env.VIDEO_STATE_DIR = nodePath.join(dir, "estado");
   return { dir, script, registro };
 });
 

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const estado = vi.hoisted(() => ({ catalogoTimeout: false, spawns: [] as { cmd: string; hijo: any; taskkill?: any }[] }));
+const estado = vi.hoisted(() => ({ catalogoTimeout: false, spawns: [] as { cmd: string; hijo: any; taskkill?: any }[], powershellCwd: undefined as string | undefined }));
 
 vi.mock("../src/paths.js", async (orig) => {
   const m = await orig<typeof import("../src/paths.js")>();
@@ -33,6 +33,15 @@ vi.mock("node:child_process", async (orig) => {
       e.stdout = new EventEmitter();
       e.stderr = new EventEmitter();
       e.kill = vi.fn();
+      // El barrido tras el timeout lista procesos con PowerShell: responde al momento con uno ajeno.
+      if (/powershell\.exe$/i.test(cmd)) {
+        estado.powershellCwd = o.cwd;
+        process.nextTick(() => {
+          e.stdout.emit("data", Buffer.from(JSON.stringify([{ p: 1, f: 0, n: "x.exe", r: "C:\\otro\\x.exe", c: 1 }])));
+          e.emit("close", 0);
+        });
+        return e;
+      }
       estado.spawns.push({ cmd, hijo: e });
       return e;
     },
@@ -40,7 +49,7 @@ vi.mock("node:child_process", async (orig) => {
 });
 
 import { resolverHyperframesBin } from "../src/musica.js";
-import { timeoutRenderMs } from "../src/render.js";
+import { timeoutPasadaMs } from "../src/render.js";
 import { catalogo, listar } from "../src/herramientas.js";
 import { ejecutar, mensajeSinFfmpeg } from "../src/proceso.js";
 import type { Config } from "../src/config.js";
@@ -51,16 +60,16 @@ afterEach(() => {
   estado.spawns.length = 0;
 });
 
-describe("timeoutRenderMs", () => {
+describe("timeoutPasadaMs", () => {
   it("recorta al máximo de setTimeout y conserva los valores no válidos como por defecto", () => {
     vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", "99999999999");
-    expect(timeoutRenderMs()).toBe(2_147_483_647);
+    expect(timeoutPasadaMs(50)).toBe(2_147_483_647);
     for (const v of ["0", "-5", "abc", "Infinity"]) {
       vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", v);
-      expect(timeoutRenderMs()).toBe(3_600_000);
+      expect(timeoutPasadaMs(50)).toBe(2_300_000);
     }
     vi.stubEnv("VIDEO_TIMEOUT_RENDER_S", "2");
-    expect(timeoutRenderMs()).toBe(2000);
+    expect(timeoutPasadaMs(50)).toBe(2000);
   });
 });
 
@@ -105,6 +114,19 @@ describe("mensajes según el modo", () => {
   });
 });
 
+describe.runIf(process.platform === "win32")("PowerShell del barrido", () => {
+  it("corre en hf-home: sin LOCALAPPDATA escribe su ModuleAnalysisCache relativa al cwd", async () => {
+    (globalThis as any).__fake = true;
+    try {
+      const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
+      await real.listarProcesos();
+      expect(estado.powershellCwd?.toLowerCase()).toBe(real.hfHome().toLowerCase());
+    } finally {
+      delete (globalThis as any).__fake;
+    }
+  });
+});
+
 describe("taskkill", () => {
   const plataforma = Object.getOwnPropertyDescriptor(process, "platform")!;
   afterEach(() => Object.defineProperty(process, "platform", plataforma));
@@ -114,8 +136,8 @@ describe("taskkill", () => {
     (globalThis as any).__fake = true;
     const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
     const p = real.ejecutar("x", [], { timeoutMs: 10 });
-    await vi.waitFor(() => expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true));
-    const tk = estado.spawns.find((s) => s.cmd === "taskkill")!;
+    await vi.waitFor(() => expect(estado.spawns.some((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")).toBe(true));
+    const tk = estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!;
     tk.hijo.emit("close", codigoTaskkill);
     const res = await p;
     return { res, hijo: estado.spawns[0].hijo };
@@ -134,7 +156,7 @@ describe("taskkill", () => {
       const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
       const p = real.ejecutar("x", [], { timeoutMs: 10 });
       await vi.advanceTimersByTimeAsync(10);
-      estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.emit("error", new Error("ENOENT"));
+      estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!.hijo.emit("error", new Error("ENOENT"));
       expect((await p).timeout).toBe(true);
       expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
@@ -150,10 +172,10 @@ describe("taskkill", () => {
       const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
       const p = real.ejecutar("x", [], { timeoutMs: 10 });
       await vi.advanceTimersByTimeAsync(10);
-      expect(estado.spawns.some((s) => s.cmd === "taskkill")).toBe(true);
+      expect(estado.spawns.some((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")).toBe(true);
       await vi.advanceTimersByTimeAsync(10_000);
       expect((await p).timeout).toBe(true);
-      expect(estado.spawns.find((s) => s.cmd === "taskkill")!.hijo.kill).toHaveBeenCalled();
+      expect(estado.spawns.find((s) => path.basename(s.cmd).toLowerCase() === "taskkill.exe")!.hijo.kill).toHaveBeenCalled();
       expect(estado.spawns[0].hijo.kill).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

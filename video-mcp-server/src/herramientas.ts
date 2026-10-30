@@ -190,7 +190,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   }
   let mp4: { ruta: string; duracion?: number } | undefined;
   if (fs.existsSync(r.mp4)) {
-    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4).catch(() => undefined))?.duracion : undefined };
+    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4, { soloMp4: true }).catch(() => undefined))?.duracion : undefined };
   }
   if (!h) avisos.push(mensajeSinFfmpeg());
   const jobs = listarJobs()
@@ -463,7 +463,7 @@ export async function fotograma(cfg: Config, args: { id: string; segundo: number
   if (!fs.existsSync(r.mp4)) throw new ErrorVideo(`No existe ${r.mp4}. Renderiza primero con video_renderizar("${id}").`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
-  const info = await sondear(h.ffprobe, r.mp4);
+  const info = await sondear(h.ffprobe, r.mp4, { soloMp4: true });
   const dur = info.duracion ?? 0;
   if (!Number.isFinite(args.segundo) || args.segundo < 0 || args.segundo > dur) {
     throw new ErrorVideo(`El segundo tiene que estar entre 0 y ${dur.toFixed(2)} (duración del mp4).`);
@@ -485,6 +485,16 @@ export function ayuda(): Respuesta {
 
 // ---------- video_capacidades ----------
 
+/**
+ * Sin navegador no se sugiere ningún comando al modelo: HyperFrames no descarga nada (I14) y no se cae
+ * a otro navegador (I11). Integrado, lo descarga el usuario desde Ajustes.
+ */
+export function mensajeSinNavegador(): string {
+  return esIntegrado()
+    ? "no descargado: descárgalo desde Ajustes de SEO Studio."
+    : "no configurado: pon en el .env del servidor HYPERFRAMES_BROWSER_PATH=<ruta de chrome-headless-shell.exe>.";
+}
+
 export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boolean }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const c = await capacidades(h, !!args.reprobar, cfg.browserPath);
@@ -494,7 +504,7 @@ export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boo
   const texto = [
     `WebGPU: ${c.gpuForzadaApagada ? "desactivado a la fuerza (VIDEO_FORZAR_SIN_GPU=1)" : gpu}`,
     `HyperFrames ${c.hyperframes} · ${c.ffmpeg ?? "ffmpeg NO encontrado"}`,
-    `Chrome: ${c.chrome ?? "no encontrado (npx hyperframes browser ensure)"}`,
+    `Chrome: ${c.chrome ?? mensajeSinNavegador()}`,
     `Telemetría: ${c.telemetria ?? "desconocida"}`,
     `Fondos: ${c.fondos.disponibles.join(", ")}. Con WebGPU: ${c.fondos.conWebgpu.join(", ")}${c.fondos.usaranFallback.length ? ` (aquí saldrán con el degradado de reserva)` : ""}.`,
   ].join("\n");
@@ -591,6 +601,8 @@ export const ADAPTADAS: Record<string, string> = {
 const TIMEOUT_CATALOGO_MS = 120_000;
 
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
+  // I14: la tool no se registra en integrado (index.ts); esto cierra también la llamada directa.
+  if (esIntegrado()) throw new ErrorVideo("El catálogo de HyperFrames no está disponible en SEO Studio.");
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
     env: { ...entornoConFfmpeg(h), CI: "1" },

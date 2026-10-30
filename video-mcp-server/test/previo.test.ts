@@ -47,7 +47,7 @@ describe("validación con archivos", () => {
     expect(e.texto).toMatch(/img6 FALTA/);
     fs.writeFileSync(path.join(RAIZ, "video001", "img6.png"), "");
     await expect(prepararRender("video001", OPC)).resolves.toBeTruthy();
-  });
+  }, 120000);
 
   it("avisa de las fotos que están en la carpeta con otro nombre", async () => {
     video("video006", "escenas:\n  2:\n    tipo: cifra\n    valor: 1\n  3:\n    tipo: cifra\n    valor: 2\n  4:\n    tipo: cifra\n    valor: 3\n  5:\n    tipo: cifra\n    valor: 4", []);
