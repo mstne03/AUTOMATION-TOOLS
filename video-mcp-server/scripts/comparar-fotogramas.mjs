@@ -89,7 +89,15 @@ export async function renderizar(motor, dir, mp4, home, { comprobar = true, time
   const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
   if (gpu) args.push("--browser-gpu");
   const t0 = Date.now();
-  const r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env, timeoutMs });
+  // El preflight de HyperFrames da «encoder unavailable» de forma intermitente con la GPU ocupada, antes de abrir la
+  // página: no es un resultado del render (una sonda contaría 0 conexiones sin medir nada). Se reintenta solo eso.
+  // ponytail: 3 intentos fijos; lo cierra de verdad el codificador predecible de W1.6.
+  let r;
+  for (let intento = 1; intento <= 3; intento++) {
+    r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env, timeoutMs });
+    if (!/encoder unavailable/i.test(r.stdout + r.stderr)) break;
+    await new Promise((ok) => setTimeout(ok, 5000));
+  }
   if (r.timeout) throw new Error(`render de ${dir}: superó ${timeoutMs} ms`);
   if (r.code !== 0 || !fs.existsSync(mp4)) throw new Error(`render de ${dir} (código ${r.code}): ${(r.stderr || r.stdout).slice(-1500)}`);
   return { segundos: Math.round((Date.now() - t0) / 1000), check, salida: r.stdout + r.stderr };
