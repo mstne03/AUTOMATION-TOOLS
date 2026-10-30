@@ -116,7 +116,11 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     const cuerpo = `<img src="http://ejemplo.test/x.png" /><script src="assets/hostil.js"></script>\n  </body>`;
     const html = fs.readFileSync(path.join(dir, "index.html"), "utf8").replace("</head>", cabeza).replace("</body>", cuerpo);
     fs.writeFileSync(path.join(dir, "index.html"), html);
-    const sin = variante(dir, path.join(tmp, "sin-csp"), html, true);
+    // Desde SEO-109 (I14) el compilador de HyperFrames rechaza todo src/href http(s) estático: la <img> remota y los dos
+    // <link> no entran en el render (siguen en la preview). El resto de la pieza hostil, que va por JS, sí se ejecuta.
+    const htmlRender = html.replace(/<img src="http:\/\/ejemplo[^>]*>/, "").replace(/<link rel="(?:dns-prefetch|preconnect)"[^>]*>\s*/g, "");
+    const dirRender = variante(dir, path.join(tmp, "con-csp"), htmlRender, false);
+    const sin = variante(dir, path.join(tmp, "sin-csp"), htmlRender, true);
 
     const navegador = path.join(motor!, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
     // Q1: además de la pieza hostil, hf-tiempo.js se carga bajo la CSP y anima de verdad: un tween de opacidad 0→1 en
@@ -151,7 +155,7 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
       const m = await medir(() => sondearPreview({ navegador, dir, sonda: navega, marcoSinCsp }).catch(() => undefined));
       r[nombre] = { cuenta: m.cuenta };
     }
-    for (const [nombre, d] of [["render", dir], ["render-sin-csp", sin]] as const) {
+    for (const [nombre, d] of [["render", dirRender], ["render-sin-csp", sin]] as const) {
       const mp4 = path.join(tmp, `${nombre}.mp4`);
       const m = await medir(() => renderizar(motor!, d, mp4, path.join(tmp, "hf-home"), { comprobar: false }));
       r[nombre] = { cuenta: m.cuenta, marcaRoja: await marcaRoja(mp4) };
@@ -233,18 +237,20 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     expect(r.navegacion.cuenta.navegacion).toBe(0);
   });
 
-  it("control positivo: sin CSP, WebRTC llega al sumidero UDP en preview y render", () => {
+  it("control positivo: sin CSP, WebRTC llega al sumidero UDP en la preview", () => {
     expect(r["preview-sin-csp"].cuenta.rtc, NO_MIDE).toBeGreaterThan(0);
-    expect(r["render-sin-csp"].cuenta.rtc, NO_MIDE).toBeGreaterThan(0);
   });
+  // Sin control en el render: el flag de W1.3 va en la CLI parcheada y también cierra la variante sin CSP (0 medido),
+  // así que ese 0 prueba el cierre del parche, no el de la CSP.
 
   // La CSP no gobierna WebRTC (Chrome no implementa la directiva webrtc): STUN llega con y sin CSP.
   fallaConocida("sonda (b): WebRTC no llega al sumidero UDP en la preview", "diseño de la preview (WebView2 --force-webrtc-ip-handling-policy=disable_non_proxied_udp)", () => r.preview, (m) =>
     expect(m.cuenta.rtc).toBe(0),
   );
-  fallaConocida("sonda (b): WebRTC no llega al sumidero UDP en el render", "W1.3 (--force-webrtc-ip-handling-policy=disable_non_proxied_udp)", () => r.render, (m) =>
-    expect(m.cuenta.rtc).toBe(0),
-  );
+  it("sonda (b): WebRTC no llega al sumidero UDP en el render (--force-webrtc-ip-handling-policy=disable_non_proxied_udp, W1.3)", () => {
+    expect(r.render.marcaRoja, "hostil.js no se ejecutó en el render").toBe(true);
+    expect(r.render.cuenta.rtc).toBe(0);
+  });
 
   // preconnect: chrome-headless-shell 152 no abre la conexión ni sin CSP, así que hoy no hay sonda posible. Los
   // controles quedan como fallas conocidas por entorno: si un Chrome futuro preconecta, fallarán y habrá que medir.
@@ -274,9 +280,9 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
   });
   it.skip("sonda (c): speculationrules no conecta en la preview — el iframe sandbox no especula ni sin CSP (0 medido), sin control positivo", () => {});
   // Con script-src 'unsafe-inline', <script type="speculationrules"> prefetchea o prerenderiza localhost con la CSP
-  // puesta; connect-src no lo gobierna. Ojo: el host-resolver-rules de W1.3 excluye localhost y Chrome no pasa loopback
-  // por el proxy: W1.3 no lo cierra por sí solo.
-  fallaConocida("sonda (c): speculationrules no conecta en el render", "W1.3 (desactivar prefetch/prerender) y W3.1 (urlsDeRed rechaza speculationrules)", () => r.render, (m) =>
+  // puesta; connect-src no lo gobierna. W1.3 no lo cierra (medido: 39 conexiones a loopback con el parche; su
+  // host-resolver-rules excluye localhost): solo lo cierra W3.1.
+  fallaConocida("sonda (c): speculationrules no conecta en el render", "W3.1 (urlsDeRed rechaza speculationrules)", () => r.render, (m) =>
     expect(m.cuenta.especulacion).toBe(0),
   );
 
