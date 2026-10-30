@@ -399,12 +399,13 @@ async def motor_real(monkeypatch):
 
 
 @pytest.mark.skipif(not MOTOR_REAL_COMPILADO, reason="npm run build en video-mcp-server")
-async def test_motor_real_lista_las_12_tools(motor_real):
+async def test_motor_real_lista_las_11_tools(motor_real):
     caps = await motor_real.llamar("video_capacidades", {"reprobar": False})
     assert caps.datos["hyperframes"] == "0.8.206"
     assert caps.texto
     nombres = await motor_real.herramientas()
-    assert len(nombres) == 12 and all(n.startswith("video_") for n in nombres)
+    # Integrado (VIDEO_ENGINE_EMBEDDED=1) no registra video_catalogo (SEO-110): 11 de las 12 herramientas.
+    assert len(nombres) == 11 and "video_catalogo" not in nombres and all(n.startswith("video_") for n in nombres)
 
 
 async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):
