@@ -1,0 +1,22 @@
+# Fuentes fijadas del ffmpeg LGPL (I9). TSV con 11 columnas; «-» = no aplica.
+# Las celdas con el marcador de la Tarea 10 solo se rellenan en la Tarea 10 (con permiso de Marc para
+# descargar) y descargar-fuentes.sh rechaza cualquier fila que aún lleve una.
+#
+# tipo   tar: tarball firmado (firma_url + huella + anclaje con ≥ 2 canales, R0 H1), o sin firma
+#             con canal2: fichero de otro operador que contiene el SHA-256 (AMF: PKGBUILD de Arch)
+#        git: sin firma: commit de 40 hex + SHA-256 de `git archive --format=tar <commit> [ruta]`
+#             (calculado en la imagen fijada) + canal2 (otro repo .git que debe dar lo mismo, L1)
+#        apt: InRelease del snapshot de Debian (lo comprueba el Dockerfile, R0 M4)
+#        meta: SOURCE_DATE_EPOCH = fecha de la release de ffmpeg (columna version)
+# anclaje: «canal=HUELLA;canal=HUELLA», canal = debian:<paquete fuente> (su
+#          debian/upstream/signing-key.asc en el mismo snapshot) o una página https:// de un host
+#          distinto del de descarga. Nunca un keyserver ni la huella leída del propio .asc.
+#
+# nombre	version	tipo	url	sha256	commit	ruta	firma_url	huella	anclaje	canal2
+ffmpeg	7.1.5	tar	https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz	PENDIENTE-TAREA-10	-	-	https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz.asc	PENDIENTE-TAREA-10	PENDIENTE-TAREA-10	-
+dav1d	1.5.4	tar	https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz	PENDIENTE-TAREA-10	-	-	https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz.asc	PENDIENTE-TAREA-10	PENDIENTE-TAREA-10	-
+zlib	1.3.2	tar	https://zlib.net/zlib-1.3.2.tar.xz	PENDIENTE-TAREA-10	-	-	https://zlib.net/zlib-1.3.2.tar.xz.asc	PENDIENTE-TAREA-10	PENDIENTE-TAREA-10	-
+nv-codec-headers	n12.1.14.0	git	https://github.com/FFmpeg/nv-codec-headers.git	PENDIENTE-TAREA-10	PENDIENTE-TAREA-10	-	-	-	-	https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+amf-headers	PENDIENTE-TAREA-10	tar	https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/PENDIENTE-TAREA-10/AMF-headers-PENDIENTE-TAREA-10.tar.gz	PENDIENTE-TAREA-10	-	-	-	-	-	https://gitlab.archlinux.org/archlinux/packaging/packages/amf-headers/-/raw/PENDIENTE-TAREA-10/PKGBUILD
+debian-inrelease	trixie	apt	https://snapshot.debian.org/archive/debian/PENDIENTE-TAREA-10/dists/trixie/InRelease	PENDIENTE-TAREA-10	-	-	-	-	-	-
+source-date-epoch	PENDIENTE-TAREA-10	meta	-	-	-	-	-	-	-	-
