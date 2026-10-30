@@ -190,7 +190,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   }
   let mp4: { ruta: string; duracion?: number } | undefined;
   if (fs.existsSync(r.mp4)) {
-    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4).catch(() => undefined))?.duracion : undefined };
+    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4, { soloMp4: true }).catch(() => undefined))?.duracion : undefined };
   }
   if (!h) avisos.push(mensajeSinFfmpeg());
   const jobs = listarJobs()
@@ -463,7 +463,7 @@ export async function fotograma(cfg: Config, args: { id: string; segundo: number
   if (!fs.existsSync(r.mp4)) throw new ErrorVideo(`No existe ${r.mp4}. Renderiza primero con video_renderizar("${id}").`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
-  const info = await sondear(h.ffprobe, r.mp4);
+  const info = await sondear(h.ffprobe, r.mp4, { soloMp4: true });
   const dur = info.duracion ?? 0;
   if (!Number.isFinite(args.segundo) || args.segundo < 0 || args.segundo > dur) {
     throw new ErrorVideo(`El segundo tiene que estar entre 0 y ${dur.toFixed(2)} (duración del mp4).`);

@@ -60,7 +60,9 @@ else {
   return { dir, registro, banderas, script };
 });
 
-import { ErrorVideo } from "../src/paths.js";
+import type { Config } from "../src/config.js";
+import { estado, fotograma } from "../src/herramientas.js";
+import { ErrorVideo, archivosVideo } from "../src/paths.js";
 import { ErrorNavegador, ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
 import {
   ARGS_CODIFICADOR,
@@ -189,6 +191,18 @@ describe.skipIf(!h)("ffmpeg real", () => {
     const falso = path.join(F.dir, "falso.mp4");
     fs.writeFileSync(falso, "esto no es un mp4");
     await expect(sondear(h!.ffprobe, falso, { soloMp4: true })).rejects.toThrow(/ffprobe no puede leer/);
+  }, 120000);
+
+  it.skipIf(!h)("video_estado y video_fotograma solo aceptan un MP4 de verdad (LOW-7)", async () => {
+    const cfg = { videoRoot: path.join(F.dir, "low7"), ffmpegDir: process.env.FFMPEG_DIR } as unknown as Config;
+    const r = archivosVideo(cfg.videoRoot, "video090");
+    fs.mkdirSync(r.dir, { recursive: true });
+    // Matroska con extensión .mp4: sin el demuxer fijado, ffprobe lo leería por su contenido.
+    const m = await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x64:r=30", "-t", "1", "-c:v", "ffv1", "-f", "matroska", r.mp4], { timeoutMs: 60000 });
+    expect(m.code).toBe(0);
+    expect((await sondear(h!.ffprobe, r.mp4)).duracion).toBeGreaterThan(0);
+    await expect(fotograma(cfg, { id: "video090", segundo: 0 })).rejects.toThrow(/ffprobe no puede leer/);
+    expect((await estado(cfg, "video090")).datos.mp4).toEqual({ ruta: r.mp4 });
   }, 120000);
 });
 
