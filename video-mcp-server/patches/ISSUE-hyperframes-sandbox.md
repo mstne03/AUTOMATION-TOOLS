@@ -1,10 +1,4 @@
-<!--
-Borrador. No publicar sin el sí de Marc (M3).
-Antes de publicar: comprobar si heygen-com/hyperframes tiene SECURITY.md. Si lo tiene, la parte del
-sandbox va por su aviso privado, no por una issue pública.
--->
-
-# Windows: Chrome runs with `--no-sandbox`, and an invalid `HYPERFRAMES_BROWSER_PATH` falls back silently
+# Windows: Chrome runs with `--no-sandbox`
 
 ## Problem
 
@@ -54,16 +48,3 @@ function rendererSandboxArgs(args) {
   return [...args.filter((a) => !/^--(no-sandbox|disable-setuid-sandbox)$/.test(a)), ...extra];
 }
 ```
-
-## Second request: `HYPERFRAMES_BROWSER_PATH` should fail closed
-
-When `HYPERFRAMES_BROWSER_PATH` is set but does not point to a file, `findFromEnv` returns `undefined` and
-the CLI moves on to its cache, the system Chrome or a download. Someone who pins a browser expects that
-exact browser or an error, not a different binary. A directory also passes, because the check is
-`existsSync`.
-
-Suggested behaviour: if the variable is defined and is not a regular file, throw and do not fall back.
-
-## Related
-
-The preflight that runs `chrome --version` (reported separately).
