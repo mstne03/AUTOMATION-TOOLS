@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const estado = vi.hoisted(() => ({ catalogoTimeout: false, spawns: [] as { cmd: string; hijo: any; taskkill?: any }[] }));
+const estado = vi.hoisted(() => ({ catalogoTimeout: false, spawns: [] as { cmd: string; hijo: any; taskkill?: any }[], powershellCwd: undefined as string | undefined }));
 
 vi.mock("../src/paths.js", async (orig) => {
   const m = await orig<typeof import("../src/paths.js")>();
@@ -35,6 +35,7 @@ vi.mock("node:child_process", async (orig) => {
       e.kill = vi.fn();
       // El barrido tras el timeout lista procesos con PowerShell: responde al momento con uno ajeno.
       if (/powershell\.exe$/i.test(cmd)) {
+        estado.powershellCwd = o.cwd;
         process.nextTick(() => {
           e.stdout.emit("data", Buffer.from(JSON.stringify([{ p: 1, f: 0, n: "x.exe", r: "C:\\otro\\x.exe", c: 1 }])));
           e.emit("close", 0);
@@ -110,6 +111,19 @@ describe("mensajes según el modo", () => {
     expect(mensajeSinFfmpeg()).toBe("Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación.");
     vi.stubEnv("VIDEO_ENGINE_EMBEDDED", "");
     expect(mensajeSinFfmpeg()).toContain(".env");
+  });
+});
+
+describe.runIf(process.platform === "win32")("PowerShell del barrido", () => {
+  it("corre en hf-home: sin LOCALAPPDATA escribe su ModuleAnalysisCache relativa al cwd", async () => {
+    (globalThis as any).__fake = true;
+    try {
+      const real = await vi.importActual<typeof import("../src/proceso.js")>("../src/proceso.js");
+      await real.listarProcesos();
+      expect(estado.powershellCwd?.toLowerCase()).toBe(real.hfHome().toLowerCase());
+    } finally {
+      delete (globalThis as any).__fake;
+    }
   });
 });
 

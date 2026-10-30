@@ -495,7 +495,8 @@ export function filtrarProcesos(lista: ProcesoVivo[], o: ObjetivoBarrido): Proce
 function powershell(script: string): Promise<Resultado> {
   const exe = path.join(system32(), "WindowsPowerShell", "v1.0", "powershell.exe");
   const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${script}`, "utf16le").toString("base64");
-  return lanzar(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", codificado], { timeoutMs: TIMEOUT_LISTAR_MS }, false, false);
+  // cwd fijo: sin LOCALAPPDATA (I5), PowerShell escribe su ModuleAnalysisCache relativa al cwd.
+  return lanzar(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", codificado], { timeoutMs: TIMEOUT_LISTAR_MS, cwd: hfHome() }, false, false);
 }
 
 /** Todos los procesos (en Windows con padre y fecha de creación). Lanza si no se puede listar (código, timeout o salida ilegible). */
