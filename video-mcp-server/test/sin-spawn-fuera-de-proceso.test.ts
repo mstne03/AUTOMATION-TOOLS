@@ -47,6 +47,7 @@ describe("tools/list en modo integrado", () => {
       const env: NodeJS.ProcessEnv = { ...process.env, VIDEO_ROOT: raiz, VIDEO_STATE_DIR: path.join(raiz, "estado") };
       if (integrado) env.VIDEO_ENGINE_EMBEDDED = "1";
       else delete env.VIDEO_ENGINE_EMBEDDED;
+      // Lanza dist/: `npm test` lo compila antes; con `vitest` suelto, un dist/ obsoleto daría un resultado falso.
       const hijo = spawn(process.execPath, [path.join(SERVER_ROOT, "dist", "index.js")], { env, stdio: ["pipe", "pipe", "ignore"] });
       try {
         let buf = "";

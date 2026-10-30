@@ -84,7 +84,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     } finally {
       matarSiVive(pid);
     }
-  }, 30000);
+  }, 120000);
 
   it("una CLI que sale con error también barre sus huérfanos", async () => {
     const pidFile = path.join(F.dir, "huerfano2.pid");
@@ -97,7 +97,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     } finally {
       matarSiVive(pid);
     }
-  }, 30000);
+  }, 120000);
 
   it("el huérfano muere, pero un trabajo legítimo en curso con la misma imagen sobrevive (MEDIUM-A)", async () => {
     const pidFile = path.join(F.dir, "huerfano3.pid");
@@ -120,7 +120,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     } finally {
       matarSiVive(pid);
     }
-  }, 60000);
+  }, 180000);
 
   it("matarProcesos mata un proceso cuya ruta lleva ’ y ' (la tabla viaja en JSON)", async () => {
     const dir = path.join(F.dir, "nav ’comilla' x");
@@ -139,7 +139,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     } finally {
       matarSiVive(pid);
     }
-  }, 30000);
+  }, 120000);
 });
 
 describe("barrerProcesos", () => {

@@ -2,7 +2,7 @@
 // sockets de los descendientes (I7, C10), timeout sin procesos vivos (I7), .dll añadida (I4) y que
 // HyperFrames no intenta actualizarse (LOW-3).
 //   VIDEO_E2E_REAL=1 VIDEO_E2E_NAVEGADOR=<carpeta con chrome-headless-shell-win64> VIDEO_E2E_FFMPEG=<bin LGPL> npx vitest run test/render-real.test.ts
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -117,13 +117,19 @@ type Muestra = {
   cmd: string[];
   /** Pids de los descendientes de este proceso. */
   desc: number[];
+  /** Pids de los chrome-headless-shell.exe descendientes (por ParentProcessId, no por ruta). */
+  chrome: number[];
   /** Ficheros de ~/.hyperframes/running del usuario (HyperFrames apunta ahí el pid de cada CLI viva). */
   run: string[];
   /** CLI de HyperFrames de otras sesiones (no descendientes): tocan ~/.hyperframes por su cuenta. */
   ajenos: number;
 };
 
-/** PowerShell en bucle (cada 250 ms): sockets en escucha de los descendientes de este proceso y sus líneas de órdenes. */
+/**
+ * PowerShell en bucle: sockets en escucha de los descendientes de este proceso, sus líneas de órdenes y
+ * sus Chrome. Pide 250 ms entre muestras, pero cada vuelta de WMI y de los cmdlets de red tarda ~2 s: un
+ * servidor que viva menos que eso puede escaparse.
+ */
 function muestreador(): { muestras: Muestra[]; parar: () => Promise<void> } {
   const ps = path.join(process.env.SYSTEMROOT!, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = `
@@ -131,7 +137,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $raiz = ${process.pid}
 while ($true) {
-  $p = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine
+  $p = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine, Name
   $hijos = @{}; foreach ($x in $p) { if (-not $hijos.ContainsKey([int]$x.ParentProcessId)) { $hijos[[int]$x.ParentProcessId] = @() }; $hijos[[int]$x.ParentProcessId] += [int]$x.ProcessId }
   $desc = New-Object 'System.Collections.Generic.HashSet[int]'; $cola = @($raiz)
   while ($cola.Count) { $n = $cola[0]; $cola = @($cola | Select-Object -Skip 1); if ($hijos.ContainsKey($n)) { foreach ($c in $hijos[$n]) { if ($desc.Add($c)) { $cola += $c } } } }
@@ -140,7 +146,8 @@ while ($true) {
   $cmd = @($p | Where-Object { $desc.Contains([int]$_.ProcessId) -and $_.CommandLine -match 'backgroundChecksWorker|autoUpdate' } | ForEach-Object { $_.CommandLine })
   $run = @(Get-ChildItem -Name (Join-Path $env:USERPROFILE '.hyperframes\\running'))
   $ajenos = @($p | Where-Object { -not $desc.Contains([int]$_.ProcessId) -and $_.CommandLine -match 'hyperframes\\.mjs' -and $_.CommandLine -notmatch 'Get-CimInstance' }).Count
-  @{ t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds(); tcp = $tcp; udp = $udp; cmd = $cmd; desc = @($desc); run = $run; ajenos = $ajenos } | ConvertTo-Json -Compress -Depth 4
+  $chrome = @($p | Where-Object { $desc.Contains([int]$_.ProcessId) -and $_.Name -eq 'chrome-headless-shell.exe' } | ForEach-Object { [int]$_.ProcessId })
+  @{ t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds(); tcp = $tcp; udp = $udp; cmd = $cmd; desc = @($desc); chrome = $chrome; run = $run; ajenos = $ajenos } | ConvertTo-Json -Compress -Depth 4
   Start-Sleep -Milliseconds 250
 }`;
   const hijo: ChildProcess = spawn(ps, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
@@ -163,6 +170,7 @@ while ($true) {
           udp: lista(m.udp),
           cmd: lista(m.cmd),
           desc: lista(m.desc),
+          chrome: lista(m.chrome),
           run: lista(m.run).map(String),
           ajenos: m.ajenos ?? 0,
         });
@@ -191,7 +199,27 @@ function seguirFases(jobId: string): { tramos: { fase: string; t: number }[]; pa
 }
 const faseEn = (tramos: { fase: string; t: number }[], t: number) => [...tramos].reverse().find((x) => x.t <= t)?.fase ?? "";
 
-const datos: { job?: Job; muestras: { fase: string; m: Muestra }[]; huellaAntes?: Record<string, number | null> } = { muestras: [] };
+const datos: { job?: Job; muestras: { fase: string; m: Muestra }[]; huellaAntes?: Record<string, number | null>; controlPid?: number } = { muestras: [] };
+
+const FFMPEG_PROHIBIDO =
+  ACTIVO &&
+  /^\s*\S+\s+(libx264|libx264rgb|libx265|libopenh264)\s/m.test(
+    spawnSync(path.join(process.env.VIDEO_E2E_FFMPEG ?? "", "ffmpeg.exe"), ["-hide_banner", "-encoders"], { encoding: "utf8" }).stdout ?? "",
+  );
+
+/** Sin esto, un muestreador que no arrancó haría pasar en vacío las comprobaciones sobre `datos`. */
+function exigirMuestras(): void {
+  expect(datos.muestras.length, "el muestreador no dio ninguna muestra: el test «render completo» no llegó a ejecutarlo").toBeGreaterThan(0);
+}
+
+function sigueVivo(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
 
 describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
   beforeAll(async () => {
@@ -217,28 +245,36 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     expect(ms).toBeLessThan(10000);
   });
 
-  it("integrado: con un ffmpeg que trae codificadores prohibidos el render falla; con el LGPL propio, termina", async () => {
+  // En integrado el navegador tiene que estar en <estado>/video/navegador: ya lo está. Van antes que el
+  // resto: el sondeo se cachea en el proceso y la comprobación del ffmpeg solo corre la primera vez.
+  async function renderIntegrado(): Promise<Job> {
     process.env.VIDEO_ENGINE_EMBEDDED = "1";
     try {
-      // En integrado el navegador tiene que estar en <estado>/video/navegador: ya lo está.
-      const h = herramientasFfmpeg(process.env.FFMPEG_DIR)!;
-      const enc = (await ejecutar(h.ffmpeg, ["-hide_banner", "-encoders"], { timeoutMs: 30000 })).stdout;
-      const prohibido = /^\s*\S+\s+(libx264|libx265|libopenh264)\s/m.test(enc);
       const j = await esperarJob((await encolarRender("video034", o())).job_id, 500);
       medida(`integrado: estado=${j.estado} error=${j.error ?? "-"} codificador=${j.codificador ?? "-"}`);
-      if (prohibido) {
-        expect(j.estado).toBe("error");
-        expect(j.error).toMatch(/LGPL del bundle/);
-      } else {
-        expect(j.estado).toBe("terminado");
-      }
+      return j;
     } finally {
       delete process.env.VIDEO_ENGINE_EMBEDDED;
     }
+  }
+
+  it.runIf(FFMPEG_PROHIBIDO)("integrado con un ffmpeg que trae codificadores prohibidos: el render falla", async () => {
+    const j = await renderIntegrado();
+    expect(j.estado).toBe("error");
+    expect(j.error).toMatch(/LGPL del bundle/);
+  }, 900000);
+
+  it.skipIf(FFMPEG_PROHIBIDO)("integrado con el ffmpeg LGPL propio: el render termina", async () => {
+    const j = await renderIntegrado();
+    expect(j.error).toBeUndefined();
+    expect(j.estado).toBe("terminado");
   }, 900000);
 
   it("render completo (Compatible) con HOME redirigido: no toca las cachés del usuario (I13)", async () => {
     datos.huellaAntes = huellaCaches();
+    // Control del oráculo: un servidor conocido, descendiente de este proceso, que el muestreo tiene que ver.
+    const control = spawn(process.execPath, ["-e", 'require("net").createServer().listen(0,"127.0.0.1");setTimeout(()=>process.exit(0),3e5)'], { stdio: "ignore" });
+    datos.controlPid = control.pid;
     const s = muestreador();
     const t0 = performance.now();
     const job = await encolarRender("video030", o());
@@ -253,6 +289,7 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     });
     fases.tramos.push({ fase: "fin", t: Date.now() });
     await s.parar();
+    control.kill();
     datos.job = j;
     datos.muestras = s.muestras.map((m) => ({ fase: faseEn(fases.tramos, m.t), m }));
     medida(`render Compatible de ${j.duracion?.toFixed(2)} s en ${((performance.now() - t0) / 1000).toFixed(1)} s · ${j.avisos.find((a) => a.startsWith("Codificador:"))}`);
@@ -261,6 +298,7 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     expect(j.estado).toBe("terminado");
     expect(j.codificador).toMatch(/^h264_(nvenc|qsv|amf|mf)$/);
     expect(j.avisos.some((a) => a.startsWith("Codificador:"))).toBe(true);
+    exigirMuestras();
     // HOME redirigido: el estado de HyperFrames de nuestras CLI está en hf-home…
     expect(fs.existsSync(path.join(hfHome(), ".hyperframes"))).toBe(true);
     // …y ninguna de ellas se apuntó en ~/.hyperframes/running del usuario.
@@ -272,11 +310,12 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     if (!ajenos) expect(huellaCaches()).toEqual(datos.huellaAntes);
     const png = await extraerFotograma(herramientasFfmpeg(process.env.FFMPEG_DIR)!, j.mp4, 1);
     expect(png.subarray(1, 4).toString()).toBe("PNG");
-    // El navegador sigue cuadrando con el manifiesto tras usarlo (Chrome no escribe en su carpeta).
+    // El navegador sigue cuadrando con el manifiesto tras usarlo (Chrome solo escribe su debug.log).
     await expect(verificarNavegador()).resolves.toBeUndefined();
   }, 900000);
 
   it("HyperFrames no intenta actualizarse ni comprobar nada en segundo plano (LOW-3)", () => {
+    exigirMuestras();
     const config = path.join(hfHome(), ".hyperframes", "config.json");
     const texto = fs.existsSync(config) ? fs.readFileSync(config, "utf8") : "";
     for (const clave of ["lastUpdateAttemptAt", "lastSkillsAttemptAt", "pendingUpdate"]) expect(texto, clave).not.toContain(clave);
@@ -284,12 +323,16 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
   });
 
   it("los sockets en escucha de los descendientes están en 127.0.0.1 en check, render y snapshot (I7, C10)", () => {
-    const vistos = (fase: string) => datos.muestras.filter((x) => x.fase === fase).flatMap(({ m }) => [...m.tcp, ...m.udp]);
+    exigirMuestras();
+    const todos = datos.muestras.flatMap(({ m }) => [...m.tcp, ...m.udp]);
+    expect(todos.some((s) => s.pid === datos.controlPid), "el oráculo de sockets no ve ni el servidor de control: la tabla de escuchas no es fiable en este entorno").toBe(true);
+    const vistos = (fase: string) => datos.muestras.filter((x) => x.fase === fase).flatMap(({ m }) => [...m.tcp, ...m.udp]).filter((s) => s.pid !== datos.controlPid);
     const resumen = Object.fromEntries(["check", "render", "codificacion", "snapshot"].map((f) => [f, [...new Set(vistos(f).map((s) => s.a))]]));
     medida(`direcciones en escucha por fase: ${JSON.stringify(resumen)}`);
-    // En positivo: el muestreo vio servidores en check y en render (si no, el test no prueba nada).
+    // En positivo: el muestreo vio servidores en las tres fases (si no, el test no prueba nada).
     expect(vistos("check").length).toBeGreaterThan(0);
     expect(vistos("render").length).toBeGreaterThan(0);
+    expect(vistos("snapshot").length).toBeGreaterThan(0);
     const fuera = [...new Set(datos.muestras.flatMap(({ m }) => [...m.tcp, ...m.udp]).map((s) => s.a))].filter((a) => a !== "127.0.0.1");
     // Conjunto conocido fuera de loopback: ninguno (W1.3 fija check/snapshot/render en 127.0.0.1).
     expect(fuera).toEqual([]);
@@ -304,12 +347,20 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
 
   it("render con timeout no deja procesos bajo el CfT ni el ffmpeg (I7)", async () => {
     process.env.VIDEO_TIMEOUT_RENDER_S = "15";
+    const s = muestreador();
     try {
       const j = await esperarJob((await encolarRender("video032", o())).job_id, 500);
+      await s.parar();
       expect(j.estado).toBe("error");
       expect(j.error).toMatch(/tiempo máximo/);
       expect(await procesosBajo(carpetasDelBundle(herramientasFfmpeg(process.env.FFMPEG_DIR)))).toEqual([]);
+      // Oráculo independiente del barrido: los Chrome vistos por ParentProcessId, comprobados por pid.
+      const chromes = [...new Set(s.muestras.flatMap((m) => m.chrome))];
+      medida(`timeout: ${chromes.length} Chrome descendientes vistos en ${s.muestras.length} muestras`);
+      expect(chromes.length, "el muestreador no vio ningún Chrome del motor").toBeGreaterThan(0);
+      expect(chromes.filter(sigueVivo)).toEqual([]);
     } finally {
+      await s.parar();
       delete process.env.VIDEO_TIMEOUT_RENDER_S;
     }
   }, 900000);
