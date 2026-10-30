@@ -158,8 +158,9 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     }
 
     // Navegación de primer nivel en el render (Medium 3): window.open y location (misma composición, el open va
-    // primero) y meta refresh (aparte: navega antes). Hacia loopback, que el sumidero ve; las mismas órdenes hacia fuera
-    // (203.0.113.1, TEST-NET-3) se lanzan también pero ningún sumidero local puede observarlas.
+    // primero) y meta refresh (aparte: navega antes). Se mide hacia loopback, que el sumidero ve. Hacia fuera solo se
+    // lanza window.open a 203.0.113.1 (TEST-NET-3), sin medir: ningún sumidero local lo observa y HyperFrames lanza su
+    // Chrome sin net-log. Medir la salida real corresponde a W1.3.
     const base = fs.readFileSync(path.join(dir, "index.html"), "utf8").replace(/<link rel="dns-prefetch"[\s\S]*?<\/script>\n/, "").replace(/<img src="http:\/\/ejemplo[^\n]*\n/, "");
     const abreYVa = `<script>try { window.open("http://127.0.0.1:${puertos.ventana}/o"); window.open("http://203.0.113.1/o"); } catch (e) {}
 setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l"; }, 300);</script>\n</body>`;
