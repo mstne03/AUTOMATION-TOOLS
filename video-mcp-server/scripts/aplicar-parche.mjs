@@ -13,12 +13,25 @@ const PARCHE = path.join(SERVIDOR, "patches", "hyperframes+0.8.206.patch");
 const HASHES = path.join(SERVIDOR, "patches", "hyperframes+0.8.206.sha256.json");
 
 const raiz = path.resolve(process.argv[2] ?? SERVIDOR);
+
+/** git absoluto de un PATH fuera de `raiz`: en Windows, libuv mira antes el cwd y ahí podría haber otro. */
+function gitFuera() {
+  const nombre = process.platform === "win32" ? "git.exe" : "git";
+  for (const d of (process.env.PATH ?? "").split(path.delimiter)) {
+    const rel = path.relative(raiz, d);
+    const dentro = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+    if (path.isAbsolute(d) && !dentro && fs.existsSync(path.join(d, nombre))) return path.join(d, nombre);
+  }
+  throw new Error(`git no se resuelve fuera de ${raiz}`);
+}
+
 // Dentro de un repo, git apply interpreta las rutas desde su raíz y se SALTA en silencio las que caen
 // fuera del cwd: el techo impide que suba. autocrlf=false evita que convierta el dist a CRLF en Windows.
 const env = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(raiz) };
-const git = (args, stdio) => execFileSync("git", ["-c", "core.autocrlf=false", "apply", ...args, PARCHE], { cwd: raiz, env, stdio });
 
 try {
+  const binario = gitFuera();
+  const git = (args, stdio) => execFileSync(binario, ["-c", "core.autocrlf=false", "apply", ...args, PARCHE], { cwd: raiz, env, stdio });
   try {
     git(["--reverse", "--check"], "ignore"); // ya aplicado
   } catch {
