@@ -298,6 +298,8 @@ const IP_CONTROL = "127.0.0.3";
 const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE ::1`;
 /** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
 const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
+/** Control «sin bloqueo»: también con proxy nulo, solo exceptúa loopback. Llega a los sumideros y a nada más. */
+const CONTROL_ABIERTO = [PROXY_NULO, `${LISTA_ANTIGUA};127.0.0.2;${IP_CONTROL};[::1]`, REGLAS_CONTROL];
 /** Las reglas de antes de MEDIUM-1: localhost se resuelve también a ::1. Solo como control. */
 const RESOLVER_ANTIGUO = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1";
 
@@ -503,7 +505,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         await new Promise((r) => setTimeout(r, 8000));
         await matarYAsentar(c);
         expect(seis.conexiones()).toBe(0);
-        c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
+        c = lanzar(CONTROL_ABIERTO);
         expect(await hasta(() => seis.conexiones() > 0, 15000), "control positivo: sin flags [::1] debería alcanzarse").toBe(true);
         await matarYAsentar(c);
       } finally {
@@ -603,10 +605,10 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
           hijos.push(c);
           return c;
         };
-        // 1. Sin nada (se anula el proxy del sistema): llegan TCP, STUN y WebTransport (QUIC).
+        // 1. Loopback exceptuado y sin el resto de flags: llegan TCP, STUN y WebTransport (QUIC).
         // Medido: --disable-quic NO frena a WebTransport (solo con esa bandera llegan paquetes); lo frenan
         // el proxy nulo y las reglas de resolución. La bandera queda por HTTP/3, sin control propio aquí.
-        let c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
+        let c = lanzar(CONTROL_ABIERTO);
         expect(
           await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0 && udpWt.paquetes() > 0, 15000),
           `tcp=${tcp.conexiones()} udp=${udp.paquetes()} webtransport=${udpWt.paquetes()}`,

@@ -187,7 +187,7 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     for (const [nombre, sinCsp] of [["preview", false], ["preview-sin-csp", true]] as const) {
       const netlog = path.join(tmp, `netlog-${nombre}.json`);
       // sinDnsPrefetchOff en el control: sin CSP y sin el <meta x-dns-prefetch-control>.
-      const m = await medir(() => sondearPreview({ navegador, dir, sonda, sinCsp, sinDnsPrefetchOff: sinCsp, argsExtra: [`--log-net-log=${netlog}`] }));
+      const m = await medir(() => sondearPreview({ navegador, dir, sonda, sinCsp, sinDnsPrefetchOff: sinCsp, reglas: "csp", argsExtra: [`--log-net-log=${netlog}`] }));
       const t = fs.existsSync(netlog) ? fs.readFileSync(netlog, "utf8") : "";
       r[nombre] = {
         cuenta: m.cuenta,
@@ -199,7 +199,7 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     }
     const navega = `(location.href = "http://localhost:${puertos.navegacion}/n", new Promise((ok) => setTimeout(() => ok(true), 1500)))`;
     for (const [nombre, marcoSinCsp] of [["navegacion", false], ["navegacion-sin-csp", true]] as const) {
-      const m = await medir(() => sondearPreview({ navegador, dir, sonda: navega, marcoSinCsp }).catch(() => undefined));
+      const m = await medir(() => sondearPreview({ navegador, dir, sonda: navega, marcoSinCsp, reglas: "csp" }).catch(() => undefined));
       r[nombre] = { cuenta: m.cuenta };
     }
     for (const [nombre, d] of [["render", dirRender], ["render-sin-csp", sin]] as const) {
