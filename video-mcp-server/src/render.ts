@@ -221,6 +221,8 @@ export interface Job {
   codificador?: string;
   /** Fabricante del codificador: el adaptador que codificó. */
   adaptador?: string;
+  /** Renderer de WebGL de la sonda de HyperFrames; es un diagnóstico, no navigator.gpu.requestAdapter(). */
+  gpuChrome?: string;
   intermedio?: "mov" | "webm";
   /** Qué falló y a qué se recurrió, si hubo reserva (I11: nunca en silencio). */
   reserva?: string;
@@ -383,9 +385,18 @@ const AVISOS_ESPERADOS = /contrast|wcag|nested_structure_needs_subcomposition|ti
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const MAX_LINEAS = 400;
 
+const LINEA_GPU = /^\[hyperframes\] browserGpuMode probe → \S+ \(WebGL renderer vendor="[^"]*" renderer="([^"]*)"\)/;
+
+/** Renderer de la línea de la sonda de GPU. Anclada: a `anotar` también llegan hallazgos con texto de la composición (R0 L2). */
+export function extraerGpuChrome(linea: string): string | undefined {
+  const m = LINEA_GPU.exec(linea);
+  return m?.[1].replace(/[^\w .,:;()/+-]/g, "").trim().slice(0, 120) || undefined;
+}
+
 function anotar(job: Job, linea: string): void {
   const limpia = linea.replace(ANSI_RE, "").replace(/[⠀-⣿]/g, "").trim();
   if (!limpia) return;
+  job.gpuChrome ??= extraerGpuChrome(limpia);
   job.lineas.push(limpia);
   if (job.lineas.length > MAX_LINEAS) job.lineas.splice(0, job.lineas.length - MAX_LINEAS);
   const pct = /(\d{1,3}(?:\.\d+)?)\s?%/.exec(limpia);
@@ -501,10 +512,14 @@ export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: 
         porCodigo.set(f.code, { n: (p?.n ?? 0) + 1, ejemplo: p?.ejemplo ?? f.message ?? "" });
       }
     }
-    if (j.ok === false && !errores.length && r.code !== 0) errores.push("check terminó con errores sin detalle.");
+    // I11: solo JSON válido, ok === true y código 0 dejan seguir.
+    if ((j.ok !== true || r.code !== 0) && !errores.length) {
+      const sinDetalle = j.ok === false ? "check terminó con errores sin detalle." : `check terminó con código ${r.code} y sin ok.`;
+      errores.push(typeof j.error === "string" && j.error ? j.error : sinDetalle);
+    }
   } catch {
     for (const l of (r.stdout + "\n" + r.stderr).split(/\r?\n/)) alLinea?.(l);
-    if (r.code !== 0) errores.push(`check terminó con código ${r.code}.`);
+    errores.push(r.code === 0 ? "check terminó sin JSON válido." : `check terminó con código ${r.code}.`);
   }
   return { errores, avisos: [...porCodigo].map(([c, { n, ejemplo }]) => `check ${c} (×${n}): ${ejemplo}`) };
 }
@@ -646,6 +661,7 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
   job.avisos.push(
     `Codificador: ${salida.codificador} (${job.adaptador}) · modo ${modo === "rapido" ? "Rápido" : "Compatible"}${job.intermedio === "webm" ? " · intermedio webm" : ""}`,
   );
+  if (job.gpuChrome) job.avisos.push(`GPU de Chrome: ${job.gpuChrome}`);
   job.duracion = salida.info.duracion;
   job.progreso = 100;
   job.fase = undefined;
