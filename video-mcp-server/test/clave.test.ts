@@ -1,19 +1,18 @@
 // La clave de ElevenLabs no llega a los hijos del motor, y el aviso de voz dice lo que falta de verdad.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { entornoConFfmpeg } from "../src/proceso.js";
+import { entornoHijo } from "../src/proceso.js";
 import type { Config } from "../src/config.js";
 import { catalogo, mensajeFaltanParaVoz, mensajeSinNavegador } from "../src/herramientas.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("entornoConFfmpeg", () => {
+describe("entornoHijo", () => {
   it("no pasa ELEVENLABS_API_KEY a HyperFrames, Chrome ni ffmpeg", () => {
     vi.stubEnv("ELEVENLABS_API_KEY", "xi-secreta");
-    const env = entornoConFfmpeg({ dir: "C:\\ff", ffmpeg: "", ffprobe: "" }, { ELEVENLABS_API_KEY: "xi-extra" });
+    const env = entornoHijo();
     expect(env.ELEVENLABS_API_KEY).toBeUndefined();
-    // El entorno es la lista blanca de I5: ni lo que pase el llamador ni el PATH del usuario.
+    // El entorno es la lista blanca de I5.
     expect(Object.keys(env)).not.toContain("ELEVENLABS_API_KEY");
-    expect(env.PATH).not.toContain("C:\\ff");
   });
 });
 

@@ -27,7 +27,6 @@ export interface Config {
   elevenVoiceId: string | undefined;
   elevenModelId: string;
   videoRoot: string;
-  browserPath: string | undefined;
   musicaVolumen: number;
   ffmpegDir: string | undefined;
 }
@@ -50,7 +49,6 @@ export function cargarConfig(env: NodeJS.ProcessEnv = process.env): Config {
     elevenVoiceId: vacioAUndefined(env.ELEVENLABS_VOICE_ID),
     elevenModelId: vacioAUndefined(env.ELEVENLABS_MODEL_ID) ?? "eleven_multilingual_v2",
     videoRoot: path.resolve(vacioAUndefined(env.VIDEO_ROOT) ?? path.join(os.homedir(), "Videos", "SEO Studio")),
-    browserPath: vacioAUndefined(env.HYPERFRAMES_BROWSER_PATH),
     musicaVolumen,
     ffmpegDir: vacioAUndefined(env.FFMPEG_DIR),
   };

@@ -8,9 +8,10 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SERVER_ROOT } from "../src/raiz.js";
-import { entornoConFfmpeg, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
+import { entornoHijo, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
 import {
   MARCADOR,
   accesos,
@@ -20,10 +21,13 @@ import {
   copiaSinParche,
   ENTORNO_CERRADO,
   entornoLimpio,
+  BYPASS,
   FLAGS_RED,
   GPU_SIN_SANDBOX,
   ipNoInterna,
   PROXY_NULO,
+  RENDER_ESPIADO,
+  RESOLVER,
   sumidero,
   sumideroUdp,
   type Sumidero,
@@ -32,6 +36,7 @@ import {
 
 const UNTRUSTED = 0;
 const MEDIUM = 8192;
+const LOW = 4096;
 
 interface Muestra {
   pid: number;
@@ -45,7 +50,17 @@ interface Muestra {
   /** Milisegundos (TickCount) de la primera y la última vez que el vigilante vio el proceso. */
   primera: number;
   ultima: number;
+  /** Código de salida al parar el vigilante; 259 (STILL_ACTIVE): sigue vivo. */
+  salida: number;
 }
+
+/**
+ * Renderer que terminó en Low sin poder haber tocado la composición. Solo pasa en la sonda de GPU: tiene
+ * dos renderers (pestaña inicial y la de WebGL), cierra en cuanto responde el segundo y el primero sale
+ * antes de bajar el token. Exige cierre limpio y un browser sin excepción de proxy, que no navega al
+ * servidor. El HIGH-1 sigue exigiendo otro renderer Untrusted en ese browser, y JS no responde en Low.
+ */
+export const lowSinComposicion = (m: Pick<Muestra, "integridad" | "salida">, lista?: string) => m.integridad === LOW && m.salida === 0 && lista === BYPASS;
 
 // Constante: rutas y PID llegan por variables de entorno, nada se interpola en el script.
 const VIGILANTE = String.raw`
@@ -55,6 +70,8 @@ using System; using System.Runtime.InteropServices;
 public static class Integridad {
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint a, bool h, int pid);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint c);
+  public static long Salida(IntPtr h) { uint c; return GetExitCodeProcess(h, out c) ? (long)c : -1L; }
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr t, int c, IntPtr i, int l, out int r);
   [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr s, uint n);
@@ -110,12 +127,17 @@ public static class Integridad {
     }
     return r.ToArray();
   }
-  public static int Nivel(int pid) {
+  // El asa se retiene hasta el final: el token sigue legible tras la salida y el PID no se reutiliza.
+  // Cero si no se pudo abrir; error 87 (ERROR_INVALID_PARAMETER): el proceso ya no existe.
+  public static IntPtr Abrir(int pid, out int error) {
     IntPtr h = OpenProcess(0x1000, false, pid);
-    // -1: el proceso ya no existe (87, ERROR_INVALID_PARAMETER); -4: existe pero no se puede abrir.
-    if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? -1 : -4;
+    error = h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+    return h;
+  }
+  // Nivel definitivo: el token de un proceso solo baja, así que vale leerlo al final, vivo o salido.
+  public static int Nivel(IntPtr h) {
     IntPtr t;
-    if (!OpenProcessToken(h, 0x8, out t)) { CloseHandle(h); return -2; }
+    if (!OpenProcessToken(h, 0x8, out t)) return -2;
     int r; GetTokenInformation(t, 25, IntPtr.Zero, 0, out r);
     IntPtr b = Marshal.AllocHGlobal(r);
     try {
@@ -123,7 +145,7 @@ public static class Integridad {
       IntPtr sid = Marshal.ReadIntPtr(b);
       int n = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
       return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(n - 1)));
-    } finally { Marshal.FreeHGlobal(b); CloseHandle(t); CloseHandle(h); }
+    } finally { Marshal.FreeHGlobal(b); CloseHandle(t); }
   }
 }
 "@
@@ -133,10 +155,11 @@ $parada = $env:VIGIA_PARADA
 $desde = (Get-Date).AddSeconds(-2)
 $tope = (Get-Date).AddMinutes(15)
 $vistos = @{}
+$asas = @{}
 [Console]::Out.WriteLine('LISTO')
 [Console]::Out.Flush()
 while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
-  $todos = @(Get-CimInstance Win32_Process -Filter "Name='chrome-headless-shell.exe' OR Name='node.exe'")
+  $todos = @(Get-CimInstance Win32_Process -Filter "Name='chrome-headless-shell.exe' OR Name='chrome.exe' OR Name='node.exe'")
   $nuestros = @{}
   # Raíces: los procesos cuya línea de comandos lleva la marca (la carpeta de la composición o el
   # perfil del control). Así no se cuelan los Chrome de otras sesiones con el mismo CfT.
@@ -155,7 +178,11 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
   foreach ($id in $nuestros.Keys) {
     $p = $nuestros[$id]
     if (-not $vistos.ContainsKey($id)) {
-      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0 }
+      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0; salida = -1 }
+      $e = 0
+      $asas[$id] = [Integridad]::Abrir($id, [ref]$e)
+      # -1: el proceso ya no existe; -4: existe pero no se puede abrir.
+      if ($asas[$id] -eq [IntPtr]::Zero) { $vistos[$id].integridad = if ($e -eq 87) { -1 } else { -4 } }
     }
     $v = $vistos[$id]
     # El tipo sale de la línea de comandos: hasta tenerla, el proceso queda como '?' y se reintenta.
@@ -174,10 +201,6 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
       }
     }
     $v.ultima = [Environment]::TickCount
-    # Se relee en cada vuelta y vale la última lectura: el sandbox arranca el proceso con un token
-    # inicial (Low) y lo baja a Untrusted al terminar de inicializarse (LowerToken).
-    $n = [Integridad]::Nivel($id)
-    if ($n -ge 0 -or $v.integridad -lt 0) { $v.integridad = $n }
   }
   # Sockets: CIM tarda cerca de 1 s con carga y los servidores viven poco, así que entre dos consultas
   # CIM se leen las tablas del sistema varias veces, con los PID ya conocidos.
@@ -191,6 +214,15 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
       if ($c[0] -eq 'U' -and $v.udp -notcontains $c[1]) { $v.udp += $c[1] }
     }
     Start-Sleep -Milliseconds 25
+  }
+}
+# El sandbox arranca el proceso con un token inicial (Low) y lo baja a Untrusted antes de ejecutar nada
+# de la página (LowerToken). Se lee una sola vez, al final y por el asa: un muestreo no vería un renderer
+# que baja y sale entre dos consultas CIM (medido: Untrusted 30 ms y salida con código 0).
+foreach ($id in @($vistos.Keys)) {
+  if ($asas[$id] -ne [IntPtr]::Zero) {
+    $vistos[$id].integridad = [Integridad]::Nivel($asas[$id])
+    $vistos[$id].salida = [Integridad]::Salida($asas[$id])
   }
 }
 [Console]::Out.WriteLine((ConvertTo-Json -InputObject @($vistos.Values) -Depth 4 -Compress))
@@ -233,8 +265,9 @@ async function vigilar(exe: string, marca: string): Promise<Vigilante> {
   };
 }
 
+const listaBypass = (b?: Muestra) => /--proxy-bypass-list=(\S+)/.exec(b?.cmd ?? "")?.[0];
 const esLoopback = (dir: string) => dir.startsWith("127.0.0.1:");
-const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
+const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} t=${m.ultima - m.primera}ms salida=${m.salida} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
 
 /** Mata el árbol del Chrome de un control (c.kill() solo mata el proceso browser y sus hijos siguen). */
 const matar = (c: ChildProcess) => spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
@@ -255,6 +288,18 @@ async function hasta(cond: () => boolean, ms: number): Promise<boolean> {
 }
 
 const CFT = process.env.HYPERFRAMES_BROWSER_PATH;
+
+/**
+ * Dirección de los sumideros: de loopback y sin excepción en la lista de proxy, para que ningún test abra conexiones ni
+ * escuchas fuera de loopback. VIDEO_SANDBOX_CON_LAN=1 (solo a mano) usa la IP de la interfaz en las pruebas con flags.
+ */
+const IP_CONTROL = "127.0.0.3";
+/** Los controles sin proxy también llevan reglas de resolución: solo se resuelven estos literales de loopback. */
+const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE ::1`;
+/** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
+const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
+/** Las reglas de antes de MEDIUM-1: localhost se resuelve también a ::1. Solo como control. */
+const RESOLVER_ANTIGUO = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1";
 
 /**
  * Mata (con su árbol) los procesos de esta ejecución que sigan vivos: los que llevan `raiz` en la línea de
@@ -295,12 +340,12 @@ ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 }
 
 /** Intentos de salida de la spec y los observables en los sumideros. */
-// `externos`: destinos que saldrían del equipo sin proxy nulo (DNS de ejemplo.test, 203.0.113.1). Solo con los
-// flags del marcador puestos; los controles sin flags los omiten y usan solo sumideros propios.
+// `externos`: hosts `.test`, que las reglas de resolución dejan sin resolver. Solo con los flags del marcador puestos;
+// los controles sin flags los omiten y usan solo sumideros propios en loopback.
 const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, externos = true) => `
 const nada = () => {};
 try { document.body.append(Object.assign(document.createElement("img"), { src: "http://${ip}:${tcp}/x.png" })); } catch (e) {}
-${externos ? `try { fetch("http://203.0.113.1/").catch(nada); } catch (e) {}
+${externos ? `try { fetch("http://salida.test/").catch(nada); } catch (e) {}
 try { new WebSocket("ws://ejemplo.test/w"); } catch (e) {}
 try { new Image().src = "//ejemplo.test/x.png"; } catch (e) {}` : ""}
 try { fetch("http://${ip}:${tcp}/f").catch(nada); } catch (e) {}
@@ -319,23 +364,38 @@ try { const s = document.createElement("script"); s.type = "speculationrules";
 `;
 
 /** Sirve `html` en 127.0.0.1 (la página de los controles). */
-function servir(html: string): Promise<{ url: string; cerrar(): Promise<void> }> {
+function servir(html: string): Promise<{ url: string; puerto: number; servidas(): number; cerrar(): Promise<void> }> {
+  let n = 0;
   const s = http.createServer((_q, r) => {
+    n++;
     r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     r.end(html);
   });
   return new Promise((ok) =>
-    s.listen(0, "127.0.0.1", () =>
-      ok({ url: `http://127.0.0.1:${(s.address() as { port: number }).port}/`, cerrar: () => new Promise((r) => s.close(() => r())) }),
-    ),
+    s.listen(0, "127.0.0.1", () => {
+      const puerto = (s.address() as { port: number }).port;
+      ok({ url: `http://127.0.0.1:${puerto}/`, puerto, servidas: () => n, cerrar: () => new Promise((r) => (s.closeAllConnections(), s.close(() => r()))) });
+    }),
   );
 }
+
+describe("lowSinComposicion", () => {
+  it("solo admite Low con cierre limpio en un browser sin excepción de proxy", () => {
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, BYPASS)).toBe(true);
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, `${BYPASS};localhost:1234`)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, undefined)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 259 }, BYPASS)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 1 }, BYPASS)).toBe(false);
+    expect(lowSinComposicion({ integridad: MEDIUM, salida: 0 }, BYPASS)).toBe(false);
+  });
+});
 
 describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", () => {
   const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video sandbox "));
   let h: Herramientas;
   let ip: string;
   let marcador: (a: string[]) => string[];
+  let bypass: (url: string) => string[];
   let tcp: Sumidero;
   let tcp2: Sumidero;
   let udp: SumideroUdp;
@@ -350,9 +410,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     const hf = herramientasFfmpeg(process.env.FFMPEG_DIR);
     if (!hf) throw new Error("Define FFMPEG_DIR con la carpeta de ffmpeg.exe y ffprobe.exe");
     h = hf;
-    ip = ipNoInterna();
-    marcador = ((await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: (a: string[]) => string[] }).withHyperframesBrowserMarker;
-    entorno = entornoLimpio(entornoConFfmpeg(h, {}), { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: CFT });
+    ip = process.env.VIDEO_SANDBOX_CON_LAN === "1" ? ipNoInterna() : IP_CONTROL;
+    const k = (await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: (a: string[]) => string[]; seoStudioBypass: (url: string) => string[] };
+    marcador = k.withHyperframesBrowserMarker;
+    bypass = k.seoStudioBypass;
+    entorno = entornoLimpio(entornoHijo(), { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: CFT });
   });
 
   afterEach(async () => {
@@ -377,11 +439,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     expect(r.stdout.trim(), `procesos warmCheck.js vivos: ${r.stderr}`).toBe("0");
   });
 
-  const abrirSumideros = async () => {
-    tcp = await sumidero(ip);
+  const abrirSumideros = async (host = ip) => {
+    tcp = await sumidero(host);
     tcp2 = await sumidero("127.0.0.2");
-    udp = await sumideroUdp(ip);
-    udpWt = await sumideroUdp(ip); // solo WebTransport (QUIC): sin compartirlo con el STUN
+    udp = await sumideroUdp(host);
+    udpWt = await sumideroUdp(host); // solo WebTransport (QUIC): sin compartirlo con el STUN
   };
 
   /** Tamaño y fecha de `debug.log` junto al exe del CfT ("no existe" si no está). No se borra: puede ser compartido. */
@@ -391,27 +453,34 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   };
 
   it(
-    "reglas de especulación: a 127.0.0.2 no llegan; a 127.0.0.1/localhost SÍ (residual medido, sin bandera que lo corte)",
+    "reglas de especulación: a 127.0.0.1, localhost y 127.0.0.2 tampoco llegan (R2-M1); con la lista antigua, sí",
     async () => {
-      // Control positivo y medición del residual: ninguna bandera probada (Prerender2,
-      // SpeculationRulesPrefetchProxy, Prefetch, PrefetchPrerenderIntegration, PreloadingConfig,
-      // --disable-blink-features=SpeculationRules) corta el prefetch/prerender en CfT 152 ni 156.
-      // Lo que no es localhost/127.0.0.1 va al proxy nulo; el loopback exento (el servidor del render)
-      // sí se alcanza. Cuando una bandera lo corte, este test fallará: invertir la última aserción.
+      // Ninguna bandera probada (Prerender2, SpeculationRulesPrefetchProxy, Prefetch, PrefetchPrerenderIntegration,
+      // PreloadingConfig, --disable-blink-features=SpeculationRules) corta el prefetch/prerender en CfT 152 ni 156: lo
+      // corta la lista de proxy, que solo exceptúa el puerto exacto del servidor de la composición.
       const lo = await sumidero("127.0.0.1");
       const lo2 = await sumidero("127.0.0.2");
       const pagina = await servir(
         `<!doctype html><html><body><p>x</p><script>${especulacion(`http://127.0.0.2:${lo2.puerto}`)}${especulacion(`http://localhost:${lo.puerto}`)}</script></body></html>`,
       );
       try {
-        const dd = path.join(RAIZ, `dd-espec-${Date.now()}`);
-        const c = spawn(CFT!, [...marcador(["--headless", "--no-sandbox"]), `--user-data-dir=${dd}`, pagina.url], { windowsHide: true, stdio: "ignore" });
-        hijos.push(c);
+        const lanzar = (args: string[]) => {
+          const c = spawn(CFT!, [...args, `--user-data-dir=${path.join(RAIZ, `dd-espec-${Date.now()}`)}`, pagina.url], { windowsHide: true, stdio: "ignore" });
+          hijos.push(c);
+          return c;
+        };
+        const flags = marcador([...bypass(pagina.url), "--headless", "--no-sandbox"]);
+        let c = lanzar(flags);
+        await new Promise((r) => setTimeout(r, 8000));
+        await matarYAsentar(c);
+        expect(lo2.conexiones(), lo2.peticiones().join("\n")).toBe(0);
+        expect(lo.conexiones(), lo.peticiones().join("\n")).toBe(0);
+        c = lanzar(flags.map((a) => (a.startsWith("--proxy-bypass-list") ? LISTA_ANTIGUA : a)));
         const llego = await hasta(() => lo.peticiones().length > 0, 15000);
         await new Promise((r) => setTimeout(r, 2000));
         await matarYAsentar(c);
         expect(lo2.conexiones(), lo2.peticiones().join("\n")).toBe(0);
-        expect(llego, "control positivo: la regla hacia localhost debería llegar").toBe(true);
+        expect(llego, "control positivo: con la lista antigua, la regla hacia localhost debería llegar").toBe(true);
         expect(lo.peticiones().every((p) => /Sec-Purpose: prefetch/i.test(p)), lo.peticiones().join("\n")).toBe(true);
       } finally {
         await Promise.all([pagina.cerrar(), lo.cerrar(), lo2.cerrar()]);
@@ -423,7 +492,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   it(
     "[::1]: no se alcanza con los flags del marcador; sin ellos, sí",
     async () => {
-      // Las reglas de resolución también mapean literales IP y solo exceptúan localhost y 127.0.0.1.
+      // Las reglas de resolución también mapean literales IP y solo exceptúan 127.0.0.1.
       const seis = await sumidero("::1");
       const pagina = await servir(`<!doctype html><html><body><script>fetch("http://[::1]:${seis.puerto}/f", { mode: "no-cors" }).catch(() => {});</script></body></html>`);
       try {
@@ -432,11 +501,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
           hijos.push(c);
           return c;
         };
-        let c = lanzar(marcador(["--no-sandbox"]));
+        let c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]));
         await new Promise((r) => setTimeout(r, 8000));
         await matarYAsentar(c);
         expect(seis.conexiones()).toBe(0);
-        c = lanzar(["--no-proxy-server"]);
+        c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
         expect(await hasta(() => seis.conexiones() > 0, 15000), "control positivo: sin flags [::1] debería alcanzarse").toBe(true);
         await matarYAsentar(c);
       } finally {
@@ -446,18 +515,76 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     60000,
   );
 
+  /** Lanza Chrome con `args` en `url`; devuelve con qué matarlo. */
+  const abrir = (args: string[], url: string) => {
+    const c = spawn(CFT!, [...args, `--user-data-dir=${path.join(RAIZ, `dd-red-${Date.now()}`)}`, url], { windowsHide: true, stdio: "ignore" });
+    hijos.push(c);
+    return c;
+  };
+
   it(
-    "control: el vigilante ve Medium con --no-sandbox y Untrusted sin él",
+    "MEDIUM-1: [::1]:P no suplanta al servidor de localhost:P; con la regla de resolución antigua, sí",
+    async () => {
+      const propio = await servir("<!doctype html><html><body><p>propio</p></body></html>");
+      const impostor = await sumidero("::1", propio.puerto);
+      const url = `http://localhost:${propio.puerto}/`;
+      try {
+        const flags = marcador([...bypass(url), "--headless", "--no-sandbox"]);
+        let c = abrir(flags, url);
+        expect(await hasta(() => propio.servidas() > 0, 15000), "la página propia no se sirvió").toBe(true);
+        await new Promise((r) => setTimeout(r, 2000));
+        await matarYAsentar(c);
+        expect(impostor.conexiones()).toBe(0);
+        c = abrir(flags.map((a) => (a === RESOLVER ? RESOLVER_ANTIGUO : a)), url);
+        expect(await hasta(() => impostor.conexiones() > 0, 15000), "control positivo: con la regla antigua el impostor debería recibir la página").toBe(true);
+        await matarYAsentar(c);
+      } finally {
+        await Promise.all([propio.cerrar(), impostor.cerrar()]);
+      }
+    },
+    60000,
+  );
+
+  it(
+    "L-1: con el proxy nulo en 0.0.0.0:1 nada llega al puerto 1 ni cae a directo; en 127.0.0.1:1, un proceso local lo recibe",
+    async () => {
+      // Sin escucha en 0.0.0.0:1: abriría el puerto en todas las interfaces.
+      const uno = await sumidero("127.0.0.1", 1);
+      const uno6 = await sumidero("::1", 1);
+      const dos = await sumidero("127.0.0.2");
+      const pagina = await servir(`<!doctype html><html><body><script>fetch("http://salida.test/leak", { mode: "no-cors" }).catch(() => {});fetch("http://127.0.0.2:${dos.puerto}/d", { mode: "no-cors" }).catch(() => {});</script></body></html>`);
+      try {
+        const flags = marcador([...bypass(pagina.url), "--headless", "--no-sandbox"]);
+        let c = abrir(flags, pagina.url);
+        expect(await hasta(() => pagina.servidas() > 0, 15000), "la página propia no se sirvió").toBe(true);
+        await new Promise((r) => setTimeout(r, 6000));
+        await matarYAsentar(c);
+        expect([uno.conexiones(), uno6.conexiones(), dos.conexiones()]).toEqual([0, 0, 0]);
+        c = abrir(flags.map((a) => (a === PROXY_NULO ? "--proxy-server=127.0.0.1:1" : a)), pagina.url);
+        expect(await hasta(() => uno.peticiones().some((p) => p.includes("127.0.0.2")), 15000), "control positivo: el puerto 1 de loopback debería recibir la URL").toBe(true);
+        await matarYAsentar(c);
+        expect(dos.conexiones()).toBe(0);
+      } finally {
+        await Promise.all([pagina.cerrar(), uno.cerrar(), uno6.cerrar(), dos.cerrar()]);
+      }
+    },
+    60000,
+  );
+
+  it(
+    "control: el vigilante lee Medium con --no-sandbox y Untrusted sin él, con Chrome ya salido",
     async () => {
       for (const [flags, esperado] of [[["--no-sandbox"], MEDIUM], [[], UNTRUSTED]] as [string[], number][]) {
         const marca = `vigia-control-${Date.now()}`;
         const v = await vigilar(CFT!, marca);
         const dd = path.join(RAIZ, marca);
-        const c = spawn(CFT!, ["--headless", `--user-data-dir=${dd}`, ...flags, "data:text/html,<p>hola</p>"], { windowsHide: true, stdio: "ignore" });
+        const c = spawn(CFT!, ["--headless", `--user-data-dir=${dd}`, PROXY_NULO, RESOLVER, ...flags, "data:text/html,<p>hola</p>"], { windowsHide: true, stdio: "ignore" });
         hijos.push(c);
-        await new Promise((r) => setTimeout(r, 8000)); // con el equipo cargado el renderer tarda en nacer
-        const ms = await v.parar();
+        // Margen para que todo renderer llegue a su nivel: en la ruta del CfT 156 cada proceso tarda 2 s en
+        // arrancar. Se mata antes de parar: el token se lee del proceso ya salido, como en la sonda de GPU.
+        await new Promise((r) => setTimeout(r, 15000));
         matar(c);
+        const ms = await v.parar();
         const renderers = ms.filter((m) => m.tipo === "renderer");
         expect(renderers.length, resumen(ms)).toBeGreaterThan(0);
         for (const r of renderers) expect(r.integridad, `${flags}: ${resumen(ms)}`).toBe(esperado);
@@ -469,8 +596,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   it(
     "control: sin los flags la fuga llega a los sumideros (TCP, 127.0.0.2 y STUN por UDP); con los del marcador, no",
     async () => {
-      await abrirSumideros();
-      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, false)}</script></body></html>`);
+      await abrirSumideros(IP_CONTROL);
+      const pagina = await servir(`<!doctype html><html><body><img src="http://${IP_CONTROL}:${tcp.puerto}/x.png"><script>${FUGAS_JS(IP_CONTROL, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, false)}</script></body></html>`);
       try {
         const lanzar = (args: string[]) => {
           const dd = path.join(RAIZ, `dd-${Date.now()}`);
@@ -481,7 +608,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         // 1. Sin nada (se anula el proxy del sistema): llegan TCP, STUN y WebTransport (QUIC).
         // Medido: --disable-quic NO frena a WebTransport (solo con esa bandera llegan paquetes); lo frenan
         // el proxy nulo y las reglas de resolución. La bandera queda por HTTP/3, sin control propio aquí.
-        let c = lanzar(["--no-proxy-server"]);
+        let c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
         expect(
           await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0 && udpWt.paquetes() > 0, 15000),
           `tcp=${tcp.conexiones()} udp=${udp.paquetes()} webtransport=${udpWt.paquetes()}`,
@@ -489,17 +616,17 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         await matarYAsentar(c);
         // 2. Proxy nulo SIN el bypass explícito: 127.0.0.2 entra por el bypass implícito de loopback (MEDIUM-1).
         const antes2 = tcp2.conexiones();
-        c = lanzar([PROXY_NULO]);
+        c = lanzar([PROXY_NULO, REGLAS_CONTROL]);
         expect(await hasta(() => tcp2.conexiones() > antes2, 15000), "sin --proxy-bypass-list el loopback 127.0.0.2 debería alcanzarse").toBe(true);
         await matarYAsentar(c);
         // 3. Proxy nulo y reglas de resolución SIN el flag de WebRTC: el STUN a una IP literal sale.
         const antesUdp = udp.paquetes();
-        c = lanzar(marcador(["--no-sandbox"]).filter((a) => !a.startsWith("--force-webrtc-ip-handling-policy=")));
+        c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]).filter((a) => !a.startsWith("--force-webrtc-ip-handling-policy=")));
         expect(await hasta(() => udp.paquetes() > antesUdp, 15000), "sin el flag de WebRTC el STUN debería llegar").toBe(true);
         await matarYAsentar(c);
         // 4. Con los flags del marcador: nada en 10 s.
         const [t1, t2, u, w] = [tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()];
-        c = lanzar(marcador(["--no-sandbox"]));
+        c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]));
         await new Promise((r) => setTimeout(r, 10000));
         await matarYAsentar(c);
         expect([tcp.conexiones() - t1, tcp2.conexiones() - t2, udp.paquetes() - u, udpWt.paquetes() - w]).toEqual([0, 0, 0, 0]);
@@ -547,11 +674,17 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   function comprobarProcesos(ms: Muestra[], log: string, conWebRtc: boolean) {
     const renderers = ms.filter((m) => m.tipo === "renderer");
     const browsers = ms.filter((m) => m.tipo === "browser");
-    // 2. Todo renderer medido, en Untrusted. -1 = el renderer ya había salido cuando se fue a leer (el
-    // about:blank inicial que Chrome cambia al navegar): no hay token que leer, se registra y no cuenta.
+    // 2. Todo renderer medido, en Untrusted: nivel definitivo, leído al final por el asa, haya salido o no.
+    // -1 = ya no existía al ir a abrirlo tras verlo en CIM: no hay token que leer, se registra y no cuenta.
     // Cualquier otro valor (Medium, Low, -2, -3, -4: existe y no se puede leer) es fallo.
     expect(renderers.length, log).toBeGreaterThan(0);
-    for (const m of renderers) expect([UNTRUSTED, -1], log).toContain(m.integridad);
+    for (const m of renderers) {
+      if (lowSinComposicion(m, listaBypass(browsers.find((b) => b.pid === m.ppid)))) {
+        process.stderr.write(`renderer #${m.pid} de la sonda salió en Low sin composición\n`);
+        continue;
+      }
+      expect([UNTRUSTED, -1], log).toContain(m.integridad);
+    }
     // Al menos uno medido de verdad: si todos fueran -1, el bucle anterior no probaría nada.
     expect(renderers.some((r) => r.integridad === UNTRUSTED), log).toBe(true);
     const salidos = renderers.filter((m) => m.integridad === -1).length;
@@ -568,7 +701,10 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     // 3. Flags del proceso browser, y HIGH-1: ninguno de un solo proceso y cada uno con un renderer Untrusted.
     expect(browsers.length, log).toBeGreaterThan(0);
     for (const b of browsers) {
-      for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED, MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
+      for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED.filter((x) => x !== BYPASS), MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
+      // El que navega lleva la excepción de su servidor; el resto (sonda de GPU, efectos), ninguna.
+      const lista = listaBypass(b);
+      if (lista !== BYPASS) expect(lista, `browser#${b.pid}\n${log}`).toMatch(/^--proxy-bypass-list=<-loopback>;(localhost|127\.0\.0\.1):\d+$/);
       expect(b.cmd).not.toMatch(/--no-sandbox|--single-process|--in-process-gpu/);
       // Un browser de vida corta (la sonda de GPU de HyperFrames) puede cerrar antes de que el vigilante
       // vea su renderer; uno que vive 2 s o más sin renderer Untrusted es fallo (un solo proceso, HIGH-1).
@@ -639,7 +775,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   // sin el parche: demuestran que sin los hunks la salida existe y que el sumidero la vería.
   describe("I14: salidas de red de Node", () => {
     let sinParche: { bin: string; borrar(): void };
-    beforeAll(() => {
+    // Una prueba y no un beforeAll: si la preparación falla, vitest salta el bloque entero y queda en verde sin medir nada.
+    it("prepara la copia de HyperFrames sin el parche", () => {
       sinParche = copiaSinParche();
     }, 60000);
     afterAll(() => sinParche?.borrar());
@@ -654,22 +791,46 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       );
       return comp;
     };
-    const render = (comp: string, bin?: string) =>
-      cli(["render", comp, "-o", path.join(comp, "salida.webm"), "--fps", "30", "--format", "webm", "--quality", "delivery"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
-    const check = (comp: string, bin?: string) => cli(["check", comp, "--json", "--no-contrast"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
+    const argsRender = (comp: string) => ["render", comp, "-o", path.join(comp, "salida.webm"), "--fps", "30", "--format", "webm", "--quality", "delivery"];
+    const argsCheck = (comp: string) => ["check", comp, "--json", "--no-contrast"];
+    const argsSnapshot = (comp: string) => ["snapshot", comp, "--frames", "1", "--no-end"];
+    const render = (comp: string) => cli(argsRender(comp), { cwd: comp, env: entorno, timeoutMs: 180000 });
+    const check = (comp: string) => cli(argsCheck(comp), { cwd: comp, env: entorno, timeoutMs: 180000 });
+    /**
+     * Control sin parche: bajo el espía y sin ESPIA_HIJOS no arranca ningún hijo y nada sale. Chrome real sin proxy nulo
+     * haría WPAD (DNS y DHCP) aunque la página solo citara loopback, y sin parche HyperFrames sondea el chrome.exe del
+     * sistema aunque le den otra ruta. El vigilante lo comprueba por fuera del espía. Devuelve lo anotado sin los intentos
+     * de Chrome, todos bloqueados: lo que queda solo puede venir de Node. Se pierde el GET real de Lavf, medido en W1.3.
+     */
+    const control = async (args: string[], comp: string, bin = sinParche.bin): Promise<unknown[][]> => {
+      const log = path.join(RAIZ, `control-${path.basename(comp)}.log`);
+      const env = conEspia({ ...entorno, HYPERFRAMES_BROWSER_PATH: path.join(RAIZ, "chrome-falso.exe") }, log);
+      const v = await vigilar(CFT!, comp);
+      const r = await cli(args, { cwd: comp, env, timeoutMs: 180000, bin });
+      const ms = await v.parar();
+      const salida = (r.stdout + r.stderr).slice(-1500);
+      expect(r.timeout, salida).toBe(false);
+      expect(ms.filter((m) => m.tipo !== "node"), resumen(ms)).toEqual([]);
+      const vistos = accesos(log).map((l) => JSON.parse(l) as unknown[]);
+      expect(vistos.filter((a) => /^(dns|net)\./.test(String(a[0]))), salida).toEqual([]);
+      return vistos.filter((a) => !/chrome/i.test(String(a[1])));
+    };
+    const distSinParche = (fichero: string) => pathToFileURL(path.join(path.dirname(sinParche.bin), "..", "dist", fichero)).href;
     const CERRADO = "HyperFrames no descarga recursos remotos en modo cerrado (I14)";
 
     it("<script src> externo: el render falla sin conectar; sin el parche, Node lo descarga", async () => {
-      tcp = await sumidero("127.0.0.1");
-      const comp = proyecto("script", "", `<script src="http://127.0.0.1:${tcp.puerto}/x.js"></script>`);
+      // 127.0.0.2 y no 127.0.0.1: el espía deja pasar 127.0.0.1, que es donde HyperFrames habla con su servidor.
+      tcp = await sumidero("127.0.0.2");
+      const url = `http://127.0.0.2:${tcp.puerto}/x.js`;
+      const comp = proyecto("script", "", `<script src="${url}"></script>`);
       const r = await render(comp);
       expect(r.timeout).toBe(false);
       expect(r.code, r.stdout + r.stderr).not.toBe(0);
       expect(r.stdout + r.stderr).toContain(CERRADO);
       expect(tcp.conexiones()).toBe(0);
-      const control = await render(comp, sinParche.bin);
-      expect(control.timeout).toBe(false);
-      expect(tcp.conexiones(), "control positivo: sin el parche el sumidero debería ver la descarga").toBeGreaterThan(0);
+      // Sin la CLI: su comprobación previa del navegador necesita hijos. El fetch va antes de lanzar Chrome.
+      expect(await control([distSinParche("chunk-L5MFWGGU.js"), comp], comp, RENDER_ESPIADO)).toEqual([["fetch", url]]);
+      expect(tcp.conexiones()).toBe(0);
     }, 420000);
 
     it("texto background:url(HTTPS://…) en la composición: el render falla con el error nuevo", async () => {
@@ -705,32 +866,34 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       expect(accesos(log), s.stdout + s.stderr).toEqual([]);
     }, 560000);
 
-    it("snapshot: <video> con URL no llega a ffprobe (ruta sin urlInputArgs); sin el parche, GET de Lavf", async () => {
+    it("snapshot: <video> con URL no llega a ffprobe (ruta sin urlInputArgs); sin el parche, ffprobe la recibe", async () => {
       tcp = await sumidero("127.0.0.1");
-      const comp = proyecto("snapshot-url", `<video id="v" src="http://127.0.0.1:${tcp.puerto}/x.mp4" data-start="0" data-duration="1"></video>`);
-      const snapshot = (bin?: string) => cli(["snapshot", comp, "--frames", "1", "--no-end"], { cwd: comp, env: entorno, timeoutMs: 180000, bin });
-      const r = await snapshot();
+      const url = `http://127.0.0.1:${tcp.puerto}/x.mp4`;
+      const comp = proyecto("snapshot-url", `<video id="v" src="${url}" data-start="0" data-duration="1"></video>`);
+      const r = await cli(argsSnapshot(comp), { cwd: comp, env: entorno, timeoutMs: 180000 });
       expect(r.timeout).toBe(false);
       expect(tcp.peticiones().filter((p) => /User-Agent: Lavf\//i.test(p)), r.stdout + r.stderr).toEqual([]);
       expect(r.code, r.stdout + r.stderr).not.toBe(0);
       expect(r.stdout + r.stderr).toContain("(I14)");
-      const control = await snapshot(sinParche.bin);
-      expect(control.timeout).toBe(false);
-      expect(await hasta(() => tcp.peticiones().some((p) => /User-Agent: Lavf\//i.test(p)), 5000), tcp.peticiones().join("\n")).toBe(true);
+      // La CLI llega a ffprobe con Chrome ya abierto: el control entra por la función que lo lanza.
+      const vistos = await control([distSinParche("snapshot-5PHA43DK.js"), comp, url], comp, RENDER_ESPIADO);
+      expect(vistos.map((v) => [v[1], v[2]])).toContainEqual(["ffprobe.exe", [url]]);
+      expect(tcp.conexiones()).toBe(0);
     }, 420000);
 
-    it("check: <img>, <video> y <audio> con URL no llegan a ffprobe; sin el parche, GET de Lavf", async () => {
-      await abrirSumideros();
-      const url = `http://${ip}:${tcp.puerto}`;
+    it("check: <img>, <video> y <audio> con URL no llegan a ffprobe; sin el parche, ffprobe las recibe", async () => {
+      await abrirSumideros(IP_CONTROL);
+      const url = `http://${IP_CONTROL}:${tcp.puerto}`;
       const comp = proyecto("ffprobe", `<img src="${url}/x.png" alt=""><video id="v" src="${url}/x.mp4" data-start="0" data-duration="1"></video><audio id="a" src="${url}/x.mp3" data-start="0" data-duration="1"></audio>`);
       const r = await check(comp);
       expect(r.timeout).toBe(false);
       await new Promise((ok) => setTimeout(ok, 1000));
       expect(tcp.peticiones(), r.stdout + r.stderr).toEqual([]);
       expect(tcp.conexiones()).toBe(0);
-      const control = await check(comp, sinParche.bin);
-      expect(control.timeout).toBe(false);
-      expect(await hasta(() => tcp.peticiones().some((p) => /User-Agent: Lavf\//i.test(p)), 5000), tcp.peticiones().join("\n")).toBe(true);
+      const vistos = await control(argsCheck(comp), comp);
+      expect(vistos.length).toBeGreaterThan(0);
+      for (const v of vistos) expect([v[1], String(v[2])]).toEqual(["ffprobe.exe", expect.stringContaining(url)]);
+      expect(tcp.conexiones()).toBe(0);
     }, 420000);
   });
 });

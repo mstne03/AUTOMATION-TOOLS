@@ -303,6 +303,103 @@ async def test_cambiar_o_borrar_la_clave_reinicia_el_motor(tmp_path, fake_anthro
             await motor.cerrar()
 
 
+# ---------------------------------------------------------------- canal aparte para el render
+
+
+def _app_con_motores(tmp_path, fake_anthropic):
+    return create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+    )
+
+
+async def test_lifespan_crea_dos_motores_perezosos_y_cierra_los_dos(tmp_path, fake_anthropic, monkeypatch):
+    app = _app_con_motores(tmp_path, fake_anthropic)
+    cerrados = []
+    async with app.router.lifespan_context(app):
+        motores = (app.state.motor, app.state.motor_render)
+        assert isinstance(motores[1], MotorVideo) and motores[0] is not motores[1]
+        assert [m.pid for m in motores] == [None, None]
+        for nombre, m in zip(("motor", "render"), motores, strict=True):
+            original = m.cerrar
+
+            async def cerrar(nombre=nombre, original=original):
+                cerrados.append(nombre)
+                await original()
+
+            monkeypatch.setattr(m, "cerrar", cerrar)
+    assert sorted(cerrados) == ["motor", "render"]
+
+
+async def test_dos_canales_son_procesos_distintos_y_matar_uno_no_afecta_al_otro(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    uno, dos = _motor_falso(StoreFalso()), _motor_falso(StoreFalso())
+    try:
+        assert (uno.pid, dos.pid) == (None, None)
+        await uno.llamar("eco", {"texto": "a"})
+        await dos.llamar("eco", {"texto": "b"})
+        assert uno.pid != dos.pid
+        pid = uno.pid
+        with pytest.raises(MotorNoDisponible):
+            await uno.llamar("morir")
+        assert not psutil_pid_vivo(pid)
+        assert (await dos.llamar("eco", {"texto": "sigo"})).texto == "sigo"
+    finally:
+        await uno.cerrar()
+        await dos.cerrar()
+
+
+def test_entorno_del_render_no_lleva_la_clave(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    store = StoreFalso({config.ELEVENLABS_KEY: CLAVE})
+    assert entorno_motor(store)["ELEVENLABS_API_KEY"] == CLAVE
+    assert "ELEVENLABS_API_KEY" not in entorno_motor(store, con_clave=False)
+
+
+@pytest.mark.parametrize(
+    ("tool", "canal"),
+    [
+        ("video_renderizar", "motor_render"),
+        ("video_estado_render", "motor_render"),
+        ("video_estado", "motor_render"),  # lee los jobs de la memoria del proceso que los lanzó (R0 L6)
+        ("video_capacidades", "motor"),
+        ("video_vista_previa", "motor"),
+        ("video_generar_voz", "motor"),  # necesita la clave: nunca por el canal sin ella
+    ],
+)
+def test_cada_tool_va_por_su_canal(tool, canal):
+    estado = type("Estado", (), {"motor": "motor", "motor_render": "motor_render"})()
+    assert video.motor_de(estado, tool) == canal
+
+
+async def test_cambiar_la_clave_para_motor_y_no_el_render(tmp_path, fake_anthropic, monkeypatch):
+    """Cambiar la clave no puede matar un render en curso: el canal de render no la lleva."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("APP_BACKEND_VIDEO_CMD", raising=False)
+    app = _app_con_motores(tmp_path, fake_anthropic)
+    transporte = httpx.ASGITransport(app=app)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
+        from app_backend.main import yt_auth
+
+        app.state.motor = _motor_falso(yt_auth.store)
+        app.state.motor_render = _motor_falso(yt_auth.store)
+        motor, render = app.state.motor, app.state.motor_render
+        try:
+            await motor.llamar("eco", {"texto": "a"})
+            await render.llamar("eco", {"texto": "b"})
+            pid_render = render.pid
+            r = await c.put("/settings", json={"elevenlabs_api_key": "xi-otra"}, headers=AUTH)
+            assert r.status_code == 200
+            assert motor.pid is None
+            assert render.pid == pid_render and psutil_pid_vivo(pid_render)
+        finally:
+            await motor.cerrar()
+            await render.cerrar()
+
+
 def test_comando_motor_desarrollo(monkeypatch):
     monkeypatch.delenv("APP_BACKEND_VIDEO_CMD", raising=False)
     argv, cwd = comando_motor()

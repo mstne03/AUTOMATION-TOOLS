@@ -5,7 +5,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import { log } from "./log.js";
-import { ejecutar, type Herramientas } from "./proceso.js";
+import { argsEntrada, ejecutar, ErrorNavegador, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
@@ -51,6 +51,8 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video-gpu-"));
   const fecha = new Date().toISOString();
   let resultado: PruebaGpu;
+  // Falta el navegador: se puede descargar sin reiniciar el motor, así que no se memoriza (ruling C3).
+  let sinNavegador = false;
   try {
     fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
     fs.mkdirSync(path.join(dir, "compositions"), { recursive: true });
@@ -76,7 +78,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
       const motivo = (r.stderr + r.stdout).replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).filter((l) => /webgpu|gpu|failed|error/i.test(l)).slice(0, 3).join(" ");
       resultado = { webgpu: false, fecha, detalle: `El render de prueba con --browser-gpu falló. ${motivo}`.trim() };
     } else {
-      const f = await ejecutar(h.ffmpeg, ["-v", "error", "-ss", "0.5", "-i", salida, "-frames:v", "1", "-vf", "scale=1:1,format=gray", "-f", "rawvideo", "pipe:1"], {
+      const f = await ejecutar(h.ffmpeg, ["-v", "error", "-ss", "0.5", ...argsEntrada(salida), "-i", salida, "-frames:v", "1", "-vf", "scale=1:1,format=gray", "-f", "rawvideo", "pipe:1"], {
         timeoutMs: 30000,
       });
       if (f.code !== 0 || !f.stdout.length) {
@@ -92,6 +94,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
       }
     }
   } catch (e) {
+    sinNavegador = e instanceof ErrorNavegador;
     resultado = { webgpu: false, fecha, detalle: `No se pudo hacer la prueba: ${(e as Error).message}` };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -100,7 +103,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   // Solo se guarda un resultado medido (con luminancia). Un fallo (render roto, timeout, fotograma
   // ilegible) puede ser pasajero: guardar webgpu=false apagaría los fondos WebGPU para siempre.
   if (resultado.luminancia === undefined) {
-    fallidaEnEsteProceso = resultado;
+    if (!sinNavegador) fallidaEnEsteProceso = resultado;
     return resultado;
   }
   fallidaEnEsteProceso = undefined;
@@ -134,7 +137,7 @@ export interface Capacidades {
   fondos: { disponibles: string[]; conWebgpu: string[]; usaranFallback: string[] };
 }
 
-export async function capacidades(h: Herramientas | null, reprobar: boolean, _browserPath?: string): Promise<Capacidades> {
+export async function capacidades(h: Herramientas | null, reprobar: boolean): Promise<Capacidades> {
   let gpu = leerPruebaGpu();
   if (h && (reprobar || !gpu)) gpu = await probarGpu(h);
   const pkg = JSON.parse(fs.readFileSync(path.join(SERVER_ROOT, "node_modules", "hyperframes", "package.json"), "utf8")) as { version: string };

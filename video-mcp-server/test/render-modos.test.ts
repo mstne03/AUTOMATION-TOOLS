@@ -62,8 +62,9 @@ else {
 
 import type { Config } from "../src/config.js";
 import { estado, fotograma } from "../src/herramientas.js";
-import { ErrorVideo, archivosVideo } from "../src/paths.js";
-import { ErrorNavegador, ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
+import { EXTENSIONES_AUDIO, listarMusica } from "../src/musica.js";
+import { ErrorVideo, EXTENSIONES_IMAGEN, archivosVideo } from "../src/paths.js";
+import { argsEntrada, ErrorNavegador, ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
 import {
   ARGS_CODIFICADOR,
   CODIFICADORES,
@@ -95,6 +96,114 @@ afterAll(() => {
   } catch {
     /* temporal del SO */
   }
+});
+
+describe("entradas de ffmpeg y ffprobe (I15, R0 M5)", () => {
+  it.each([
+    [".png", "png_pipe"],
+    [".jpg", "jpeg_pipe"],
+    [".jpeg", "jpeg_pipe"],
+    [".webp", "webp_pipe"],
+    [".mp3", "mp3"],
+    [".wav", "wav"],
+    [".flac", "flac"],
+    [".ogg", "ogg"],
+    [".m4a", "mov"],
+    [".mp4", "mov"],
+    [".mov", "mov"],
+    [".webm", "matroska"],
+    [".mkv", "matroska"],
+    [".MP3", "mp3"],
+  ])("%s: solo ficheros, demuxer %s y su lista blanca", (ext, demuxer) => {
+    expect(argsEntrada(`C:\\v\\a${ext}`)).toEqual(["-protocol_whitelist", "file", "-format_whitelist", demuxer, "-f", demuxer]);
+  });
+
+  it.each(["C:\\v\\lista.concat", "C:\\v\\lista.m3u8", "C:\\v\\sin-extension", "C:\\v\\a.gif", "C:\\v\\a.avif", "C:\\v\\a.aac"])("%s: extensión desconocida, fallo cerrado", (f) => {
+    expect(() => argsEntrada(f)).toThrow(/no admite/);
+  });
+
+  it.each(["\\\\h.invalid\\s\\a.mp3", "//h.invalid/s/a.mp3", "\\\\?\\UNC\\h.invalid\\s\\a.mp3", "\\\\?\\C:\\a.mp3", "/\\h.invalid\\a.mp3", "file://h.invalid/s/a.mp3", "file:a.mp3", "http://h.invalid/a.mp3", "concat:a.mp3|b.mp3"])(
+    "%s: ruta de red o con esquema, sin ejecutar nada",
+    async (f) => {
+      expect(() => argsEntrada(f)).toThrow(/ruta local/);
+      // Un ffprobe que no existe: si llegara a lanzarse, el error sería otro.
+      await expect(sondear("C:\\no-existe\\ffprobe.exe", f)).rejects.toThrow(/ruta local/);
+    },
+  );
+
+  it("R0 L3: toda extensión que el motor acepta tiene demuxer (.aac ya no se lista)", () => {
+    expect(EXTENSIONES_AUDIO).not.toContain(".aac");
+    for (const ext of [...EXTENSIONES_AUDIO, ...EXTENSIONES_IMAGEN]) expect(() => argsEntrada(`C:\\v\\a${ext}`), ext).not.toThrow();
+  });
+
+  it.each(["lista.concat", "lista.m3u8", "sin-extension"])("sondear de %s lanza antes de lanzar ffprobe", async (f) => {
+    await expect(sondear("C:\\no-existe\\ffprobe.exe", path.join(F.dir, f))).rejects.toThrow(/no admite/);
+  });
+
+  describe.skipIf(!h)("con ffmpeg real", () => {
+    const generar = async (nombre: string, args: string[]): Promise<string | undefined> => {
+      const f = path.join(F.dir, `real-${nombre}`);
+      const r = await ejecutar(h!.ffmpeg, ["-y", "-v", "error", ...args, f], { timeoutMs: 30_000 });
+      return r.code === 0 ? f : undefined;
+    };
+    const IMAGEN = ["-f", "lavfi", "-i", "color=size=16x16:rate=1:duration=1", "-frames:v", "1"];
+    const AUDIO = ["-f", "lavfi", "-i", "sine=duration=1"];
+    const VIDEO = ["-f", "lavfi", "-i", "color=size=64x64:rate=5:duration=1"];
+
+    it.each<[string, string[], "ancho" | "audio"]>([
+      ["a.png", IMAGEN, "ancho"],
+      ["a.jpg", IMAGEN, "ancho"],
+      ["a.jpeg", IMAGEN, "ancho"],
+      ["a.webp", IMAGEN, "ancho"],
+      ["a.mp3", AUDIO, "audio"],
+      ["a.wav", AUDIO, "audio"],
+      ["a.flac", AUDIO, "audio"],
+      ["a.ogg", AUDIO, "audio"],
+      ["a.m4a", AUDIO, "audio"],
+      ["a.mp4", VIDEO, "ancho"],
+      ["a.mov", VIDEO, "ancho"],
+      ["a.webm", VIDEO, "ancho"],
+      ["a.mkv", VIDEO, "ancho"],
+    ])("sondear lee %s", async (nombre, args, campo, ctx) => {
+      const f = await generar(nombre, args);
+      if (!f) {
+        process.stderr.write(`AVISO: este ffmpeg no sabe escribir ${nombre}; se salta su lectura.\n`);
+        return ctx.skip();
+      }
+      const i = await sondear(h!.ffprobe, f);
+      if (campo === "ancho") expect(i.ancho).toBeGreaterThan(0);
+      else expect(i.tieneAudio).toBe(true);
+    });
+
+    it("una lista HLS renombrada .mp3 se rechaza", async () => {
+      const f = path.join(F.dir, "lista.mp3");
+      fs.writeFileSync(f, "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nsegmento.ts\n#EXT-X-ENDLIST\n");
+      await expect(sondear(h!.ffprobe, f)).rejects.toThrow(/ffprobe no puede leer lista\.mp3/);
+    });
+
+    it("un ffconcat renombrado .mp3 no abre sus referencias", async () => {
+      const victima = path.join(F.dir, "real-a.mp3");
+      await generar("a.mp3", AUDIO);
+      const f = path.join(F.dir, "trampa.mp3");
+      fs.writeFileSync(f, `ffconcat version 1.0\nfile '${victima.replaceAll("\\", "/")}'\n`);
+      await expect(sondear(h!.ffprobe, f)).rejects.toThrow(/ffprobe no puede leer trampa\.mp3/);
+    });
+
+    it("listarMusica: un ffconcat renombrado .mp3 no llega a `hyperframes audio`, que no lleva lista blanca (L-2)", async () => {
+      const carpeta = path.join(F.dir, "musica-trampa");
+      fs.mkdirSync(carpeta);
+      fs.writeFileSync(path.join(carpeta, "trampa.mp3"), "ffconcat version 1.0\nfile 'otro.mp3'\n");
+      const [p] = await listarMusica(h!, carpeta);
+      expect(p.error).toMatch(/ffprobe no puede leer trampa\.mp3/);
+      expect(llamadas().filter((l) => l[0] === "audio")).toEqual([]);
+    });
+
+    it("con el demuxer ajeno, el fichero real tampoco pasa: la lista blanca manda", async () => {
+      const f = await generar("b.wav", AUDIO);
+      const r = await ejecutar(h!.ffprobe, ["-v", "error", "-protocol_whitelist", "file", "-format_whitelist", "mp3", "-f", "wav", f!], { timeoutMs: 30_000 });
+      expect(r.code).not.toBe(0);
+    });
+  });
 });
 
 describe("decisiones puras", () => {
@@ -200,7 +309,8 @@ describe.skipIf(!h)("ffmpeg real", () => {
     // Matroska con extensión .mp4: sin el demuxer fijado, ffprobe lo leería por su contenido.
     const m = await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x64:r=30", "-t", "1", "-c:v", "ffv1", "-f", "matroska", r.mp4], { timeoutMs: 60000 });
     expect(m.code).toBe(0);
-    expect((await sondear(h!.ffprobe, r.mp4)).duracion).toBeGreaterThan(0);
+    expect((await ejecutar(h!.ffprobe, ["-v", "error", "-show_format", r.mp4], { timeoutMs: 30000 })).code).toBe(0);
+    await expect(sondear(h!.ffprobe, r.mp4)).rejects.toThrow(/ffprobe no puede leer/);
     await expect(fotograma(cfg, { id: "video090", segundo: 0 })).rejects.toThrow(/ffprobe no puede leer/);
     expect((await estado(cfg, "video090")).datos.mp4).toEqual({ ruta: r.mp4 });
   }, 120000);
@@ -233,8 +343,8 @@ async function prepararVideo(id: string) {
     if (r.code !== 0) throw new Error(r.stderr);
   };
   for (let n = 1; n <= 6; n++) await ff(["-f", "lavfi", "-i", "color=c=0x1f5c3a:s=108x192:d=1", "-frames:v", "1", path.join(dir, `img${n}.jpg`)]);
-  // AAC en ADTS con nombre .mp3: ffmpeg detecta el formato por contenido y el ffmpeg LGPL no trae LAME.
-  await ff(["-f", "lavfi", "-i", "sine=frequency=220:duration=4", "-c:a", "aac", "-f", "adts", path.join(dir, "voz.mp3")]);
+  // MP3 real: `sondear` fija el demuxer por la extensión. Necesita libmp3lame, que el ffmpeg de W1.5 no traerá.
+  await ff(["-f", "lavfi", "-i", "sine=frequency=220:duration=4", "-c:a", "libmp3lame", "-f", "mp3", path.join(dir, "voz.mp3")]);
   const guion = parsearGuion(GUION);
   const chars = [...guion.narracion];
   const paso = 3.6 / chars.length;

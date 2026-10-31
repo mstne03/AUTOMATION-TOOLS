@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { log } from "./log.js";
 import { STATE_DIR } from "./estado.js";
+import { SERVER_ROOT } from "./raiz.js";
 // Ciclo de imports con musica.ts: HYPERFRAMES_BIN solo se lee dentro de ejecutar(), nunca al cargar.
 import { HYPERFRAMES_BIN } from "./musica.js";
 
@@ -117,14 +118,6 @@ export function entornoHijo(): NodeJS.ProcessEnv {
   return env;
 }
 
-/**
- * @deprecated `ejecutar` descarta cualquier env. Solo queda porque musica.ts y herramientas.ts (fuera de
- * W1.6) aún lo pasan; cuando sus dueños lo quiten, se borra junto con `OpcionesEjecutar.env`.
- */
-export function entornoConFfmpeg(_h?: Herramientas | null, _extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
-  return entornoHijo();
-}
-
 // ---------- Navegador del motor (I4, parte motor) ----------
 
 export class ErrorNavegador extends Error {}
@@ -145,6 +138,9 @@ const sinPrefijoLargo = (p: string): string => p.replace(/^\\\\\?\\/, "");
 
 /** Clave de comparación de una ruta relativa del manifiesto (NTFS no distingue mayúsculas). */
 const claveRel = (rel: string): string => (process.platform === "win32" ? rel.toLowerCase() : rel);
+
+const rutaRelativaValida = (rel: string): boolean =>
+  !!rel && !rel.includes("\\") && !rel.includes(":") && !rel.startsWith("/") && !rel.split("/").some((p) => p === ".." || p === "." || p === "");
 
 function sha256(fichero: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -198,9 +194,7 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   }
   const esperados = new Map<string, { rel: string; hash: string }>();
   for (const [rel, hash] of Object.entries(m.ficheros as Record<string, unknown>)) {
-    if (!rel || rel.includes("\\") || rel.includes(":") || rel.startsWith("/") || rel.split("/").some((p) => p === ".." || p === "." || p === "")) {
-      throw fallo(`ruta no válida en el manifiesto: ${rel}`);
-    }
+    if (!rutaRelativaValida(rel)) throw fallo(`ruta no válida en el manifiesto: ${rel}`);
     if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw fallo(`hash no válido para ${rel}`);
     if (esperados.has(claveRel(rel))) throw fallo(`${rel} aparece dos veces en el manifiesto`);
     esperados.set(claveRel(rel), { rel, hash });
@@ -223,9 +217,14 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   const relExe = path.relative(raiz, path.resolve(navegador)).split(path.sep).join("/");
   if (relExe !== EXE_NAVEGADOR) throw fallo("el ejecutable del navegador no está en su sitio");
 
+  if (esperados.has(claveRel(LOG_CHROME))) throw fallo("el manifiesto lista el log de Chrome");
   let encontrados: string[];
   try {
-    encontrados = recorrer(raiz).filter((r) => r !== NOMBRE_MANIFIESTO && claveRel(r) !== claveRel(LOG_CHROME));
+    const todos = recorrer(raiz);
+    const log = todos.find((r) => claveRel(r) === claveRel(LOG_CHROME));
+    // Sin hash: un enlace duro dejaría cambiarlo desde fuera (como en el backend, I6).
+    if (log && fs.lstatSync(path.join(raiz, ...log.split("/"))).nlink !== 1) throw new Error(`${LOG_CHROME} tiene otro enlace duro`);
+    encontrados = todos.filter((r) => r !== NOMBRE_MANIFIESTO && r !== log);
   } catch (e) {
     throw fallo((e as Error).message);
   }
@@ -239,6 +238,43 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   for (const rel of encontrados) {
     const { hash } = esperados.get(claveRel(rel))!;
     if ((await sha256(path.join(raiz, ...rel.split("/")))) !== hash) throw fallo(`${rel} no coincide con el manifiesto`);
+  }
+}
+
+const HASHES_DIST = ["patches", "hyperframes+0.8.206.sha256.json"];
+/** Sin estos, el JSON no prueba nada aunque cuadre: la entrada, el marcador de Chrome y el cierre de red (R0 M1). */
+const OBLIGATORIOS_DIST = ["bin/hyperframes.mjs", "dist/cli.js", "dist/seo-studio-cierre.js", "dist/chunk-K4MJX7SR.js"];
+
+/**
+ * R2-M3: los ficheros parcheados de HyperFrames y su bin, contra los SHA-256 fijados, antes de cada CLI y también en
+ * desarrollo. Detecta un bundle sin parche, una instalación rota, un antivirus y una versión cambiada. Es integridad,
+ * no autenticidad: el JSON vive junto al dist y lo puede escribir cualquier proceso del usuario. Residual: los otros
+ * 319 ficheros de dist/ y node_modules quedan sin hash, y entre comprobar y lanzar hay una ventana (aceptada, como I4).
+ */
+export async function verificarDist(raiz: string = SERVER_ROOT): Promise<void> {
+  const fallo = (motivo: string) => new ErrorNavegador(`La instalación del motor de vídeo está incompleta (${motivo}): reinstala SEO Studio.`);
+  const hf = path.join(raiz, "node_modules", "hyperframes");
+  let version: unknown;
+  let m: { version?: unknown; ficheros?: unknown; sinParche?: unknown };
+  try {
+    version = (JSON.parse(fs.readFileSync(path.join(hf, "package.json"), "utf8")) as { version?: unknown }).version;
+    m = JSON.parse(fs.readFileSync(path.join(raiz, ...HASHES_DIST), "utf8")) as typeof m;
+  } catch {
+    throw fallo("no puedo leer la versión o los hashes del parche");
+  }
+  if (typeof m.version !== "string" || m.version !== version) throw fallo(`hyperframes ${String(version)} y los hashes de ${String(m.version)}`);
+  const listas = [m.ficheros, m.sinParche];
+  if (!listas.every((l) => !!l && typeof l === "object" && !Array.isArray(l) && Object.keys(l).length)) throw fallo("el JSON no lista ficheros");
+  const esperados = Object.entries({ ...(m.ficheros as object), ...(m.sinParche as object) }) as [string, unknown][];
+  for (const [rel, hash] of esperados) {
+    if (!rutaRelativaValida(rel)) throw fallo(`ruta no válida: ${rel}`);
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw fallo(`hash no válido para ${rel}`);
+  }
+  for (const rel of OBLIGATORIOS_DIST) if (!esperados.some(([r]) => r === rel)) throw fallo(`el JSON no fija ${rel}`);
+  for (const [rel, hash] of esperados) {
+    const fichero = path.join(hf, ...rel.split("/"));
+    if (!existe(fichero)) throw fallo(`falta ${rel}`);
+    if ((await sha256(fichero)) !== hash) throw fallo(`${rel} no coincide`);
   }
 }
 
@@ -305,8 +341,6 @@ function matarArbol(hijo: ChildProcess): Promise<void> {
 export type OpcionesEjecutar = Omit<SpawnOptions, "env" | "shell" | "stdio" | "detached"> & {
   onLinea?: (linea: string) => void;
   timeoutMs?: number;
-  /** @deprecated Se descarta: el entorno de todo hijo es entornoHijo() (I5, I13). Ver entornoConFfmpeg. */
-  env?: NodeJS.ProcessEnv;
 };
 
 /** true si la llamada es la CLI de HyperFrames: el script empaquetado, el Node del motor o cualquier `node`. */
@@ -327,7 +361,7 @@ let colaCli: Promise<unknown> = Promise.resolve();
 /**
  * Único punto por el que el motor lanza procesos: sin shell, argumentos en array y con el entorno
  * construido desde cero (I5). Si es la CLI de HyperFrames, además: solo con el Node del motor, modo
- * cerrado y HOME/cwd en hf-home (I13), navegador comprobado antes de lanzar (I4) y en serie.
+ * cerrado y HOME/cwd en hf-home (I13), dist y navegador comprobados antes de lanzar (R2-M3, I4) y en serie.
  */
 export function ejecutar(comando: string, args: string[], opciones: OpcionesEjecutar = {}): Promise<Resultado> {
   if (!esLlamadaCli(comando, args)) return lanzar(comando, args, opciones, false);
@@ -335,6 +369,7 @@ export function ejecutar(comando: string, args: string[], opciones: OpcionesEjec
     return Promise.reject(new Error(`La CLI de HyperFrames solo se lanza con el Node del motor (${process.execPath}), no con ${comando}.`));
   }
   const turno = colaCli.then(async () => {
+    await verificarDist();
     await verificarNavegador();
     // cwd fijo: la CLI aplica el .env de su cwd a su entorno (cli.js), y busca ffmpeg en él.
     return lanzar(comando, args, { ...opciones, cwd: hfHome() }, true);
@@ -355,11 +390,12 @@ async function lanzar(comando: string, args: string[], opciones: OpcionesEjecuta
 }
 
 function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
-  const { onLinea, timeoutMs, env: _descartado, ...spawnOpts } = opciones;
+  const { onLinea, timeoutMs, ...spawnOpts } = opciones;
   return new Promise((resolve, reject) => {
     // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
     const hijo = spawn(comando, args, {
       ...spawnOpts,
+      // Después del spread: un `env` llegado de un .mjs se pisa (I5).
       env: entornoHijo(),
       shell: false,
       windowsHide: true,
@@ -552,9 +588,14 @@ export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
 }
 
 /**
- * Qué barrer: procesos con imagen del motor salvo los que cuelgan de un hijo vivo de `ejecutar` (por
- * la cadena de ParentProcessId, con un padre creado antes que el hijo para no seguir un pid reutilizado):
- * un timeout no mata la segunda pasada de otro trabajo. `noVerificables`: procesos con el nombre de un
+ * Qué barrer: procesos con imagen del motor salvo los que cuelgan de un hijo vivo de `ejecutar` o de otro
+ * motor vivo (por la cadena de ParentProcessId, con un padre creado antes que el hijo para no seguir un
+ * pid reutilizado): un timeout no mata la segunda pasada de otro trabajo ni el render del otro canal.
+ * Lo que cuelga de nuestro propio pid y no está en vuelo se barre, aunque pase por un Node: es una CLI
+ * nuestra que sobrevivió al taskkill. Otro motor exige evidencia positiva (R0 M4): el Node más alto de la
+ * cadena tiene que tener un padre vivo; si no, es trabajo de un motor muerto (huérfano). En desarrollo el
+ * Node es el de todos, así que un Chrome colgado de cualquier Node queda protegido; en integrado es el
+ * del bundle. `noVerificables`: procesos con el nombre de un
  * ejecutable del motor cuya ruta el sistema no da; no se pueden matar con seguridad (falla cerrado).
  * WMI deja sin ruta también a procesos ajenos (medido: un ffmpeg y varios Chrome de otra sesión), así
  * que antes se mira el ejecutable de su CommandLine: si es absoluto y de otro sitio, no son del motor.
@@ -563,16 +604,22 @@ export function seleccionarBarrido(
   todos: ProcesoVivo[],
   o: ObjetivoBarrido,
   vuelo: ReadonlyMap<number, number> = enVuelo,
+  propio: { pid: number; node: string } = { pid: process.pid, node: process.execPath },
 ): { matar: ProcesoVivo[]; noVerificables: ProcesoVivo[] } {
   const porPid = new Map(todos.map((p) => [p.pid, p]));
+  const nodeMotor = normalizar(propio.node);
   const protegido = (p: ProcesoVivo): boolean => {
     let actual: ProcesoVivo | undefined = p;
+    let nodeMasAlto: ProcesoVivo | undefined;
     for (let i = 0; actual && i < 64; i++) {
       const lanzado = vuelo.get(actual.pid);
       // Margen de 5 s entre el spawn medido en Node y la fecha de creación del sistema.
       if (lanzado !== undefined && (actual.creado === undefined || actual.creado >= lanzado - 5000)) return true;
+      if (actual.pid === propio.pid) return false;
+      if (actual.ruta && normalizar(actual.ruta) === nodeMotor) nodeMasAlto = actual;
       const padre: ProcesoVivo | undefined = actual.padre !== undefined ? porPid.get(actual.padre) : undefined;
-      if (!padre || padre.creado === undefined || actual.creado === undefined || padre.creado > actual.creado) return false;
+      // Fin de la cadena: otro motor solo si por encima de su Node más alto aún hay un padre vivo.
+      if (!padre || padre.creado === undefined || actual.creado === undefined || padre.creado > actual.creado) return !!nodeMasAlto && nodeMasAlto !== actual;
       actual = padre;
     }
     return false;
@@ -772,12 +819,41 @@ const fraccion = (v?: string): number | undefined => {
   return a && b ? a / b : undefined;
 };
 
+/** Demuxer de cada extensión admitida (I15). Son nombres de `-f`; componentes.conf lista sus `image_*_pipe`. */
+const DEMUXERS: Readonly<Record<string, string>> = {
+  ".png": "png_pipe",
+  ".jpg": "jpeg_pipe",
+  ".jpeg": "jpeg_pipe",
+  ".webp": "webp_pipe",
+  ".mp3": "mp3",
+  ".wav": "wav",
+  ".flac": "flac",
+  ".ogg": "ogg",
+  ".m4a": "mov",
+  ".mp4": "mov",
+  ".mov": "mov",
+  ".webm": "matroska",
+  ".mkv": "matroska",
+};
+
 /**
- * ffprobe de un medio. Con `soloMp4` (el MP4 propio): solo fichero local y demuxer mp4, cuenta los
- * paquetes y cualquier error de ffprobe, aunque salga con 0, es un fallo.
+ * Opciones de entrada de todo fichero que abren ffmpeg o ffprobe: solo el protocolo `file`, con el demuxer fijado
+ * por la extensión y sin sondear otro. Fallo cerrado: una ruta UNC es DNS y SMB (captura de NTLM), otro esquema abre
+ * un protocolo, y un nombre sin extensión conocida no se abre. No sustituye a la normalización al importar (I15).
+ */
+export function argsEntrada(archivo: string, demuxer = DEMUXERS[path.extname(archivo).toLowerCase()]): string[] {
+  const unc = /^[\\/]{2}/.test(archivo) || path.win32.resolve(archivo).startsWith("\\\\");
+  if (unc || /^[a-z][a-z0-9+.-]+:/i.test(archivo)) throw new Error(`El motor solo abre medios por ruta local: ${path.basename(archivo)}.`);
+  if (!demuxer) throw new Error(`El motor no admite este formato de medio: ${path.basename(archivo)}.`);
+  return ["-protocol_whitelist", "file", "-format_whitelist", demuxer, "-f", demuxer];
+}
+
+/**
+ * ffprobe de un medio. Con `soloMp4` (el MP4 propio): demuxer mp4, cuenta los paquetes y cualquier error de ffprobe,
+ * aunque salga con 0, es un fallo.
  */
 export async function sondear(ffprobe: string, archivo: string, { soloMp4 = false } = {}): Promise<InfoMedio> {
-  const previos = soloMp4 ? ["-protocol_whitelist", "file", "-f", "mp4", "-count_packets"] : [];
+  const previos = soloMp4 ? [...argsEntrada(archivo, "mp4"), "-count_packets"] : argsEntrada(archivo);
   const r = await ejecutar(ffprobe, ["-v", "error", ...previos, "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
   if (r.code !== 0 || (soloMp4 && r.stderr.trim())) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
   type Pista = {

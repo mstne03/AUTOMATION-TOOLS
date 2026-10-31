@@ -122,6 +122,65 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     }
   }, 180000);
 
+  describe("otro motor vivo (W1.6b T9)", () => {
+    // Cadena real de otra instancia: F.exe («Chrome») ← Node del motor B ← backend de B (otro ejecutable, vivo), que no
+    // cuelga de este proceso: lo lanza un intermediario que sale. Si la protección falla, F.exe muere y no escribe `fin`.
+    const backend = path.join(F.dir, "backend-falso.exe");
+    const lanzarOtroMotor = async (nombre: string, msChrome: number) => {
+      fs.existsSync(backend) || fs.copyFileSync(process.execPath, backend);
+      const pids = path.join(F.dir, `${nombre}.pids`);
+      const fin = path.join(F.dir, `${nombre}.fin`);
+      const chrome = `require("node:fs").writeFileSync(${JSON.stringify(fin)}, "fin")`;
+      const motor = `const { spawn } = require("node:child_process"); const fs = require("node:fs");
+        const c = spawn(${JSON.stringify(F.exe)}, ["-e", ${JSON.stringify(`setTimeout(() => { ${chrome} }, ${msChrome})`)}], { detached: true, stdio: "ignore" }); // detached: libuv mataría al hijo con su padre
+        fs.writeFileSync(${JSON.stringify(pids)}, JSON.stringify({ chrome: c.pid, motor: process.pid, backend: process.ppid }));
+        setInterval(() => {}, 1e3);`;
+      const dueño = `const { spawn } = require("node:child_process");
+        spawn(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(motor)}], { stdio: "ignore" });
+        setInterval(() => {}, 1e3);`;
+      const intermediario = `require("node:child_process").spawn(${JSON.stringify(backend)}, ["-e", ${JSON.stringify(dueño)}], { detached: true, stdio: "ignore" }).unref();`;
+      spawn(process.execPath, ["-e", intermediario], { stdio: "ignore", windowsHide: true });
+      await vi.waitFor(() => expect(fs.existsSync(pids) && fs.statSync(pids).size > 0).toBe(true), { timeout: 15000 });
+      await esperar(1500); // que el intermediario haya salido
+      return { ...(JSON.parse(fs.readFileSync(pids, "utf8")) as { chrome: number; motor: number; backend: number }), fin };
+    };
+    const leerFin = (f: string) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "");
+
+    it("Review Focus 2: el timeout de un snapshot no mata el trabajo de otro motor; muerto ese motor, el barrido limpia", async () => {
+      const b = await lanzarOtroMotor("motor-b", 30000);
+      const pidFile = path.join(F.dir, "propio.pid");
+      let propio = 0;
+      try {
+        const r = await ejecutar(process.execPath, [F.script, "snapshot", pidFile], { timeoutMs: 3000 });
+        expect(r.timeout).toBe(true);
+        propio = Number(fs.readFileSync(pidFile, "utf8"));
+        expect(await muere(propio)).toBe(true); // el barrido corrió de verdad
+        await esperar(30000);
+        expect(leerFin(b.fin)).toBe("fin");
+      } finally {
+        matarSiVive(propio);
+      }
+      // Con el motor B muerto, su trabajo ya es un huérfano: lo limpia el siguiente barrido.
+      const c = await lanzarOtroMotor("motor-c", 60000);
+      try {
+        matarSiVive(c.backend);
+        matarSiVive(c.motor);
+        await esperar(500);
+        expect(vivo(c.chrome)).toBe(true);
+        const r = await ejecutar(process.execPath, [F.script, "falla", path.join(F.dir, "propio2.pid")], {});
+        expect(r.code).toBe(1);
+        expect(await muere(c.chrome)).toBe(true);
+      } finally {
+        for (const pid of [b.chrome, b.motor, b.backend, c.chrome, c.motor, c.backend]) matarSiVive(pid);
+        try {
+          matarSiVive(Number(fs.readFileSync(path.join(F.dir, "propio2.pid"), "utf8")));
+        } catch {
+          /* sin pid */
+        }
+      }
+    }, 120000);
+  });
+
   it("un hijo que sale deja de estar en vuelo aunque un nieto retenga sus tuberías", async () => {
     const pidFile = path.join(F.dir, "salido.pid");
     // El hijo lanza un nieto (Node, fuera del objetivo) que hereda stdout/stderr 10 s y sale al momento:
@@ -306,6 +365,70 @@ describe("seleccionarBarrido: hijos en vuelo (MEDIUM-A)", () => {
 
   it("sin nada en vuelo, barre todo lo del motor", () => {
     expect(seleccionarBarrido(lista, o, new Map()).matar.map((p) => p.pid).sort()).toEqual([20, 31, 40, 50]);
+  });
+});
+
+describe("seleccionarBarrido: entre instancias (W1.6b T9, R0 M4)", () => {
+  const NODE = "C:\\motor\\node.exe";
+  const CHROME = "C:\\nav\\chrome-headless-shell.exe";
+  const o = { arboles: ["C:\\nav"], exactos: [] };
+  const propio = { pid: 100, node: NODE };
+  const T = 1_000_000;
+  const barre = (lista: { pid: number; ruta: string; padre?: number; creado?: number; nombre?: string }[], vuelo = new Map<number, number>()) => {
+    const s = seleccionarBarrido(lista, o, vuelo, propio);
+    return { matar: s.matar.map((p) => p.pid).sort(), dudosos: s.noVerificables.map((p) => p.pid) };
+  };
+  const backend = { pid: 5, ruta: "C:\\app\\backend.exe", padre: 1, creado: T };
+  const otroMotor = { pid: 200, ruta: NODE, padre: 5, creado: T + 10 };
+  const motorPropio = { pid: 100, ruta: NODE, padre: 5, creado: T + 10 };
+  const cli = (padre: number) => ({ pid: 300, ruta: NODE, padre, creado: T + 20 });
+  const chrome = { pid: 400, ruta: CHROME, padre: 300, creado: T + 30 };
+
+  it("Chrome → CLI → otro motor vivo: protegido", () => {
+    expect(barre([backend, otroMotor, cli(200), chrome]).matar).toEqual([]);
+  });
+
+  it("Chrome → CLI → motor propio, con la CLI fuera de vuelo: se barre", () => {
+    expect(barre([backend, motorPropio, cli(100), chrome]).matar).toEqual([400]);
+  });
+
+  it("Chrome → CLI → motor propio, con la CLI en vuelo: protegido", () => {
+    expect(barre([backend, motorPropio, cli(100), chrome], new Map([[300, T + 20]])).matar).toEqual([]);
+  });
+
+  it("Chrome con padre muerto: se barre", () => {
+    expect(barre([chrome]).matar).toEqual([400]);
+  });
+
+  it("pid de padre reutilizado (padre.creado > hijo.creado): se barre", () => {
+    expect(barre([backend, { ...otroMotor, pid: 300, creado: T + 40 }, chrome]).matar).toEqual([400]);
+  });
+
+  it("R0 M4: Chrome → CLI → motor muerto: la cadena se corta en un Node sin padre vivo y se barre", () => {
+    expect(barre([cli(200), chrome]).matar).toEqual([400]);
+  });
+
+  it("R0 M4: el padre del Node más alto es un pid reutilizado: se barre", () => {
+    expect(barre([{ ...backend, creado: T + 500 }, otroMotor, cli(200), chrome]).matar).toEqual([400]);
+  });
+
+  it("proceso sin ruta bajo otro motor: ni matar ni noVerificables", () => {
+    const sinRuta = { pid: 401, ruta: "", nombre: "chrome-headless-shell.exe", padre: 300, creado: T + 30 };
+    expect(barre([backend, otroMotor, cli(200), sinRuta])).toEqual({ matar: [], dudosos: [] });
+  });
+
+  it("control: el mismo proceso sin ruta, de un motor muerto, sigue dudoso", () => {
+    const sinRuta = { pid: 401, ruta: "", nombre: "chrome-headless-shell.exe", padre: 300, creado: T + 30 };
+    expect(barre([cli(200), sinRuta])).toEqual({ matar: [], dudosos: [401] });
+  });
+
+  it("un padre vivo que no es del motor no protege", () => {
+    expect(barre([backend, { ...chrome, padre: 5 }]).matar).toEqual([400]);
+  });
+
+  it("una cadena más larga que el tope no protege", () => {
+    const lista = Array.from({ length: 70 }, (_, i) => ({ pid: 1000 + i, ruta: i === 0 ? CHROME : NODE, padre: 1001 + i, creado: T + 1000 - i }));
+    expect(barre(lista).matar).toEqual([1000]);
   });
 });
 

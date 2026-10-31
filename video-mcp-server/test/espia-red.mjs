@@ -9,6 +9,7 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 
 const anotar = fs.appendFileSync.bind(fs);
 const LOG = process.env.ESPIA_LOG;
@@ -52,8 +53,8 @@ for (const n of ["realpath", "realpathSync"]) {
 
 const proceso = () => {
   const e = new EventEmitter();
-  e.stdout = new EventEmitter();
-  e.stderr = new EventEmitter();
+  e.stdout = new PassThrough().end(); // flujos de verdad: HyperFrames lee stdout con readline
+  e.stderr = new PassThrough().end();
   e.stdin = { end() {}, on() {}, write() {} };
   e.kill = () => {};
   e.pid = 0;
@@ -65,8 +66,10 @@ for (const n of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFile
   cp[n] = function (c, a) {
     const args = Array.isArray(a) ? a : [];
     const red = args.filter((x) => esUnc(x) || /^[a-z][a-z0-9+.-]+:[\\/]{2}/i.test(String(x)));
-    if (esUnc(c) || red.length) anota(n, String(c).split(/[\\/]/).pop(), red);
+    const nombre = String(c).split(/[\\/]/).pop();
+    if (esUnc(c) || red.length) anota(n, nombre, red);
     else if (process.env.ESPIA_HIJOS === "1") return Reflect.apply(o, this, arguments);
+    else if (/chrome/i.test(nombre)) anota(n, nombre, []); // se bloquea, pero el control tiene que poder decir que no lo intentó
     if (n.endsWith("Sync")) {
       if (n === "spawnSync") return { status: 1, stdout: "", stderr: "", pid: 0, output: [] };
       throw denegado();

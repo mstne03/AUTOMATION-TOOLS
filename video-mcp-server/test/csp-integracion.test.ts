@@ -1,7 +1,9 @@
 // I2 (a) en ejecución: una pieza hostil (fetch, WebSocket, imágenes, WebRTC, navegación del iframe y de primer nivel,
 // dns-prefetch, preconnect y speculationrules hacia sumideros locales) no llega a la red ni en la preview (iframe
-// sandbox con la cabecera CSP) ni en el render real de HyperFrames, solo por la CSP. Cada sonda lleva su control
-// positivo (la misma pieza sin la protección SÍ llega): si el control no llega, la sonda no mide nada y el test lo dice.
+// sandbox con la cabecera CSP) ni en el render real de HyperFrames. En el render manda el proxy nulo, por puerto exacto
+// (R2-M1): también sin CSP da 0, así que su control es el mismo Chrome con la lista antigua (controlBypass). Si el
+// control no llega, la sonda no mide nada y el test lo dice. Sin DNS ni salida: Chrome corre siempre con las reglas de
+// resolución, los destinos «de fuera» son hosts `.test` que no se resuelven y las escuchas son todas de loopback.
 // Lo que la CSP no para se registra como «falla conocida» con el paquete dueño; nunca se borra la sonda.
 // Necesita los binarios del motor: VIDEO_ENGINE_DIR=<…/binaries/video-engine> (variable solo de tests).
 import dgram from "node:dgram";
@@ -9,12 +11,17 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
+import puppeteer from "puppeteer-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { montar } from "../scripts/montar.mjs";
 import { sondearPreview } from "../scripts/sondear-preview.mjs";
-import { renderizar } from "../scripts/comparar-fotogramas.mjs";
+import { entornoMinimo, renderizar } from "../scripts/comparar-fotogramas.mjs";
+import { BYPASS, bypassDe, chunk, sumidero, type Sumidero } from "./hyperframes-comun.js";
 
 const motor = process.env.VIDEO_ENGINE_DIR;
+/** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
+const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
 // M4: el salto tiene que verse en la salida (vitest oculta la consola de los archivos que se saltan enteros).
 if (!motor) process.stderr.write("\n[AVISO] I2 (a) NO verificada en ejecución: csp-integracion.test.ts se salta porque falta VIDEO_ENGINE_DIR (carpeta video-engine con Chrome y ffmpeg).\n");
 
@@ -22,7 +29,7 @@ const CANALES = ["red", "especulacion", "preconexion", "navegacion", "location",
 type Canal = (typeof CANALES)[number];
 type Cuenta = Record<Canal, number>;
 type Violacion = { directiva: string; bloqueada: string; origen: string };
-type Medida = { cuenta: Cuenta; hostil?: boolean; violaciones?: Violacion[]; marcaRoja?: boolean; hf?: { contexto: boolean; opacidad: number }; netlog?: { prefetch: boolean; instrumento: boolean }; error?: string };
+type Medida = { cuenta: Cuenta; servida?: number; hostil?: boolean; violaciones?: Violacion[]; marcaRoja?: boolean; hf?: { contexto: boolean; opacidad: number }; netlog?: { prefetch: boolean; instrumento: boolean }; error?: string };
 
 /**
  * Falla conocida: la sonda HOY llega a la red y su aserción falla. A diferencia de it.fails, un TypeError (medición que
@@ -51,6 +58,17 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
   const r: Record<string, Medida> = {};
   const host = `hostil-${Date.now().toString(36)}`;
   let tmp: string;
+  let sumiderosHost: Sumidero[] = [];
+  const llegadas: { nueva: string[]; literal: string[]; antigua: string[] } = { nueva: [], literal: [], antigua: [] };
+  let ventanasFin = "";
+  let chromesVivos: number[] = [];
+
+  let servidorControl: http.Server;
+  let puertoPropio: number;
+  let htmlControl = "";
+  let paginasServidas = 0;
+  let navegador: string;
+  let marcador: (a: string[]) => string[];
 
   async function sumideroTcp(canal: Canal) {
     const s = net.createServer((c) => {
@@ -68,6 +86,28 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
     const valor = await fn();
     await new Promise((ok) => setTimeout(ok, 1000));
     return { cuenta: { ...cuentas }, valor };
+  }
+
+  /**
+   * El Chrome del render (mismos flags, salidos del marcador del parche) con solo `--proxy-bypass-list` cambiada por
+   * `lista`, abriendo `html` desde un servidor propio en localhost. Cuenta lo que llega a cada sumidero y si se sirvió.
+   */
+  async function controlBypass(html: string, lista: string, hostPropio = "localhost"): Promise<Medida> {
+    htmlControl = html;
+    paginasServidas = 0;
+    const m = await medir(async () => {
+      const dd = fs.mkdtempSync(path.join(tmp, "control-"));
+      const args = marcador([]).map((a) => (a.startsWith("--proxy-bypass-list") ? lista : a));
+      const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), userDataDir: dd, args });
+      try {
+        const page = await browser.newPage();
+        await page.goto(`http://${hostPropio}:${puertoPropio}/`, { waitUntil: "load" }).catch(() => undefined);
+        await new Promise((ok) => setTimeout(ok, 4000));
+      } finally {
+        await browser.close();
+      }
+    });
+    return { cuenta: m.cuenta, servida: paginasServidas };
   }
 
   /** ¿Pintó hostil.js su marca roja (200×200 arriba a la izquierda) en el render? Prueba que se ejecutó. */
@@ -97,12 +137,20 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
     puertos.rtc = udp.address().port;
 
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "csp-integracion-"));
+    navegador = path.join(motor!, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
+    marcador = ((await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: (a: string[]) => string[] }).withHyperframesBrowserMarker;
+    servidorControl = http.createServer((_q, res) => {
+      paginasServidas++;
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(htmlControl);
+    });
+    await new Promise<void>((ok) => servidorControl.listen(0, "127.0.0.1", ok));
+    puertoPropio = (servidorControl.address() as net.AddressInfo).port;
     const { dir } = await montar(motor!, path.join(tmp, "montaje"), "GUION_FOTOS", { duracionVoz: 6, gpu: false });
     // La marca va antes de nada; la URL de cada canal lleva esquema explícito (H1).
     const hostil = `document.documentElement.dataset.hostil = "1"; window.__hostil = true;
 var m = document.createElement("div"); m.style.cssText = "position:fixed;left:0;top:0;width:200px;height:200px;background:#ff0000;z-index:2147483647"; document.documentElement.appendChild(m);
 fetch("http://127.0.0.1:${puertos.red}/f").catch(function () {});
-fetch("http://203.0.113.1/").catch(function () {});
+fetch("http://${host}-salida.test/").catch(function () {});
 try { new WebSocket("ws://127.0.0.1:${puertos.red}/w"); } catch (e) {}
 var i = new Image(); i.src = "http://127.0.0.1:${puertos.red}/i.png"; document.documentElement.appendChild(i);
 var i2 = new Image(); i2.src = "http://${host}-instrumento.test/i.png"; document.documentElement.appendChild(i2);
@@ -116,13 +164,12 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     const cuerpo = `<img src="http://ejemplo.test/x.png" /><script src="assets/hostil.js"></script>\n  </body>`;
     const html = fs.readFileSync(path.join(dir, "index.html"), "utf8").replace("</head>", cabeza).replace("</body>", cuerpo);
     fs.writeFileSync(path.join(dir, "index.html"), html);
-    // Desde SEO-109 (I14) el compilador de HyperFrames rechaza todo src/href http(s) estático: la <img> remota y los dos
-    // <link> no entran en el render (siguen en la preview). El resto de la pieza hostil, que va por JS, sí se ejecuta.
-    const htmlRender = html.replace(/<img src="http:\/\/ejemplo[^>]*>/, "").replace(/<link rel="(?:dns-prefetch|preconnect)"[^>]*>\s*/g, "");
+    // Desde SEO-109 (I14) la <img> remota estática aborta el render (código 1): solo va en la preview. Los dos <link>
+    // de dns-prefetch y preconnect compilan y renderizan con código 0, así que siguen en la pieza del render.
+    const htmlRender = html.replace(/<img src="http:\/\/ejemplo[^>]*>/, "");
     const dirRender = variante(dir, path.join(tmp, "con-csp"), htmlRender, false);
     const sin = variante(dir, path.join(tmp, "sin-csp"), htmlRender, true);
 
-    const navegador = path.join(motor!, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
     // Q1: además de la pieza hostil, hf-tiempo.js se carga bajo la CSP y anima de verdad: un tween de opacidad 0→1 en
     // 1 s sobre un elemento del host bloque1 (inicio 0); tras un seek del runtime a 0,5 s, la opacidad calculada es 0,5.
     const sonda = `new Promise((ok) => setTimeout(async () => {
@@ -163,10 +210,9 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
 
     // Navegación de primer nivel en el render (Medium 3): window.open y location (misma composición, el open va
     // primero) y meta refresh (aparte: navega antes). Se mide hacia loopback, que el sumidero ve. Hacia fuera solo se
-    // lanza window.open a 203.0.113.1 (TEST-NET-3), sin medir: ningún sumidero local lo observa y HyperFrames lanza su
-    // Chrome sin net-log. Medir la salida real corresponde a W1.3.
+    // abre un host `.test`, sin medir: ningún sumidero local lo observa; lo corta el mismo proxy nulo.
     const base = fs.readFileSync(path.join(dir, "index.html"), "utf8").replace(/<link rel="dns-prefetch"[\s\S]*?<\/script>\n/, "").replace(/<img src="http:\/\/ejemplo[^\n]*\n/, "");
-    const abreYVa = `<script>try { window.open("http://127.0.0.1:${puertos.ventana}/o"); window.open("http://203.0.113.1/o"); } catch (e) {}
+    const abreYVa = `<script>try { window.open("http://127.0.0.1:${puertos.ventana}/o"); window.open("http://${host}-salida.test/o"); } catch (e) {}
 setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l"; }, 300);</script>\n</body>`;
     const refresco = `<meta http-equiv="refresh" content="1;url=http://127.0.0.1:${puertos.refresco}/r" />\n</head>`;
     const navs: [string, string][] = [
@@ -189,21 +235,113 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
         r[clave] = { cuenta: m.cuenta, error };
       }
     }
+    // Mismo Chrome y flags con cada lista (R2-M1): la antigua llega, la de puerto exacto no.
+    const pieza = `<!doctype html><html><head><link rel="preconnect" href="http://localhost:${puertos.preconexion}/" />
+<script type="speculationrules">{"prefetch":[{"source":"list","urls":["http://localhost:${puertos.especulacion}/s"]}],"prerender":[{"source":"list","urls":["http://localhost:${puertos.especulacion}/p"]}]}</script></head><body><script>
+fetch("http://127.0.0.1:${puertos.red}/f", { mode: "no-cors" }).catch(function () {});
+try { new WebSocket("ws://127.0.0.1:${puertos.red}/w"); } catch (e) {}
+window.open("http://127.0.0.1:${puertos.ventana}/o");
+setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l"; }, 2000);
+</script></body></html>`;
+    const piezaRefresco = `<!doctype html><html><head><meta http-equiv="refresh" content="1;url=http://127.0.0.1:${puertos.refresco}/r" /></head><body></body></html>`;
+    const nueva = bypassDe("localhost", puertoPropio);
+    r["lista-antigua"] = await controlBypass(pieza, LISTA_ANTIGUA);
+    r["lista-nueva"] = await controlBypass(pieza, nueva);
+    r["refresco-antigua"] = await controlBypass(piezaRefresco, LISTA_ANTIGUA);
+    r["refresco-nueva"] = await controlBypass(piezaRefresco, nueva);
+
+    // Variantes de host (R0 M2 y L-3): con cualquiera de las dos reglas, nada de esto es el servidor propio. Van a un
+    // puerto ajeno y al propio (127.1 y 2130706433 no: con la regla del literal son el mismo servidor).
+    const s4 = await sumidero("127.0.0.1");
+    const s2 = await sumidero("127.0.0.2");
+    const s6 = await sumidero("::1");
+    const s2P = await sumidero("127.0.0.2", puertoPropio);
+    const s6P = await sumidero("::1", puertoPropio);
+    sumiderosHost = [s4, s2, s6, s2P, s6P];
+    const variantes = [
+      [`[::1]:${puertoPropio}`, "seisP"],
+      [`127.0.0.2:${puertoPropio}`, "dosP"],
+      [`0.0.0.0:${puertoPropio}`, "ceroP"],
+      [`[::1]:${s6.puerto}`, "seis"],
+      [`127.0.0.2:${s2.puerto}`, "dos"],
+      [`0.0.0.0:${s4.puerto}`, "cero"],
+      [`localhost.:${s4.puerto}`, "punto"],
+      [`x.localhost:${s4.puerto}`, "sub"],
+      [`127.1:${s4.puerto}`, "corto"],
+      [`2130706433:${s4.puerto}`, "entero"],
+      [`127.0.0.1:${s4.puerto}`, "cruce"],
+    ];
+    const piezaHosts = `<!doctype html><html><body><script>${variantes.map(([h, n]) => `fetch("http://${h}/${n}", { mode: "no-cors" }).catch(function () {});`).join("\n")}</script></body></html>`;
+    const peticiones = () => sumiderosHost.flatMap((x) => x.peticiones().map((p) => /^GET \/(\w+)/.exec(p)?.[1] ?? "?"));
+    r["hosts-nueva"] = await controlBypass(piezaHosts, nueva);
+    llegadas.nueva = peticiones();
+    // `127.0.0.1:P`, la regla de check y snapshot. Aquí el cruce a `127.0.0.1:Q` sigue fuera: el puerto no coincide.
+    r["hosts-literal"] = await controlBypass(piezaHosts, bypassDe("127.0.0.1", puertoPropio), "127.0.0.1");
+    llegadas.literal = peticiones().slice(llegadas.nueva.length);
+    r["hosts-antigua"] = await controlBypass(piezaHosts, LISTA_ANTIGUA);
+    llegadas.antigua = peticiones().slice(llegadas.nueva.length + llegadas.literal.length);
+
+    // Review Focus 1: una composición que abre ventanas a su propio servidor sigue exenta, solo gasta memoria.
+    const ventanas = path.join(tmp, "ventanas");
+    fs.mkdirSync(ventanas, { recursive: true });
+    fs.writeFileSync(
+      path.join(ventanas, "index.html"),
+      `<!doctype html><html><head><meta charset="UTF-8" /></head><body><div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="540" data-height="960" style="width:540px;height:960px;background:#123"></div>
+<script>window.__timelines={};setInterval(function(){try{window.open("/x")}catch(e){}},50);</script></body></html>`,
+    );
+    const { listarProcesos } = await import("../src/proceso.js");
+    const antesVentanas = new Set((await listarProcesos()).map((p) => p.pid));
+    try {
+      await renderizar(motor!, ventanas, path.join(tmp, "ventanas.mp4"), path.join(tmp, "hf-home"), { comprobar: false, timeoutMs: 180_000 });
+      ventanasFin = "terminó";
+    } catch (e) {
+      ventanasFin = (e as Error).message.slice(0, 200);
+    }
+    await new Promise((ok) => setTimeout(ok, 2000));
+    chromesVivos = (await listarProcesos()).filter((p) => !antesVentanas.has(p.pid) && p.ruta.toLowerCase() === navegador.toLowerCase()).map((p) => p.pid);
     fs.writeFileSync(path.join(tmp, "resultados.json"), JSON.stringify(r, null, 2));
     console.info(`csp-integracion: resultados en ${path.join(tmp, "resultados.json")}\n${JSON.stringify(Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.cuenta])))}`);
   }, 1_800_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     for (const s of servidores) s.close();
+    servidorControl?.close();
+    await Promise.all(sumiderosHost.map((x) => x.cerrar()));
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   const NO_MIDE = "el control no conectó: la prueba no mide nada";
 
-  it("control positivo: sin CSP la pieza hostil se ejecuta y conecta en preview y render", () => {
+  it("control positivo: sin CSP la pieza hostil se ejecuta y conecta en la preview; en el render, con la lista antigua", () => {
     expect(r["preview-sin-csp"].hostil, "hostil.js no se ejecutó en la preview").toBe(true);
     expect(r["render-sin-csp"].marcaRoja, "hostil.js no se ejecutó en el render").toBe(true);
     expect(r["preview-sin-csp"].cuenta.red, NO_MIDE).toBeGreaterThan(0);
-    expect(r["render-sin-csp"].cuenta.red, NO_MIDE).toBeGreaterThan(0);
+    expect(r["lista-antigua"].cuenta.red, NO_MIDE).toBeGreaterThan(0);
+  });
+
+  const CERO = Object.fromEntries(CANALES.map((c) => [c, 0]));
+
+  it("el proxy cierra solo: render sin CSP, con el JS hostil ejecutado, 0 en todos los canales (R2-M1)", () => {
+    for (const clave of ["render-sin-csp", "nav-abre-sin-csp", "nav-refresco-sin-csp"]) expect(r[clave].cuenta, clave).toEqual(CERO);
+  });
+
+  it("lista de puerto exacto: sirve la página y 0 en todos los canales, con el mismo Chrome que el control", () => {
+    for (const clave of ["lista-nueva", "refresco-nueva", "hosts-nueva", "hosts-literal"]) {
+      expect(r[clave].servida, `${clave}: la página propia no se sirvió`).toBeGreaterThan(0);
+      expect(r[clave].cuenta, clave).toEqual(CERO);
+    }
+  });
+
+  it("variantes de host (R0 M2, L-3): con las reglas localhost:P y 127.0.0.1:P no llega ninguna; con la lista antigua, las de 127.0.0.1", () => {
+    expect(llegadas.nueva).toEqual([]);
+    expect(llegadas.literal).toEqual([]);
+    expect(llegadas.antigua, NO_MIDE).toEqual(expect.arrayContaining(["corto", "entero", "cruce"]));
+    for (const fuera of ["seis", "dos", "punto", "sub"]) expect(llegadas.antigua, fuera).not.toContain(fuera);
+  });
+
+  it("Review Focus 1: abrir ventanas a su propio servidor en bucle termina o cae por timeout, sin dejar Chrome vivo", () => {
+    expect(ventanasFin === "terminó" || /superó/.test(ventanasFin), ventanasFin).toBe(true);
+    expect(chromesVivos).toEqual([]);
   });
 
   it("una pieza hostil no llega a la red ni en la preview ni en el render (I2 a)", () => {
@@ -213,7 +351,7 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     const v = r.preview.violaciones!;
     expect(v.filter((x) => x.directiva.startsWith("script-src") && x.bloqueada.includes("hostil.js"))).toEqual([]);
     expect(v.some((x) => x.directiva === "connect-src" && x.bloqueada.includes(`127.0.0.1:${puertos.red}`))).toBe(true);
-    expect(v.some((x) => x.directiva === "connect-src" && x.bloqueada.includes("203.0.113.1"))).toBe(true);
+    expect(v.some((x) => x.directiva === "connect-src" && x.bloqueada.includes(`${host}-salida.test`))).toBe(true);
     expect(v.some((x) => x.directiva === "connect-src" && x.bloqueada.startsWith("ws://"))).toBe(true);
     expect(v.some((x) => x.directiva === "img-src" && x.bloqueada.includes(`127.0.0.1:${puertos.red}`))).toBe(true);
     expect(v.some((x) => x.directiva === "img-src" && x.bloqueada.includes("ejemplo.test"))).toBe(true);
@@ -252,15 +390,15 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     expect(r.render.cuenta.rtc).toBe(0);
   });
 
-  // preconnect: chrome-headless-shell 152 no abre la conexión ni sin CSP, así que hoy no hay sonda posible. Los
-  // controles quedan como fallas conocidas por entorno: si un Chrome futuro preconecta, fallarán y habrá que medir.
-  fallaConocida("control positivo: sin CSP, preconnect conecta en la preview", "headless-shell 152 no preconecta", () => r["preview-sin-csp"], (m) =>
+  // preconnect: chrome-headless-shell 152 y 156 no abren la conexión ni sin CSP ni con la lista antigua, así que hoy no
+  // hay sonda posible. Los controles quedan como fallas conocidas por entorno: si un Chrome futuro preconecta, fallarán.
+  fallaConocida("control positivo: sin CSP, preconnect conecta en la preview", "headless-shell no preconecta", () => r["preview-sin-csp"], (m) =>
     expect(m.cuenta.preconexion, NO_MIDE).toBeGreaterThan(0),
   );
-  fallaConocida("control positivo: sin CSP, preconnect conecta en el render", "headless-shell 152 no preconecta", () => r["render-sin-csp"], (m) =>
+  fallaConocida("control positivo: con la lista antigua, preconnect conecta en el render", "headless-shell no preconecta", () => r["lista-antigua"], (m) =>
     expect(m.cuenta.preconexion, NO_MIDE).toBeGreaterThan(0),
   );
-  it.skip("sonda (c): preconnect no conecta en preview ni render — sin control positivo posible en headless-shell 152 (ver los dos controles de arriba)", () => {});
+  it.skip("sonda (c): preconnect no conecta en preview ni render — sin control positivo posible en headless-shell (ver los dos controles de arriba)", () => {});
 
   // dns-prefetch (bloqueante R1-1): solo resuelve DNS, el sumidero TCP no lo ve. Se mide con el net-log de Chrome en la
   // preview: el instrumento funciona (sin CSP la imagen a <host>-instrumento.test sí se resuelve y aparece), pero el
@@ -275,25 +413,29 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
   );
   it.skip("sonda (c): dns-prefetch no resuelve en la preview — sin control positivo posible (ver el control de arriba)", () => {});
 
-  it("control positivo: sin CSP, speculationrules conecta en el render", () => {
-    expect(r["render-sin-csp"].cuenta.especulacion, NO_MIDE).toBeGreaterThan(0);
+  it("control positivo: con la lista antigua, speculationrules conecta en el render", () => {
+    expect(r["lista-antigua"].cuenta.especulacion, NO_MIDE).toBeGreaterThan(0);
   });
   it.skip("sonda (c): speculationrules no conecta en la preview — el iframe sandbox no especula ni sin CSP (0 medido), sin control positivo", () => {});
   // Con script-src 'unsafe-inline', <script type="speculationrules"> prefetchea o prerenderiza localhost con la CSP
-  // puesta; connect-src no lo gobierna. W1.3 no lo cierra (medido: 39 conexiones a loopback con el parche; su
-  // host-resolver-rules excluye localhost): solo lo cierra W3.1.
-  fallaConocida("sonda (c): speculationrules no conecta en el render", "W3.1 (urlsDeRed rechaza speculationrules)", () => r.render, (m) =>
-    expect(m.cuenta.especulacion).toBe(0),
-  );
+  // puesta; connect-src no lo gobierna. Lo cierra el proxy por puerto exacto (R2-M1).
+  it("sonda (c): speculationrules no conecta en el render", () => {
+    expect(r.render.cuenta.especulacion).toBe(0);
+  });
 
   // Navegación de primer nivel en el render (Medium 3). La CSP no gobierna la navegación (navigate-to no existe).
-  it("control positivo: sin CSP, window.open, location y meta refresh llegan al sumidero en el render", () => {
-    expect(r["nav-abre-sin-csp"].cuenta.ventana, NO_MIDE).toBeGreaterThan(0);
-    expect(r["nav-abre-sin-csp"].cuenta.location, NO_MIDE).toBeGreaterThan(0);
-    expect(r["nav-refresco-sin-csp"].cuenta.refresco, NO_MIDE).toBeGreaterThan(0);
+  it("control positivo: con la lista antigua, window.open, location y meta refresh llegan al sumidero", () => {
+    expect(r["lista-antigua"].cuenta.ventana, NO_MIDE).toBeGreaterThan(0);
+    expect(r["lista-antigua"].cuenta.location, NO_MIDE).toBeGreaterThan(0);
+    expect(r["refresco-antigua"].cuenta.refresco, NO_MIDE).toBeGreaterThan(0);
   });
-  fallaConocida("sonda (d): window.open no llega a loopback en el render", "W1.3", () => r["nav-abre"], (m) => expect(m.cuenta.ventana).toBe(0));
-  fallaConocida("sonda (d): location no llega a loopback en el render", "W1.3", () => r["nav-abre"], (m) => expect(m.cuenta.location).toBe(0));
-  fallaConocida("sonda (d): meta refresh no llega a loopback en el render", "W1.3", () => r["nav-refresco"], (m) => expect(m.cuenta.refresco).toBe(0));
-  it.skip("sonda (d): navegación de primer nivel hacia fuera (window.open, location, meta refresh a 203.0.113.1) — salida real sin medir con sumidero; dueño W1.3", () => {});
+  it("sonda (d): window.open no llega a loopback en el render", () => {
+    expect(r["nav-abre"].cuenta.ventana).toBe(0);
+  });
+  it("sonda (d): location no llega a loopback en el render", () => {
+    expect(r["nav-abre"].cuenta.location).toBe(0);
+  });
+  it("sonda (d): meta refresh no llega a loopback en el render", () => {
+    expect(r["nav-refresco"].cuenta.refresco).toBe(0);
+  });
 });

@@ -96,6 +96,26 @@ describe("entorno de los hijos (I5)", () => {
     }
   });
 
+  it("inventario: entornoConFfmpeg, OpcionesEjecutar.env y browserPath ya no existen en src/ (W1.6b T6)", () => {
+    const src = path.resolve(import.meta.dirname, "..", "src");
+    const quedan = fs.readdirSync(src).filter((n) => n.endsWith(".ts")).flatMap((n) =>
+      fs
+        .readFileSync(path.join(src, n), "utf8")
+        .split("\n")
+        .flatMap((l, i) => (/entornoConFfmpeg|browserPath|_browserPath|env: _descartado/.test(l) ? [`${n}:${i + 1}`] : [])),
+    );
+    expect(quedan).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("R0 L4: un `env` pasado por JS no llega al hijo (el spread va antes de entornoHijo)", async () => {
+    const opciones = { env: { SECRETA_DE_JS: "x", PATH: "C:\\plantado" } } as object;
+    const r = await ejecutar(path.join(process.env.SYSTEMROOT!, "System32", "cmd.exe"), ["/c", "set"], opciones);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/^HOME=/m);
+    expect(r.stdout).not.toContain("SECRETA_DE_JS");
+    expect(r.stdout).not.toContain("plantado");
+  });
+
   it.skipIf(!h)("ffprobe funciona con el entorno filtrado", async () => {
     const r = await ejecutar(h!.ffprobe, ["-version"], { timeoutMs: 30000 });
     expect(r.code).toBe(0);

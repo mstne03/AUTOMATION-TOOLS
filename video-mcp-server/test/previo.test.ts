@@ -17,7 +17,6 @@ const cfg: Config = {
   elevenVoiceId: undefined,
   elevenModelId: "eleven_multilingual_v2",
   videoRoot: RAIZ,
-  browserPath: undefined,
   musicaVolumen: 0.12,
   ffmpegDir: undefined,
 };

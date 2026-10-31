@@ -15,8 +15,7 @@ import { bloquesConFoto, fondoUsaWebgpu, textoAyuda } from "./formato.js";
 import { capacidades, gpuForzadaApagada, leerPruebaGpu } from "./capacidades.js";
 import { HYPERFRAMES_BIN, listarMusica } from "./musica.js";
 import { montarComposicion, prepararRender } from "./render.js";
-import { ejecutar, entornoConFfmpeg } from "./proceso.js";
-import { PIEZAS_DIR } from "./composicion.js";
+import { argsEntrada, ejecutar } from "./proceso.js";
 
 export interface Respuesta {
   texto: string;
@@ -400,7 +399,6 @@ export async function renderizar(cfg: Config, args: { id: string; musica?: boole
     musica: args.musica ?? true,
     musicaVolumen: cfg.musicaVolumen,
     ffmpegDir: cfg.ffmpegDir,
-    browserPath: cfg.browserPath,
   });
   const pos = posicionEnCola(job.job_id);
   return {
@@ -497,7 +495,7 @@ export function mensajeSinNavegador(): string {
 
 export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boolean }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  const c = await capacidades(h, !!args.reprobar, cfg.browserPath);
+  const c = await capacidades(h, !!args.reprobar);
   const gpu = c.gpu
     ? `${c.gpu.webgpu ? "sí" : "no"} (prueba del ${c.gpu.fecha.slice(0, 16).replace("T", " ")}: ${c.gpu.detalle})`
     : "sin comprobar (falta ffmpeg)";
@@ -519,7 +517,7 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
   const id = validarId(args.id);
   if (!args.segundos.length) throw new ErrorVideo("Pasa al menos un segundo en `segundos`, por ejemplo [0.5, 3, 8].");
   if (args.segundos.length > MAX_FOTOGRAMAS) throw new ErrorVideo(`Como mucho ${MAX_FOTOGRAMAS} fotogramas por vista previa.`);
-  const o = { raiz: cfg.videoRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir, browserPath: cfg.browserPath };
+  const o = { raiz: cfg.videoRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir };
   const prep = await prepararRender(id, o);
   const h = prep.herramientas;
   const dir = path.join(prep.rutas.dir, "_vista_previa");
@@ -528,14 +526,13 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
     const m = await montarComposicion(prep, dir, o);
     const segundos = args.segundos.map((s) => Math.min(Math.max(0, s), m.duracion - 0.05));
     fs.rmSync(fotos, { recursive: true, force: true });
-    const env = { ...entornoConFfmpeg(h, cfg.browserPath ? { HYPERFRAMES_BROWSER_PATH: cfg.browserPath } : {}), CI: "1" };
     const snap = [HYPERFRAMES_BIN, "snapshot", dir, "--at", segundos.map((s) => s.toFixed(2)).join(","), "--no-end", "-o", fotos];
     if (m.usaWebgpu) snap.push("--browser-gpu");
-    const r = await ejecutar(process.execPath, snap, { cwd: prep.rutas.dir, env, timeoutMs: 300000 });
+    const r = await ejecutar(process.execPath, snap, { timeoutMs: 300000 });
     const pngs = fs.existsSync(fotos) ? fs.readdirSync(fotos).filter((n) => /^frame-.*\.png$/.test(n)).sort() : [];
     if (!pngs.length) throw new Error(`hyperframes snapshot no sacó fotogramas: ${(r.stderr || r.stdout).replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-400)}`);
     // Hoja de contacto: los fotogramas en fila a 270×480.
-    const entradas = pngs.flatMap((n) => ["-i", path.join(fotos, n)]);
+    const entradas = pngs.flatMap((n) => [...argsEntrada(path.join(fotos, n)), "-i", path.join(fotos, n)]);
     const escalas = pngs.map((_, i) => `[${i}:v]scale=270:480[e${i}]`).join(";");
     const pila = pngs.length > 1 ? `${escalas};${pngs.map((_, i) => `[e${i}]`).join("")}hstack=inputs=${pngs.length}[out]` : `${escalas.replace("[e0]", "[out]")}`;
     const hoja = path.join(fotos, "hoja.png");
@@ -603,12 +600,7 @@ const TIMEOUT_CATALOGO_MS = 120_000;
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
   // I14: la tool no se registra en integrado (index.ts); esto cierra también la llamada directa.
   if (esIntegrado()) throw new ErrorVideo("El catálogo de HyperFrames no está disponible en SEO Studio.");
-  const h = herramientasFfmpeg(cfg.ffmpegDir);
-  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
-    env: { ...entornoConFfmpeg(h), CI: "1" },
-    cwd: PIEZAS_DIR,
-    timeoutMs: TIMEOUT_CATALOGO_MS,
-  });
+  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], { timeoutMs: TIMEOUT_CATALOGO_MS });
   if (r.timeout) throw new ErrorVideo(`La CLI de HyperFrames no respondió al buscar en el catálogo (${TIMEOUT_CATALOGO_MS / 1000} s).`);
   let j: { total?: number; results?: { name: string; type?: string; title?: string; description?: string; tags?: string[] }[] };
   try {

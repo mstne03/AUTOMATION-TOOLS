@@ -142,6 +142,23 @@ describe("verificarNavegador", () => {
     await expect(verificarNavegador(integrado())).rejects.toThrow(/x\.dll no está en el manifiesto/);
   });
 
+  it("debug.log con otro enlace duro: rechazado, como en el backend", async () => {
+    const log = path.join(RAIZ, "chrome-headless-shell-win64", "debug.log");
+    fs.writeFileSync(log, "x");
+    fs.linkSync(log, path.join(F.base, "fuera.log"));
+    try {
+      await expect(verificarNavegador(integrado())).rejects.toThrow(/debug\.log tiene otro enlace duro/);
+    } finally {
+      fs.rmSync(path.join(F.base, "fuera.log"));
+    }
+  });
+
+  it("un manifiesto que lista debug.log: rechazado, como en el backend", async () => {
+    fs.writeFileSync(path.join(RAIZ, "chrome-headless-shell-win64", "debug.log"), "x");
+    escribirManifiesto({ version: VERSION, ficheros: { ...crearManifiestoDe(), "chrome-headless-shell-win64/debug.log": sha("x") } });
+    await expect(verificarNavegador(integrado())).rejects.toThrow(/lista el log de Chrome/);
+  });
+
   it("una .dll listada y borrada: rechazada", async () => {
     fs.rmSync(path.join(RAIZ, "chrome-headless-shell-win64", "a.dll"));
     await expect(verificarNavegador(integrado())).rejects.toThrow(/falta/);
