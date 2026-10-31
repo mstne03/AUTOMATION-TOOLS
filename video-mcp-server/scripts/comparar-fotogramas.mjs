@@ -46,8 +46,8 @@ export function entornoMinimo() {
 }
 
 /**
- * Entorno de la CLI de HyperFrames por lista blanca (I5) con el modo cerrado (I13): ninguna clave del entorno del
- * desarrollador llega a HyperFrames ni a Chrome.
+ * Entorno cerrado que aplica `montar` a process.env (lista blanca + modo cerrado). `renderizar` solo toma de aquí
+ * FFMPEG_DIR y HYPERFRAMES_BROWSER_PATH; el entorno del hijo lo construye entornoHijo(), no se pasa a mano.
  */
 export function entornoCerrado(motor, home) {
   const ffmpeg = path.join(motor, "ffmpeg");
@@ -74,33 +74,45 @@ export function usaWebgpu(dir) {
   return fs.existsSync(path.join(dir, "assets", "vendor", "shaders.iife.js"));
 }
 
-/** `check` (errores bloquean, como en el motor) y render de `dir` a `mp4`. */
+/**
+ * `check` (errores bloquean, como en el motor) y render de `dir` a `mp4`. Como `montar`, fija FFMPEG_DIR,
+ * HYPERFRAMES_BROWSER_PATH y VIDEO_STATE_DIR en el entorno del proceso durante la llamada (el entorno del hijo se
+ * construye desde ahí con entornoHijo) y los restaura en `finally`.
+ */
 export async function renderizar(motor, dir, mp4, home, { comprobar = true, timeoutMs = 600_000 } = {}) {
-  const { ejecutar } = await dist("proceso.js");
-  const { comprobarComposicion, HYPERFRAMES_BIN } = await dist("render.js");
   fs.mkdirSync(home, { recursive: true });
-  const env = entornoCerrado(motor, home);
-  const gpu = usaWebgpu(dir);
-  let check = { errores: [], avisos: [] };
-  if (comprobar) {
-    check = await comprobarComposicion(dir, env, gpu);
-    if (check.errores.length) throw new Error(`check en ${dir}: ${check.errores.join(" | ")}`);
+  const cerrado = entornoCerrado(motor, home);
+  const claves = ["FFMPEG_DIR", "HYPERFRAMES_BROWSER_PATH", "VIDEO_STATE_DIR"];
+  const previo = Object.fromEntries(claves.map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { FFMPEG_DIR: cerrado.FFMPEG_DIR, HYPERFRAMES_BROWSER_PATH: cerrado.HYPERFRAMES_BROWSER_PATH, VIDEO_STATE_DIR: path.resolve(home, "..", "estado") });
+  try {
+    // Después de fijar el entorno: estado.ts lee VIDEO_STATE_DIR al cargarse (la primera ejecución del proceso manda).
+    const { ejecutar } = await dist("proceso.js");
+    const { comprobarComposicion, HYPERFRAMES_BIN } = await dist("render.js");
+    const gpu = usaWebgpu(dir);
+    let check = { errores: [], avisos: [] };
+    if (comprobar) {
+      check = await comprobarComposicion(dir, gpu);
+      if (check.errores.length) throw new Error(`check en ${dir}: ${check.errores.join(" | ")}`);
+    }
+    const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
+    if (gpu) args.push("--browser-gpu");
+    const t0 = Date.now();
+    // El preflight de HyperFrames da «encoder unavailable» de forma intermitente con la GPU ocupada, antes de abrir la
+    // página: no es un resultado del render (una sonda contaría 0 conexiones sin medir nada). Se reintenta solo eso.
+    // ponytail: 3 intentos fijos; lo cierra de verdad el codificador predecible de W1.6.
+    let r;
+    for (let intento = 1; intento <= 3; intento++) {
+      r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), timeoutMs });
+      if (!/encoder unavailable/i.test(r.stdout + r.stderr)) break;
+      await new Promise((ok) => setTimeout(ok, 5000));
+    }
+    if (r.timeout) throw new Error(`render de ${dir}: superó ${timeoutMs} ms`);
+    if (r.code !== 0 || !fs.existsSync(mp4)) throw new Error(`render de ${dir} (código ${r.code}): ${(r.stderr || r.stdout).slice(-1500)}`);
+    return { segundos: Math.round((Date.now() - t0) / 1000), check, salida: r.stdout + r.stderr };
+  } finally {
+    for (const k of claves) previo[k] === undefined ? delete process.env[k] : (process.env[k] = previo[k]);
   }
-  const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
-  if (gpu) args.push("--browser-gpu");
-  const t0 = Date.now();
-  // El preflight de HyperFrames da «encoder unavailable» de forma intermitente con la GPU ocupada, antes de abrir la
-  // página: no es un resultado del render (una sonda contaría 0 conexiones sin medir nada). Se reintenta solo eso.
-  // ponytail: 3 intentos fijos; lo cierra de verdad el codificador predecible de W1.6.
-  let r;
-  for (let intento = 1; intento <= 3; intento++) {
-    r = await ejecutar(process.execPath, args, { cwd: path.dirname(dir), env, timeoutMs });
-    if (!/encoder unavailable/i.test(r.stdout + r.stderr)) break;
-    await new Promise((ok) => setTimeout(ok, 5000));
-  }
-  if (r.timeout) throw new Error(`render de ${dir}: superó ${timeoutMs} ms`);
-  if (r.code !== 0 || !fs.existsSync(mp4)) throw new Error(`render de ${dir} (código ${r.code}): ${(r.stderr || r.stdout).slice(-1500)}`);
-  return { segundos: Math.round((Date.now() - t0) / 1000), check, salida: r.stdout + r.stderr };
 }
 
 async function contarFotogramas(ffprobe, mp4) {
@@ -110,7 +122,6 @@ async function contarFotogramas(ffprobe, mp4) {
 }
 
 export async function comparar(motor, dirRef, dirCand, salida, umbral = 0.99) {
-  const { ejecutar } = await dist("proceso.js");
   fs.mkdirSync(salida, { recursive: true });
   const home = path.join(salida, "hf-home");
   const res = {};
@@ -119,6 +130,19 @@ export async function comparar(motor, dirRef, dirCand, salida, umbral = 0.99) {
     res[nombre] = { dir, segundos: r.segundos, avisosCheck: r.check.avisos };
     console.error(`${nombre}: ${r.segundos} s`);
   }
+  return ssimYInforme(motor, salida, umbral, res);
+}
+
+/** Renderiza solo la candidata y la compara con un mp4 congelado (referencia GSAP): mismo `Informe` que `comparar`. */
+export async function compararContraReferencia(motor, mp4Ref, dirCand, salida, umbral = 0.99) {
+  fs.mkdirSync(salida, { recursive: true });
+  const r = await renderizar(motor, dirCand, path.join(salida, "candidata.mp4"), path.join(salida, "hf-home"));
+  fs.copyFileSync(mp4Ref, path.join(salida, "referencia.mp4"));
+  return ssimYInforme(motor, salida, umbral, { candidata: { dir: dirCand, segundos: r.segundos, avisosCheck: r.check.avisos } });
+}
+
+async function ssimYInforme(motor, salida, umbral, res) {
+  const { ejecutar } = await dist("proceso.js");
   const ffdir = path.join(motor, "ffmpeg");
   const nRef = await contarFotogramas(path.join(ffdir, "ffprobe.exe"), path.join(salida, "referencia.mp4"));
   const nCand = await contarFotogramas(path.join(ffdir, "ffprobe.exe"), path.join(salida, "candidata.mp4"));
