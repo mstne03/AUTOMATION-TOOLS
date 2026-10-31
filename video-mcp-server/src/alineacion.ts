@@ -1,4 +1,7 @@
 // Alineación por carácter de ElevenLabs → palabras → segmentos → frases de subtítulo (§6). Lógica pura.
+import fs from "node:fs";
+import { z } from "zod";
+import { ErrorVideo } from "./paths.js";
 
 export interface AlineacionCaracteres {
   characters: string[];
@@ -261,4 +264,71 @@ export function procesarAlineacion(opts: {
     frases,
     avisos,
   };
+}
+
+// ---------- palabras.json: entrada no confiable al cargarla (I1) ----------
+
+/** Tope del fichero antes de leerlo: una narración de 650 caracteres da decenas de KB. */
+export const MAX_PALABRAS_JSON_BYTES = 4 * 1024 * 1024;
+/** Topes de longitud del esquema: muy por encima de lo que escribe la versión actual (≤ 650 caracteres de narración). */
+const MAX_ELEMENTOS = 5000;
+const MAX_TEXTO = 200;
+
+const tiempo = z.number().finite().min(0).max(24 * 3600);
+const entero = z.number().int().min(1).max(6);
+const esquemaPalabras = z.object({
+  version: z.number().int().optional(),
+  hashNarracion: z.string().max(200),
+  duracionAudio: tiempo,
+  duracionTotal: tiempo.optional(),
+  palabras: z.array(z.object({ texto: z.string().max(MAX_TEXTO), inicio: tiempo, fin: tiempo, segmento: entero })).max(MAX_ELEMENTOS),
+  segmentos: z
+    .array(z.object({ n: entero, inicio: tiempo, fin: tiempo, mostrarDesde: tiempo, mostrarHasta: tiempo }))
+    .max(MAX_ELEMENTOS),
+  frases: z
+    .array(
+      z.object({
+        texto: z.string().max(MAX_TEXTO),
+        inicio: tiempo,
+        fin: tiempo,
+        segmento: entero,
+        palabras: z.array(z.number().int().min(0).max(MAX_ELEMENTOS)).max(MAX_ELEMENTOS),
+      }),
+    )
+    .max(MAX_ELEMENTOS),
+  avisos: z.array(z.string().max(2000)).max(MAX_ELEMENTOS).optional(),
+});
+
+const REGENERAR = "Regenera la voz con video_generar_voz(forzar=true).";
+
+/**
+ * Valida el contenido de palabras.json y devuelve el valor **ya validado** (usar este, no el original).
+ * Admite lo que escribe la versión actual y los campos opcionales que no tenían las anteriores; lo demás
+ * pide regenerar, sin traza.
+ */
+export function validarPalabras(v: unknown): ResultadoAlineacion {
+  const r = esquemaPalabras.safeParse(v);
+  if (!r.success) {
+    const campo = r.error.issues[0]?.path.join(".") || "raíz";
+    throw new ErrorVideo(`palabras.json no tiene el formato esperado (${campo}). ${REGENERAR}`);
+  }
+  const d = r.data;
+  const nPalabras = d.palabras.length;
+  if (d.frases.some((f) => f.palabras.some((i) => i >= nPalabras))) {
+    throw new ErrorVideo(`palabras.json no tiene el formato esperado (frases.palabras). ${REGENERAR}`);
+  }
+  return { ...d, version: 1, duracionTotal: d.duracionTotal ?? redondear(d.duracionAudio + COLA_FINAL), avisos: d.avisos ?? [] };
+}
+
+/** Lee palabras.json con tope de tamaño antes de abrirlo, y lo valida. ErrorVideo legible si falta, está dañado o no cuadra. */
+export function cargarPalabras(ruta: string): ResultadoAlineacion {
+  let crudo: unknown;
+  try {
+    if (fs.statSync(ruta).size > MAX_PALABRAS_JSON_BYTES) throw new ErrorVideo(`palabras.json es demasiado grande. ${REGENERAR}`);
+    crudo = JSON.parse(fs.readFileSync(ruta, "utf8"));
+  } catch (e) {
+    if (e instanceof ErrorVideo) throw e;
+    throw new ErrorVideo(`palabras.json está dañado. ${REGENERAR}`);
+  }
+  return validarPalabras(crudo);
 }

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { log } from "./log.js";
 import { parsearGuion, type Guion } from "./guion.js";
-import type { ResultadoAlineacion } from "./alineacion.js";
+import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
@@ -283,12 +283,8 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
   }
   comprobarRecurso(rutas.voz);
   comprobarRecurso(rutas.palabras);
-  let palabras: ResultadoAlineacion;
-  try {
-    palabras = JSON.parse(fs.readFileSync(rutas.palabras, "utf8")) as ResultadoAlineacion;
-  } catch {
-    throw new ErrorVideo(`palabras.json está dañado. Regenera la voz con video_generar_voz(forzar=true).`);
-  }
+  // I1: entrada no confiable; se usa el valor validado, no el JSON crudo.
+  const palabras = cargarPalabras(rutas.palabras);
   if (palabras.hashNarracion !== guion.hash) {
     throw new ErrorVideo(
       "El guion ha cambiado desde que se generó la voz (el hash de la narración no coincide). Regenera la voz con video_generar_voz(forzar=true).",

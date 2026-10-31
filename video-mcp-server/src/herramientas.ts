@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
-import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
+import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
@@ -37,9 +37,9 @@ function leerGuion(ruta: string): { guion?: Guion; problemas?: string[] } {
 
 function leerPalabras(ruta: string): ResultadoAlineacion | undefined {
   try {
-    return JSON.parse(fs.readFileSync(ruta, "utf8")) as ResultadoAlineacion;
+    return cargarPalabras(ruta);
   } catch {
-    return undefined;
+    return undefined; // ausente, dañado o con otro formato: cuenta como «sin voz coherente»
   }
 }
 
@@ -340,6 +340,8 @@ export async function generarVoz(
 
   const faltan = faltanParaVoz(cfg);
   if (faltan.length) throw new ErrorVideo(mensajeFaltanParaVoz(faltan));
+  // D7: el audio se sondea antes de guardarlo. Sin ffprobe se avisa ya, antes de gastar créditos.
+  if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
 
   log.info(`Generando voz de ${id} (${guion.caracteres} caracteres, modelo ${cfg.elevenModelId}).`);
   const tts = await sintetizarConTimestamps({
@@ -350,7 +352,36 @@ export async function generarVoz(
     fetchImpl,
   });
 
-  escribirAtomico(r.voz, tts.audio);
+  // Fichero no confiable (I15): se sondea sobre un temporal con lista blanca mp3 y solo entonces pasa a voz.mp3.
+  const temporal = `${r.voz}.tmp-${process.pid}.mp3`;
+  let duracionAudio: number;
+  try {
+    fs.writeFileSync(temporal, tts.audio);
+    const info = await sondear(h.ffprobe, temporal).catch((e: Error) => {
+      throw new ErrorVideo(`El audio que devolvió ElevenLabs no es un MP3 válido; no guardo nada (${e.message.slice(0, 200)}).`);
+    });
+    if (!info.tieneAudio || !info.duracion || !(info.duracion > 0)) {
+      throw new ErrorVideo("El audio que devolvió ElevenLabs no tiene pista de audio o no tiene duración; no guardo nada.");
+    }
+    duracionAudio = info.duracion;
+    const finAlineacion = tts.alineacion.character_end_times_seconds.at(-1) ?? 0;
+    if (finAlineacion > duracionAudio + 1) {
+      throw new ErrorVideo(
+        `La alineación de ElevenLabs acaba en ${finAlineacion.toFixed(1)} s y el audio dura ${duracionAudio.toFixed(1)} s; no guardo nada.`,
+      );
+    }
+  } catch (e) {
+    fs.rmSync(temporal, { force: true });
+    throw e;
+  }
+  const palabras = procesarAlineacion({
+    narracion: guion.narracion,
+    bloques: guion.bloques,
+    alineacion: tts.alineacion,
+    duracionAudio,
+    hashNarracion: guion.hash,
+  });
+  fs.renameSync(temporal, r.voz);
   escribirAtomico(
     r.alineacion,
     JSON.stringify(
@@ -359,15 +390,6 @@ export async function generarVoz(
       2,
     ),
   );
-  let duracionAudio: number | undefined;
-  if (h) duracionAudio = (await sondear(h.ffprobe, r.voz).catch(() => undefined))?.duracion;
-  const palabras = procesarAlineacion({
-    narracion: guion.narracion,
-    bloques: guion.bloques,
-    alineacion: tts.alineacion,
-    duracionAudio,
-    hashNarracion: guion.hash,
-  });
   escribirAtomico(r.palabras, JSON.stringify(palabras, null, 2));
 
   const avisos = [...palabras.avisos];

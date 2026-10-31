@@ -17,15 +17,74 @@ export interface RespuestaTts {
 
 export class ErrorElevenLabs extends Error {}
 
-function esAlineacion(v: unknown): v is AlineacionCaracteres {
+/** Cuerpo de la respuesta (D7): ≤ 20 MB. */
+export const MAX_RESPUESTA_TTS = 20 * 1024 * 1024;
+/** Audio de una frase (D7, I15): ≤ 10 MB. */
+export const MAX_AUDIO_TTS = 10 * 1024 * 1024;
+/** Cuerpo de un error de la API: texto corto. */
+const MAX_ERROR_TTS = 1024 * 1024;
+
+const mb = (bytes: number) => `${bytes / 1024 / 1024} MB`;
+
+/**
+ * Lee el cuerpo por trozos con un contador y aborta al pasar el tope: `res.text()` primero lo guarda entero, y con
+ * `transfer-encoding: chunked` no hay content-length que avise (A3: respuesta hostil).
+ */
+async function leerCuerpo(res: Response, tope: number, clave: string): Promise<string> {
+  const declarado = Number(res.headers.get("content-length"));
+  const demasiado = () => new ErrorElevenLabs(`La respuesta de ElevenLabs pasa de ${mb(tope)}; la descarto y no guardo nada.`);
+  if (Number.isFinite(declarado) && declarado > tope) {
+    await res.body?.cancel().catch(() => undefined);
+    throw demasiado();
+  }
+  if (!res.body) return "";
+  const lector = res.body.getReader();
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (let r = await lector.read(); !r.done; r = await lector.read()) {
+      total += r.value.length;
+      if (total > tope) {
+        await lector.cancel().catch(() => undefined);
+        throw demasiado();
+      }
+      partes.push(r.value);
+    }
+  } catch (e) {
+    if (e instanceof ErrorElevenLabs) throw e;
+    throw new ErrorElevenLabs(`No se pudo leer la respuesta de ElevenLabs: ${ocultarClave((e as Error).message, clave)}`);
+  }
+  return Buffer.concat(partes).toString("utf8");
+}
+
+/**
+ * Esquema de D7 para una alineación: mismas longitudes, ≤ 2 × los caracteres enviados, números finitos, ≥ 0,
+ * no decrecientes y `fin ≥ inicio`. Dos caracteres con el mismo inicio son normales y pasan. Devuelve el motivo o null.
+ * (El «≤ duración del audio + 1 s» lo comprueba quien ha sondeado el audio.)
+ */
+function problemaAlineacion(v: unknown, enviados: number): string | null {
   const a = v as AlineacionCaracteres | null;
-  return (
-    !!a &&
-    Array.isArray(a.characters) &&
-    Array.isArray(a.character_start_times_seconds) &&
-    Array.isArray(a.character_end_times_seconds) &&
-    a.characters.length > 0
-  );
+  if (!a || !Array.isArray(a.characters) || !Array.isArray(a.character_start_times_seconds) || !Array.isArray(a.character_end_times_seconds)) {
+    return "faltan characters o sus tiempos";
+  }
+  const n = a.characters.length;
+  if (n === 0) return "está vacía";
+  if (a.character_start_times_seconds.length !== n || a.character_end_times_seconds.length !== n) return "characters y tiempos tienen longitudes distintas";
+  if (n > 2 * enviados) return `trae ${n} caracteres para ${enviados} enviados`;
+  let inicioPrevio = 0;
+  let finPrevio = 0;
+  for (let i = 0; i < n; i++) {
+    const c = a.characters[i];
+    const ini = a.character_start_times_seconds[i];
+    const fin = a.character_end_times_seconds[i];
+    if (typeof c !== "string" || c.length > 8) return `el carácter ${i} no es un texto corto`;
+    if (typeof ini !== "number" || typeof fin !== "number" || !Number.isFinite(ini) || !Number.isFinite(fin)) return `el tiempo del carácter ${i} no es un número finito`;
+    if (ini < 0 || fin < ini) return `el tiempo del carácter ${i} es negativo o acaba antes de empezar`;
+    if (ini < inicioPrevio || fin < finPrevio) return `los tiempos retroceden en el carácter ${i}`;
+    inicioPrevio = ini;
+    finPrevio = fin;
+  }
+  return null;
 }
 
 export async function sintetizarConTimestamps(opts: {
@@ -45,12 +104,14 @@ export async function sintetizarConTimestamps(opts: {
       headers: { "xi-api-key": opts.apiKey, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ text: opts.texto, model_id: opts.modelId }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 180000),
+      // I14: una redirección a otro origen se llevaría el xi-api-key.
+      redirect: "error",
     });
   } catch (e) {
     throw new ErrorElevenLabs(`No se pudo conectar con ElevenLabs: ${ocultarClave((e as Error).message, opts.apiKey)}`);
   }
 
-  const cuerpo = await res.text();
+  const cuerpo = await leerCuerpo(res, res.ok ? MAX_RESPUESTA_TTS : MAX_ERROR_TTS, opts.apiKey);
   if (!res.ok) {
     let detalle = cuerpo.slice(0, 500);
     try {
@@ -78,9 +139,19 @@ export async function sintetizarConTimestamps(opts: {
   } catch {
     throw new ErrorElevenLabs("ElevenLabs devolvió una respuesta que no es JSON.");
   }
-  if (!j.audio_base64) throw new ErrorElevenLabs("La respuesta de ElevenLabs no trae audio_base64.");
-  const alineacion = esAlineacion(j.alignment) ? j.alignment : esAlineacion(j.normalized_alignment) ? j.normalized_alignment : null;
-  if (!alineacion) throw new ErrorElevenLabs("La respuesta de ElevenLabs no trae alineación por carácter (alignment).");
+  if (typeof j.audio_base64 !== "string" || !j.audio_base64) throw new ErrorElevenLabs("La respuesta de ElevenLabs no trae audio_base64.");
+  // Antes de decodificar: 4 caracteres base64 son 3 bytes.
+  if (j.audio_base64.length > Math.ceil((MAX_AUDIO_TTS * 4) / 3) + 8) throw new ErrorElevenLabs(`El audio de ElevenLabs pasa de ${mb(MAX_AUDIO_TTS)}; no guardo nada.`);
+  const audio = Buffer.from(j.audio_base64, "base64");
+  if (!audio.length || audio.length > MAX_AUDIO_TTS) throw new ErrorElevenLabs(`El audio de ElevenLabs está vacío o pasa de ${mb(MAX_AUDIO_TTS)}; no guardo nada.`);
+  const enviados = opts.texto.length;
+  const problemaA = problemaAlineacion(j.alignment, enviados);
+  const problemaN = problemaAlineacion(j.normalized_alignment, enviados);
+  const alineacion = problemaA === null ? (j.alignment as AlineacionCaracteres) : problemaN === null ? (j.normalized_alignment as AlineacionCaracteres) : null;
+  if (!alineacion) {
+    if (j.alignment == null && j.normalized_alignment == null) throw new ErrorElevenLabs("La respuesta de ElevenLabs no trae alineación por carácter (alignment).");
+    throw new ErrorElevenLabs(`La alineación de ElevenLabs no es válida (${j.alignment == null ? problemaN : problemaA}); no guardo nada.`);
+  }
 
   // Se registran las cabeceras de coste tal cual llegan (nunca la clave) para poder contrastarlas con el panel.
   const cabecerasCoste = [...res.headers.entries()].filter(([k]) => /charact|cost|credit|request-id/i.test(k));
@@ -88,10 +159,10 @@ export async function sintetizarConTimestamps(opts: {
   const cabecera = res.headers.get("x-character-count") ?? res.headers.get("character-cost");
   const caracteresFacturados = cabecera && Number.isFinite(Number(cabecera)) ? Number(cabecera) : undefined;
   return {
-    audio: Buffer.from(j.audio_base64, "base64"),
+    audio,
     crudo: {
-      alignment: esAlineacion(j.alignment) ? j.alignment : null,
-      normalized_alignment: esAlineacion(j.normalized_alignment) ? j.normalized_alignment : null,
+      alignment: problemaA === null ? (j.alignment as AlineacionCaracteres) : null,
+      normalized_alignment: problemaN === null ? (j.normalized_alignment as AlineacionCaracteres) : null,
     },
     alineacion,
     caracteresFacturados,
