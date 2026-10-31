@@ -9,11 +9,13 @@ import type {
   KbResultado,
   CanalPanel,
   Approval,
+  CapacidadesVideo,
   ChatEvent,
   ConversacionDetalle,
   ConversacionResumen,
   Job,
   JobKind,
+  NavegadorEstado,
   Settings,
   SettingsPatch,
   SettingsTrasProyecto,
@@ -67,6 +69,10 @@ export interface Client {
   /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
   importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
   removeClientSecret(): Promise<SettingsTrasProyecto>;
+  videoNavegador(): Promise<NavegadorEstado>;
+  /** Inicia la descarga (202). 409 si ya hay una en curso; 503 si el módulo de vídeo no está instalado. */
+  videoNavegadorDescarga(): Promise<NavegadorEstado>;
+  videoCapacidades(): Promise<CapacidadesVideo>;
 }
 
 export function createClient(port: number, token: string, fetchFn: typeof fetch = fetch): Client {
@@ -134,6 +140,9 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
     removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
+    videoNavegador: () => req("/video/navegador"),
+    videoNavegadorDescarga: () => req("/video/navegador/descarga", { method: "POST" }),
+    videoCapacidades: () => req("/video/capacidades"),
   };
 }
 

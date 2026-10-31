@@ -51,6 +51,14 @@ const PANTALLAS: Array<{ nombre: string; ruta: string; listo: (p: Page) => Promi
   { nombre: "canal", ruta: "/#/canal", listo: async (p) => void (await p.getByTestId("canal-videos").waitFor()) },
   { nombre: "kb", ruta: "/#/kb", listo: async (p) => void (await p.getByTestId("kb-snapshot").getByText("Versión").waitFor()) },
   { nombre: "ajustes", ruta: "/#/ajustes", listo: async (p) => void (await p.getByTestId("ajustes-nav-general").waitFor()) },
+  {
+    nombre: "ajustes-video",
+    ruta: "/#/ajustes",
+    listo: async (p) => {
+      await p.getByTestId("ajustes-video").evaluate((el) => el.scrollIntoView({ behavior: "instant", block: "start" }));
+      await p.getByTestId("ajustes-render-modo").waitFor();
+    },
+  },
   { nombre: "onboarding", ruta: "/#/onboarding", listo: async (p) => void (await p.getByTestId("onboarding-pasos").waitFor({ state: "attached" })) },
   { nombre: "catalogo", ruta: "/#/catalogo", listo: async (p) => void (await p.getByRole("heading", { name: "Catálogo de componentes" }).waitFor()) },
 ];
@@ -78,6 +86,7 @@ for (const tema of ["dark", "light"] as const) {
             "/kb/estado": KB_ESTADO,
             "/kb/privada/fuentes": [],
             "/conversations": [],
+            "/video/navegador": { version: "148.0.1", tamano: 125829120, estado: "ausente", descargado: 0, error: null },
           });
           await page.goto(pantalla.ruta);
           await pantalla.listo(page);
