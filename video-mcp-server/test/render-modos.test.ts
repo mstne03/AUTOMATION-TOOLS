@@ -62,7 +62,8 @@ else {
 
 import type { Config } from "../src/config.js";
 import { estado, fotograma } from "../src/herramientas.js";
-import { ErrorVideo, archivosVideo } from "../src/paths.js";
+import { EXTENSIONES_AUDIO } from "../src/musica.js";
+import { ErrorVideo, EXTENSIONES_IMAGEN, archivosVideo } from "../src/paths.js";
 import { argsEntrada, ErrorNavegador, ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
 import {
   ARGS_CODIFICADOR,
@@ -129,6 +130,11 @@ describe("entradas de ffmpeg y ffprobe (I15, R0 M5)", () => {
       await expect(sondear("C:\\no-existe\\ffprobe.exe", f)).rejects.toThrow(/ruta local/);
     },
   );
+
+  it("R0 L3: toda extensión que el motor acepta tiene demuxer (.aac ya no se lista)", () => {
+    expect(EXTENSIONES_AUDIO).not.toContain(".aac");
+    for (const ext of [...EXTENSIONES_AUDIO, ...EXTENSIONES_IMAGEN]) expect(() => argsEntrada(`C:\\v\\a${ext}`), ext).not.toThrow();
+  });
 
   it.each(["lista.concat", "lista.m3u8", "sin-extension"])("sondear de %s lanza antes de lanzar ffprobe", async (f) => {
     await expect(sondear("C:\\no-existe\\ffprobe.exe", path.join(F.dir, f))).rejects.toThrow(/no admite/);
