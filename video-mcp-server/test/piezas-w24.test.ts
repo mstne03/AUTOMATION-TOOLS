@@ -184,14 +184,16 @@ const montarCand = (clave: keyof typeof GUIONES_W2) => {
 describe.runIf(motor)("W2.4 con motor", () => {
   const casos = [
     { clave: "TODAS" as const, modo: "host" as const, ssimEsperado: true },
-    // Hallazgo W2.4: el túnel migrado da SSIM mínimo 0,9887 (< 0,99) con el lienzo idéntico al de la referencia en los
-    // fotogramas muestreados; no se baja el umbral. `it.fails`: pasa mientras falle, y avisa cuando se arregle.
+    // Hallazgo W2.4: el túnel migrado da SSIM mínimo 0,9887 (< 0,99). Medido por PNG sin pérdida da 0,9884: no es x264 ni
+    // el túnel, es 1 fotograma (t = 2,167 s; el siguiente da 0,9904) de la salida del gancho (power4.in, ~94 px por
+    // fotograma). No se baja el umbral. `it.fails`: pasa mientras falle, y avisa cuando se arregle.
     { clave: "TUNEL" as const, modo: "scene" as const, ssimEsperado: false },
   ];
   for (const { clave, modo, ssimEsperado } of casos) {
     (ssimEsperado ? it : it.fails)(`${clave}: SSIM >= 0,99 por fotograma contra el render GSAP`, async () => {
       const { refs } = motor!;
       const montaje = await montarCand(clave);
+      if (clave === "TODAS") expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
       const informe = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(refs, clave, "ref.mp4"), montaje.dir, path.join(CAND, clave, "comparacion")));
       process.stderr.write(`[W2.4 ${clave}] ${JSON.stringify({ fotogramas: informe.fotogramasCandidata, ssimMin: informe.ssimMin, ssimMedia: informe.ssimMedia, peores: informe.peores.slice(0, 3) })}
 `);

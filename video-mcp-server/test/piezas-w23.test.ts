@@ -249,13 +249,15 @@ const dirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "w23-"));
 
 describe.skipIf(!motor)("W2.3 con motor", () => {
   for (const clave of ["TODAS", "TUNEL"] as const) {
-    // TUNEL (look película, grano) no es medible a 0,99 con mp4: la propia referencia GSAP con SOLO el grano a opacity
-    // 0,152 en vez de 0,15 da ssimMin 0,9875 y 146 fotogramas bajo 0,99 (x264 cuantiza el grano de otra forma ante
-    // cualquier cambio de píxel); esta candidata da 0,9887. Dueño: orquestador (comparar fotogramas antes de codificar).
+    // TUNEL: el mp4 no sirve para medir el grano (la referencia con SOLO el grano a 0,152 da 0,9875 por x264), pero NO es
+    // lo que baja esta candidata. Por PNG sin pérdida (scripts/comparar-fotogramas.mjs, `ssimPng`): suelo ref/ref 0,9927,
+    // grano 0,152 0,9923 y candidata integrada 0,9884, con SOLO 1 fotograma < 0,99 (t = 2,167 s, la salida del gancho;
+    // ver W2.1). Se mantiene el skip hasta cerrar esa diferencia; no se baja el umbral.
     (clave === "TUNEL" ? it.skip : it)(
       `SSIM ≥ 0,99 por fotograma contra GSAP (${clave})`,
       async () => {
         const m = await montar(motor!.motor, path.join(dirTmp, `cand-${clave}`), GUIONES_W2[clave]);
+        if (clave === "TODAS") expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
         const inf = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(motor!.refs, clave, "ref.mp4"), m.dir, path.join(dirTmp, `cmp-${clave}`)));
         process.stderr.write(`[W2.3] ${clave}: ssimMin=${inf.minimo ?? inf.ssimMin} media=${inf.media ?? inf.ssimMedia} fotogramas=${inf.fotogramasCandidata}/${inf.fotogramasReferencia}\n`);
         expect(inf.fotogramasCandidata).toBe(inf.fotogramasReferencia);

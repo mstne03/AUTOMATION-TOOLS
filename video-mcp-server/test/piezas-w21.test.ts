@@ -204,6 +204,7 @@ describe.skipIf(!motor)("contra el render GSAP congelado", () => {
     const dirCand = path.join(trabajo, clave, "montaje");
     fs.rmSync(path.join(trabajo, clave), { recursive: true, force: true });
     const m = await conCandadoDeRender(() => montar(motor!.motor, dirCand, GUIONES_W2[clave]));
+    expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
     for (const f of ["gancho.html", "bloque2.html"]) expect(fs.readFileSync(path.join(m.dir, "compositions", f), "utf8")).not.toMatch(FORMA_GSAP);
     const salida = path.join(trabajo, clave, "comparacion");
     const informe = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(motor!.refs, clave, "ref.mp4"), m.dir, salida));
