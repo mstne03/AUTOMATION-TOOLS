@@ -5,7 +5,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import { log } from "./log.js";
-import { ejecutar, type Herramientas } from "./proceso.js";
+import { ejecutar, ErrorNavegador, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
@@ -51,6 +51,8 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video-gpu-"));
   const fecha = new Date().toISOString();
   let resultado: PruebaGpu;
+  // Falta el navegador: se puede descargar sin reiniciar el motor, así que no se memoriza (ruling C3).
+  let sinNavegador = false;
   try {
     fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
     fs.mkdirSync(path.join(dir, "compositions"), { recursive: true });
@@ -92,6 +94,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
       }
     }
   } catch (e) {
+    sinNavegador = e instanceof ErrorNavegador;
     resultado = { webgpu: false, fecha, detalle: `No se pudo hacer la prueba: ${(e as Error).message}` };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -100,7 +103,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   // Solo se guarda un resultado medido (con luminancia). Un fallo (render roto, timeout, fotograma
   // ilegible) puede ser pasajero: guardar webgpu=false apagaría los fondos WebGPU para siempre.
   if (resultado.luminancia === undefined) {
-    fallidaEnEsteProceso = resultado;
+    if (!sinNavegador) fallidaEnEsteProceso = resultado;
     return resultado;
   }
   fallidaEnEsteProceso = undefined;

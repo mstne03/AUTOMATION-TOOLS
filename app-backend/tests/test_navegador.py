@@ -1201,27 +1201,37 @@ def _rutas_fijas() -> tuple[str, str]:
 
 @pytest.mark.parametrize("congelado", [True, False])
 def test_entorno_sin_cft(cft_falso, tmp_path, monkeypatch, congelado):
-    """Sin CfT: en el binario congelado el motor no arranca (MEDIUM-1, fallo cerrado hasta integrar
-    W1.3 y W1.6); en desarrollo recibe la ruta fija, que no existe. Nunca un navegador del bundle,
-    del entorno o de una caché (I11, I13, I14)."""
+    """Sin CfT el motor arranca igual (ruling C3): recibe la ruta fija, que no existe, y cada CLI falla
+    cerrado. Nunca un navegador del bundle, del entorno o de una caché (I11, I13, I14)."""
     d = _bundle_con_navegadores(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", congelado)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
     otro = str(d / "browser" / "x" / "chrome.exe")
     for var in ("HYPERFRAMES_BROWSER_PATH", "PUPPETEER_EXECUTABLE_PATH", "CHROME_PATH", "VIDEO_NAVEGADOR_MANIFIESTO"):
         monkeypatch.setenv(var, otro)
-    if congelado:
-        with pytest.raises(video.MotorNoDisponible) as e:
-            video.entorno_motor(_Store())
-        assert str(e.value) == video.MENSAJE_SIN_NAVEGADOR
-        assert str(e.value).startswith("Descarga el navegador del render")
-        return
     env = video.entorno_motor(_Store())
     exe, manifiesto = _rutas_fijas()
     assert env["HYPERFRAMES_BROWSER_PATH"] == exe and not Path(exe).exists()
     assert env["VIDEO_NAVEGADOR_MANIFIESTO"] == manifiesto
     for valor in env.values():
         assert not any(t in valor.lower() for t in ("browser", ".cache", "program files")), valor
+
+
+@pytest.mark.parametrize("congelado", [True, False])
+def test_entorno_sin_cft_enlace_colgante_sigue_cayendo(cft_falso, tmp_path, monkeypatch, congelado):
+    """`lexists`→`verificar` se conserva: una carpeta de versión que es un enlace roto no pasa por «sin CfT»."""
+    if sys.platform != "win32":
+        pytest.skip("enlaces de Windows")
+    d = _bundle_con_navegadores(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", congelado)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    destino = tmp_path / "destino"
+    destino.mkdir()
+    _version().parent.mkdir(parents=True, exist_ok=True)
+    _junction(_version(), destino)
+    destino.rmdir()
+    with pytest.raises(video.MotorNoDisponible):
+        video.entorno_motor(_Store())
 
 
 def test_entorno_usa_solo_la_ruta_fija(cft_falso, tmp_path, monkeypatch):
