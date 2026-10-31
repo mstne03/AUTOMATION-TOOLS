@@ -92,7 +92,7 @@ describe("capas", () => {
 
   it("un id de destello no válido lanza", () => {
     const malo = conDatos(html, (d) => ((d.destellos as { id: string }[])[0].id = 'x" ,'));
-    expect(() => ejecutarPieza(malo)).toThrow(/id de destello/);
+    expect(() => ejecutarPieza(malo)).toThrow(/hf-tiempo: id no válido/);
   });
 
   it("vídeo de 180 s: 6 animaciones por destello y ninguna de grano", () => {
@@ -272,7 +272,7 @@ describe("escena-mapa", () => {
 
   it("un id de zona no válido lanza antes del tween", () => {
     const malo = conDatos(html, (x) => ((x.destacadas as string[])[0] = "x, #y"));
-    expect(() => ejecutarPieza(malo)).toThrow(/id de zona/);
+    expect(() => ejecutarPieza(malo)).toThrow(/hf-tiempo: id no válido/);
   });
 
   it("una zona que no existe en el SVG lanza (I11)", () => {

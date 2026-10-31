@@ -54,8 +54,7 @@
           var c = d.colores;
           var hf = HF.contexto("{{ID}}", {{INICIO}});
           // Los ids forman selectores: si no cumplen el patrón, se lanza (I1, I11).
-          var ID = /^[a-z][a-z0-9-]*$/;
-          function id(v) { if (typeof v !== "string" || !ID.test(v)) throw new Error("subtitulos: id no válido " + String(v)); return v; }
+          var id = hf.id;
           var SIN_ANTES = { antes: false };
 
           d.grupos.forEach(function (g, gi) {

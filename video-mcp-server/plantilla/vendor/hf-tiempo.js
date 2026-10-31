@@ -20,6 +20,19 @@
     if (!finito(v) || v < 0) throw new Error("hf-tiempo: " + que + " no finito o negativo: " + String(v));
     return v;
   }
+  // Guards de las piezas, con el mismo mensaje en todas: se lanza antes de crear ninguna animación.
+  function numero(v, que) {
+    if (!finito(v)) throw new Error("hf-tiempo: " + que + " no finito: " + String(v));
+    return v;
+  }
+  function positivo(v, que) {
+    if (!finito(v) || v <= 0) throw new Error("hf-tiempo: " + que + " no positivo: " + String(v));
+    return v;
+  }
+  function validarId(v) {
+    if (typeof v !== "string" || !ID_RE.test(v)) throw new Error("hf-tiempo: id no válido " + String(v));
+    return v;
+  }
 
   // Como gsap-core.js 3.15: cada familia se define por su `in`; out e inOut se derivan igual que allí.
   var ENTRADA = Object.create(null);
@@ -89,7 +102,7 @@
   // `inicio`: segundo absoluto del host, que pone composicion.ts ({{INICIO}}). No se lee del DOM: el runtime
   // desenvuelve la raíz de la subcomposición y quita atributos del host (data-duration) al montarla.
   function contexto(id, inicio) {
-    if (typeof id !== "string" || !ID_RE.test(id)) throw new Error("hf-tiempo: id no válido " + String(id));
+    validarId(id);
     var base = tiempo(inicio, "inicio");
     var raiz = document.querySelector('[data-composition-id="' + id + '"]');
     if (!raiz) throw new Error("hf-tiempo: no hay composición " + id);
@@ -144,6 +157,9 @@
       },
       envoltura: envoltura,
       curva: curva,
+      numero: numero,
+      positivo: positivo,
+      id: validarId,
     };
   }
   window.HF = { contexto: contexto, curva: curva, linear: linear };
