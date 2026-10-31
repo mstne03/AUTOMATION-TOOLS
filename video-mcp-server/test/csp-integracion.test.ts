@@ -59,7 +59,7 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
   const host = `hostil-${Date.now().toString(36)}`;
   let tmp: string;
   let sumiderosHost: Sumidero[] = [];
-  const llegadas: { nueva: string[]; antigua: string[] } = { nueva: [], antigua: [] };
+  const llegadas: { nueva: string[]; literal: string[]; antigua: string[] } = { nueva: [], literal: [], antigua: [] };
   let ventanasFin = "";
   let chromesVivos: number[] = [];
 
@@ -92,7 +92,7 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
    * El Chrome del render (mismos flags, salidos del marcador del parche) con solo `--proxy-bypass-list` cambiada por
    * `lista`, abriendo `html` desde un servidor propio en localhost. Cuenta lo que llega a cada sumidero y si se sirvió.
    */
-  async function controlBypass(html: string, lista: string): Promise<Medida> {
+  async function controlBypass(html: string, lista: string, hostPropio = "localhost"): Promise<Medida> {
     htmlControl = html;
     paginasServidas = 0;
     const m = await medir(async () => {
@@ -101,7 +101,7 @@ describe.skipIf(!motor)("CSP en ejecución: pieza hostil en preview y render (I2
       const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), userDataDir: dd, args });
       try {
         const page = await browser.newPage();
-        await page.goto(`http://localhost:${puertoPropio}/`, { waitUntil: "load" }).catch(() => undefined);
+        await page.goto(`http://${hostPropio}:${puertoPropio}/`, { waitUntil: "load" }).catch(() => undefined);
         await new Promise((ok) => setTimeout(ok, 4000));
       } finally {
         await browser.close();
@@ -250,12 +250,18 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     r["refresco-antigua"] = await controlBypass(piezaRefresco, LISTA_ANTIGUA);
     r["refresco-nueva"] = await controlBypass(piezaRefresco, nueva);
 
-    // Variantes de host (R0 M2): con la regla `localhost:P`, nada de esto es el servidor propio.
+    // Variantes de host (R0 M2 y L-3): con cualquiera de las dos reglas, nada de esto es el servidor propio. Van a un
+    // puerto ajeno y al propio (127.1 y 2130706433 no: con la regla del literal son el mismo servidor).
     const s4 = await sumidero("127.0.0.1");
     const s2 = await sumidero("127.0.0.2");
     const s6 = await sumidero("::1");
-    sumiderosHost = [s4, s2, s6];
+    const s2P = await sumidero("127.0.0.2", puertoPropio);
+    const s6P = await sumidero("::1", puertoPropio);
+    sumiderosHost = [s4, s2, s6, s2P, s6P];
     const variantes = [
+      [`[::1]:${puertoPropio}`, "seisP"],
+      [`127.0.0.2:${puertoPropio}`, "dosP"],
+      [`0.0.0.0:${puertoPropio}`, "ceroP"],
       [`[::1]:${s6.puerto}`, "seis"],
       [`127.0.0.2:${s2.puerto}`, "dos"],
       [`0.0.0.0:${s4.puerto}`, "cero"],
@@ -269,8 +275,11 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
     const peticiones = () => sumiderosHost.flatMap((x) => x.peticiones().map((p) => /^GET \/(\w+)/.exec(p)?.[1] ?? "?"));
     r["hosts-nueva"] = await controlBypass(piezaHosts, nueva);
     llegadas.nueva = peticiones();
+    // `127.0.0.1:P`, la regla de check y snapshot. Aquí el cruce a `127.0.0.1:Q` sigue fuera: el puerto no coincide.
+    r["hosts-literal"] = await controlBypass(piezaHosts, bypassDe("127.0.0.1", puertoPropio), "127.0.0.1");
+    llegadas.literal = peticiones().slice(llegadas.nueva.length);
     r["hosts-antigua"] = await controlBypass(piezaHosts, LISTA_ANTIGUA);
-    llegadas.antigua = peticiones().slice(llegadas.nueva.length);
+    llegadas.antigua = peticiones().slice(llegadas.nueva.length + llegadas.literal.length);
 
     // Review Focus 1: una composición que abre ventanas a su propio servidor sigue exenta, solo gasta memoria.
     const ventanas = path.join(tmp, "ventanas");
@@ -317,14 +326,15 @@ setTimeout(function () { location.href = "http://127.0.0.1:${puertos.location}/l
   });
 
   it("lista de puerto exacto: sirve la página y 0 en todos los canales, con el mismo Chrome que el control", () => {
-    for (const clave of ["lista-nueva", "refresco-nueva", "hosts-nueva"]) {
+    for (const clave of ["lista-nueva", "refresco-nueva", "hosts-nueva", "hosts-literal"]) {
       expect(r[clave].servida, `${clave}: la página propia no se sirvió`).toBeGreaterThan(0);
       expect(r[clave].cuenta, clave).toEqual(CERO);
     }
   });
 
-  it("variantes de host (R0 M2): con la regla localhost:P no llega ninguna; con la lista antigua, las de 127.0.0.1", () => {
+  it("variantes de host (R0 M2, L-3): con las reglas localhost:P y 127.0.0.1:P no llega ninguna; con la lista antigua, las de 127.0.0.1", () => {
     expect(llegadas.nueva).toEqual([]);
+    expect(llegadas.literal).toEqual([]);
     expect(llegadas.antigua, NO_MIDE).toEqual(expect.arrayContaining(["corto", "entero", "cruce"]));
     for (const fuera of ["seis", "dos", "punto", "sub"]) expect(llegadas.antigua, fuera).not.toContain(fuera);
   });
