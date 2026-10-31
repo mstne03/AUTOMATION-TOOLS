@@ -1,5 +1,6 @@
 // Composición v2: raíz + subcomposiciones en _composicion\ (plan v2, §3). Todo el texto del guion se escapa;
 // los datos de animación van como JSON en <script type="application/json">.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
@@ -702,19 +703,91 @@ export function escribirPlan(destino: string, plan: PlanComposicion): void {
   }
 }
 
-/** Busca URLs de red en la composición generada (no debe quedar ninguna). */
+/**
+ * Vendor copiado tal cual (ruta relativa → SHA-256): traen URLs de documentación. Si cambia un byte, se escanea entero.
+ * Al subir three, HyperFrames o las fuentes, el test de urls-de-red.test.ts avisa de que hay que recalcularlo.
+ */
+export const VENDOR_FIJADO: Record<string, string> = {
+  "assets/vendor/shaders.iife.js": "012b904bcf2621aa8dd99e1959ba71ddc1de86b9958d5ac9f48a40ff94cef776",
+  "assets/vendor/three184/three.module.js": "61134198639a10885daf893fb29669ca26386e2a4cde76e8399f51e329f741f2",
+  "assets/vendor/three184/three.core.js": "368dc78835287709a48939e8eb9a7a61d0732098bdf916e56840d458aae9ccf3",
+  "assets/vendor/three184/addons/loaders/FontLoader.js": "a8d78ab85e596ef6c274023ee165520000f010011553dbfafe5c966387aca3d8",
+  "assets/vendor/three184/addons/geometries/TextGeometry.js": "edf69c1cd6087c84d020156d1adbb29b40b098e4cbe8da4c0c36bbadc58dceac",
+  "assets/vendor/three147.min.js": "f34446bf875b5fb0dcd93819ffe1d9e182d46634ee855f5d904c6c4ac7cdbc95",
+  "assets/gsap.min.js": "92bb9a96476f983d212a2bc4f54c889039c1696dd4461d40a736860938570fbb",
+  "assets/fonts/Geist-Bold.typeface.json": "e42c3305dcef66919fb1f2cf96101173c593abbd78eaed155025071b3fe6f621",
+};
+const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xlink"]);
+const ENTIDADES: Record<string, string> = {
+  colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
+};
+const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/]*\.)/gi;
+const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
+// Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
+const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
+// En JS y JSON `//` abre también un comentario: solo cuenta dentro de una cadena o justo tras `(`.
+const HOST_JS_RE = /(?<=["'`(])[\\/]{2,}[^\s"'<>)\\/]/gi;
+
+function caracter(n: number): string {
+  return n > 0 && n <= 0x10ffff && (n < 0xd800 || n > 0xdfff) ? String.fromCodePoint(n) : "�";
+}
+
+/** Una sola pasada, como el navegador: `&amp;#104;` queda en `&#104;`. */
+function sinEntidades(t: string): string {
+  return t.replace(/&#[xX]([0-9a-fA-F]+);?|&#([0-9]+);?|&([a-zA-Z]+);|&amp/g, (m, hex?: string, dec?: string, nombre?: string) => {
+    if (hex) return caracter(parseInt(hex, 16));
+    if (dec) return caracter(parseInt(dec, 10));
+    return nombre ? (ENTIDADES[nombre] ?? m) : "&";
+  });
+}
+
+function sinEscapesCss(t: string): string {
+  return t.replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([^\r\n\f]))/gi, (_, hex?: string, c?: string) => (hex ? caracter(parseInt(hex, 16)) : c!));
+}
+
+function hallazgosDeRed(texto: string, nombre: string): string[] {
+  const hallados = new Set<string>();
+  const anotar = (t: string, re: RegExp) => {
+    for (const m of t.matchAll(re)) {
+      const ficha = /[^\s"'<>)]*/y;
+      ficha.lastIndex = m.index;
+      const url = ficha.exec(t)![0];
+      if (!W3_PERMITIDAS.has(url.toLowerCase())) hallados.add(url.slice(0, 200));
+    }
+  };
+  const marcado = /\.(html|svg)$/i.test(nombre);
+  const base = marcado ? sinEntidades(texto) : texto;
+  const variantes = marcado || /\.css$/i.test(nombre) ? [base, sinEscapesCss(base)] : [base];
+  for (const v of variantes) {
+    // El navegador quita tabuladores y saltos de la URL; borrarlos sin más pegaría palabras, así que se miran las dos.
+    const pegada = v.replace(/[\t\n\r]/g, "");
+    for (const t of [v, pegada]) {
+      anotar(t, ESQUEMA_RE);
+      anotar(t, FILE_RE);
+      if (/speculationrules/i.test(t)) hallados.add("speculationrules");
+    }
+    if (marcado || /\.css$/i.test(nombre)) for (const t of [v, pegada]) anotar(t, HOST_MARCADO_RE);
+    else anotar(v, HOST_JS_RE); // pegada no: une un comentario `//x` con la línea anterior.
+  }
+  return [...hallados];
+}
+
+/**
+ * Busca URLs de red en la composición generada (no debe quedar ninguna, I2 c).
+ * ponytail: aviso temprano, no barrera. No ve concatenación ni escapes en JS (ver urls-de-red.test.ts); eso lo imponen
+ * I2 (a) y (b). Un fichero de texto con otra extensión o en UTF-16 tampoco se lee: las copias las decide este motor.
+ */
 export function urlsDeRed(destino: string): string[] {
   const encontradas: string[] = [];
   const recorrer = (dir: string) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const ruta = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (e.name !== "vendor" && !e.name.startsWith(".")) recorrer(ruta);
-      } else if (/\.(html|css)$/i.test(e.name)) {
-        const t = fs.readFileSync(ruta, "utf8");
-        for (const m of t.matchAll(/https?:\/\/[^\s"'<>)]+/g)) {
-          if (!m[0].startsWith("http://www.w3.org/")) encontradas.push(`${path.relative(destino, ruta)}: ${m[0]}`);
-        }
+      if (e.isDirectory()) recorrer(ruta);
+      else if (/\.(html|css|js|mjs|json|svg)$/i.test(e.name)) {
+        const rel = path.relative(destino, ruta).split(path.sep).join("/");
+        const bytes = fs.readFileSync(ruta);
+        if (VENDOR_FIJADO[rel] === crypto.createHash("sha256").update(bytes).digest("hex")) continue;
+        for (const h of hallazgosDeRed(bytes.toString("utf8"), e.name)) encontradas.push(`${rel}: ${h}`);
       }
     }
   };
