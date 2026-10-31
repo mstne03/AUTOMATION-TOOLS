@@ -100,7 +100,7 @@ capturas caen dentro del vaciado depende de cuántos renders quedan y del ritmo 
 | (b) Seek de calentamiento | control | **0/4** (SSIM ≥ 0,70) | +1 seek | no arregla nada | No |
 | (c) Variantes del adaptador `typegpu` | runtime (parche) | **0/4** las dos | — | — | No |
 | (d) Esperar a vaciar la cola antes de mostrar | control | 4/4 bien, pero **hasta 16,9 s** por seek | inaceptable en UX | — | No |
-| **(e) Glue «el último gana»** | `plantilla/vendor/shaders.iife.js` (parche, W2.6) | **3/3 S8 (12/12)**, barrido 0–50 s 51/51, 3 plays seguidos 4/4, pausa a 20 s 4/4, barrido rápido 60 seeks/1 s 4/4, `plasma`/`nebula`/`mesh` 4/4, con y sin CSP del producto, en modo directo y en iframe; S1 con el parche **idéntico** al original (51/51) | ~6 líneas; seek 13–16 ms (mediana) | parchear un bloque de tercero: se pierde al re-vendorizar | **Sí** |
+| **(e) Glue «el último gana»** | `plantilla/vendor/shaders.iife.js` (parche, W2.6) | **3/3 S8 (12/12)**, barrido 0–50 s 51/51, 3 plays seguidos 4/4, pausa a 20 s 4/4, barrido rápido 60 seeks/1 s 4/4, `plasma`/`nebula`/`mesh` 4/4, con y sin CSP del producto, en modo directo y en iframe; S1 con el parche **idéntico** al original (51/51). Texto literal aplicado y medido en W2.6 (SEO-114): `test/shaders-glue.test.ts`, `test/shaders-parche.test.ts` y «Medidas de W2.6» al final de este apartado | ~6 líneas; seek 13–16 ms (mediana) | parchear un bloque de tercero: se pierde al re-vendorizar | **Sí** |
 | (f) Fondo CSS en la preview | plantilla | no medido | — | rompe «lo que se ve es lo que se renderiza» | Solo si (e) se descarta |
 
 Mediana del coste de (e): `ms hasta listo` 13 (barrido), 14–16 (resto). Durante el play con (e) el shader va al día (no
