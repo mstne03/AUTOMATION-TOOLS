@@ -18,5 +18,5 @@ export const OE_NUEVO =
 /** SHA-256 del vendor upstream: el que fija catalogo/hyperframes.lock.json. */
 export const HASH_BASE = "6ad60b5fe00c6f092ddc9ccc6138743d89401e2886d550b275fc8ce0d0345f2d";
 
-/** SHA-256 del vendor con el glue parcheado (se fija en la Task 3). */
-export const HASH_PARCHEADO = "PENDIENTE";
+/** SHA-256 del vendor con el glue parcheado (glue «el último gana»). */
+export const HASH_PARCHEADO = "012b904bcf2621aa8dd99e1959ba71ddc1de86b9958d5ac9f48a40ff94cef776";
