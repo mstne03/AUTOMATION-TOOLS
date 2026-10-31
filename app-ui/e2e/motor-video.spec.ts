@@ -15,10 +15,24 @@ const nav = (estado: Fase, extra: Record<string, unknown> = {}) => ({ version: "
 const GPU = { chrome: "148", codificadores: [{ codificador: "h264_nvenc", adaptador: "NVIDIA" }] };
 const NO_INSTALADO = "El módulo de vídeo no está instalado en esta versión de SEO Studio (llegará con una actualización).";
 
-type Ctl = { nav: Record<string, unknown>; cap: [number, unknown]; onPost: () => [number, unknown] };
+// Cada espera que depende del sondeo (1 s) con margen de sobra: no es una carrera contra el reloj.
+const SONDEO = { timeout: 10_000 };
+// POST que ningún test había previsto: el manejador por defecto lo cuenta y el afterEach falla.
+let sinManejar = 0;
+
+type Ctl = { nav: Record<string, unknown>; cap: [number, unknown]; onPost: () => [number, unknown]; rutaPost: boolean };
 
 async function preparar(page: Page, inicial: Partial<Ctl> = {}) {
-  const ctl: Ctl = { nav: nav("ausente"), cap: [200, GPU], onPost: () => [202, ctl.nav], ...inicial };
+  const ctl: Ctl = {
+    nav: nav("ausente"),
+    cap: [200, GPU],
+    rutaPost: true,
+    onPost: () => {
+      sinManejar++;
+      return [500, { detail: "POST sin manejador en el test" }];
+    },
+    ...inicial,
+  };
   const posts: string[] = [];
   page.on("request", (r) => {
     if (r.method() === "POST" && r.url().includes("/video/navegador/descarga")) posts.push(r.url());
@@ -28,15 +42,21 @@ async function preparar(page: Page, inicial: Partial<Ctl> = {}) {
     "/video/navegador/descarga": (_u: URL, p: { metodo: string }) => (p.metodo === "POST" ? ctl.onPost() : [405, { detail: "x" }]),
     "/video/capacidades": () => ctl.cap,
   });
+  // Registrada después, tiene prioridad: con `rutaPost = false` (simula una ruta sin simular) el POST se
+  // aborta aquí y no puede alcanzar ningún sidecar; si no, cede el paso al simulador.
+  await page.route(/127\.0\.0\.1:\d+\/video\/navegador\/descarga/, (route) => (route.request().method() === "POST" && !ctl.rutaPost ? route.abort("failed") : route.fallback()));
   return { ctl, llamadas, posts };
 }
 
 test.describe("Ajustes › Motor de vídeo", () => {
   test.beforeEach(async ({ page }) => {
+    sinManejar = 0;
     await page.emulateMedia({ colorScheme: "light" });
   });
-  // El sidecar real no debe haber empezado ninguna descarga (en E2E el estado es temporal: «ausente»).
+  // El sidecar real no debe haber empezado ninguna descarga (en E2E el estado es temporal: «ausente»)
+  // y ningún POST puede haber caído en el manejador por defecto.
   test.afterEach(async () => {
+    expect(sinManejar).toBe(0);
     expect((await api<{ estado: string }>("/video/navegador")).estado).toBe("ausente");
   });
 
@@ -63,12 +83,12 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await expect(v(page, "ajustes-video-progreso")).toContainText("48 de 120 MB");
     await expect(v(page, "ajustes-video-descargar")).toHaveCount(0);
     ctl.nav = nav("verificando", { descargado: 120 * MiB });
-    await expect(v(page, "ajustes-video-estado")).toHaveText("Verificando…");
-    await expect(barra(page)).not.toHaveAttribute("aria-valuenow", /.+/);
+    await expect(v(page, "ajustes-video-estado")).toHaveText("Verificando…", SONDEO);
+    await expect(barra(page)).not.toHaveAttribute("aria-valuenow", /.+/, SONDEO);
     ctl.nav = nav("extrayendo", { descargado: 120 * MiB });
-    await expect(v(page, "ajustes-video-estado")).toHaveText("Instalando…");
+    await expect(v(page, "ajustes-video-estado")).toHaveText("Instalando…", SONDEO);
     ctl.nav = nav("listo", { descargado: 120 * MiB });
-    await expect(v(page, "ajustes-video-estado")).toHaveText("Listo");
+    await expect(v(page, "ajustes-video-estado")).toHaveText("Listo", SONDEO);
     await expect(v(page, "ajustes-video-progreso")).toHaveCount(0);
     await expect(v(page, "ajustes-video-descargar")).toHaveCount(0);
     expect(posts).toHaveLength(1);
@@ -85,11 +105,11 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await expect(barra(page)).toBeVisible();
     await expect(v(page, "ajustes-video-descargar")).toHaveCount(0);
     ctl.nav = nav("descargando", { descargado: 60 * MiB });
-    await expect(barra(page)).toHaveAttribute("aria-valuenow", "50");
+    await expect(barra(page)).toHaveAttribute("aria-valuenow", "50", SONDEO);
     expect(posts).toHaveLength(0);
   });
 
-  test("doble clic: el 409 no rompe y la UI retoma el progreso", async ({ page }) => {
+  test("doble clic: el 409 no rompe, la UI retoma el progreso y al llegar a listo no hay alerta", async ({ page }) => {
     const { ctl, posts } = await preparar(page);
     ctl.onPost = () => {
       ctl.nav = nav("descargando", { descargado: 6 * MiB });
@@ -100,6 +120,10 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await expect(barra(page)).toBeVisible();
     await expect(v(page, "ajustes-video-descargar")).toHaveCount(0);
     expect(posts).toHaveLength(1);
+    // Al llegar a «listo» el 409 de antes no reaparece como alerta.
+    ctl.nav = nav("listo");
+    await expect(v(page, "ajustes-video-estado")).toHaveText("Listo", SONDEO);
+    await expect(v(page, "ajustes-video-error")).toHaveCount(0);
   });
 
   test("error de hash: alerta visible, reintentar hace un segundo POST y no se queda cargando", async ({ page }) => {
@@ -159,6 +183,7 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await expect(v(page, "ajustes-video-error")).toHaveText("El navegador del render no pasa la verificación.");
     await expect(v(page, "ajustes-video-sin-motor")).toHaveCount(0);
     await expect(v(page, "ajustes-video-descargar")).toHaveText("Volver a descargar");
+    await expect(v(page, "ajustes-render-rapido-aviso")).toHaveText("No se han podido comprobar los codificadores");
     ctl.cap = [200, GPU];
     await v(page, "ajustes-video-descargar").click();
     await expect(v(page, "ajustes-video-estado")).toHaveText("Descargando…");
@@ -205,7 +230,7 @@ test.describe("Ajustes › Motor de vídeo", () => {
     const { ctl, llamadas } = await preparar(page);
     await ir(page);
     await expect(v(page, "ajustes-render-modo-rapido")).toBeDisabled();
-    await expect(v(page, "ajustes-render-rapido-aviso")).toHaveText("Comprobando codificadores…");
+    await expect(v(page, "ajustes-render-rapido-aviso")).toHaveText("Descarga el navegador del render para comprobar los codificadores");
     expect(llamadas["/video/capacidades"] ?? 0).toBe(0); // sin navegador listo no se pide
 
     ctl.nav = nav("listo");
@@ -222,6 +247,17 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await expect(v(page, "ajustes-render-modo-rapido")).toHaveAttribute("aria-checked", "true");
   });
 
+  test("«Rápido» guardado sin GPU no queda marcado: se marca Compatible y lo guardado se conserva", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("seo-studio.render-modo", "rapido"));
+    await preparar(page, { nav: nav("listo"), cap: [200, { chrome: "148", codificadores: [] }] });
+    await ir(page);
+    await expect(v(page, "ajustes-render-rapido-aviso")).toHaveText("No hay codificador de GPU: se usará Compatible");
+    await expect(v(page, "ajustes-render-modo-rapido")).toBeDisabled();
+    await expect(v(page, "ajustes-render-modo-rapido")).toHaveAttribute("aria-checked", "false");
+    await expect(v(page, "ajustes-render-modo-compatible")).toHaveAttribute("aria-checked", "true");
+    expect(await page.evaluate(() => localStorage.getItem("seo-studio.render-modo"))).toBe("rapido");
+  });
+
   test("la subnavegación tiene seis botones y «Motor de vídeo» desplaza a su sección", async ({ page }) => {
     await preparar(page);
     await ir(page);
@@ -232,7 +268,7 @@ test.describe("Ajustes › Motor de vídeo", () => {
   });
 
   test("el bloqueo funciona: un POST sin simular no llega al sidecar real (control)", async ({ page }) => {
-    // Sin ctl.onPost propio, el POST cae en el manejador por defecto y NO sale de la página.
+    // El simulador atiende el POST (aquí con un 500 propio): nunca llega al sidecar real.
     const { ctl, posts } = await preparar(page);
     let atendidos = 0;
     ctl.onPost = () => {
@@ -243,8 +279,24 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await v(page, "ajustes-video-descargar").click();
     await expect(v(page, "ajustes-video-error")).toHaveText("bloqueado por el test");
     expect(atendidos).toBe(1);
-    expect(posts).toHaveLength(1); // salió de la página, pero lo atendió el simulador
+    expect(posts).toHaveLength(1); // salió de la página, pero lo atendió el simulador, no el sidecar
     // y el sidecar real sigue sin descarga (lo comprueba además el afterEach)
+    expect((await api<{ estado: string }>("/video/navegador")).estado).toBe("ausente");
+  });
+
+  test("negativo: sin la ruta simulada el POST se aborta y no alcanza ningún sidecar", async ({ page }) => {
+    const { ctl, posts } = await preparar(page);
+    const abortados: string[] = [];
+    page.on("requestfailed", (r) => {
+      if (r.method() === "POST" && r.url().includes("/video/navegador/descarga")) abortados.push(r.url());
+    });
+    ctl.rutaPost = false;
+    await ir(page);
+    await v(page, "ajustes-video-descargar").click();
+    await expect(v(page, "ajustes-video-error")).toBeVisible();
+    expect(posts).toHaveLength(1);
+    expect(abortados).toHaveLength(1); // abortado en el navegador: ni simulador ni sidecar real
+    expect(sinManejar).toBe(0);
     expect((await api<{ estado: string }>("/video/navegador")).estado).toBe("ausente");
   });
 });

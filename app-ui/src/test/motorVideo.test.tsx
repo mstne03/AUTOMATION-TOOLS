@@ -6,7 +6,7 @@ import { ApiError, type Client } from "../api/client";
 import { ClientContext } from "../api/context";
 import { useNavegadorVideo } from "../api/queries";
 import type { CapacidadesVideo, NavegadorEstado } from "../api/types";
-import { MotorVideo } from "../screens/MotorVideo";
+import { MotorVideo, sinRutas } from "../screens/MotorVideo";
 import { setRenderModo, useRenderModo } from "../state/renderModo";
 import { Toaster, reiniciarToasts } from "../ui";
 
@@ -165,7 +165,7 @@ describe("MotorVideo", () => {
 
   it("Rápido: deshabilitado sin codificadores (aviso), solo h264_mf no cuenta, y habilitado con GPU", async () => {
     montar();
-    expect((await screen.findByTestId("ajustes-render-rapido-aviso")).textContent).toBe("Comprobando codificadores…");
+    expect((await screen.findByTestId("ajustes-render-rapido-aviso")).textContent).toBe("Descarga el navegador del render para comprobar los codificadores");
     expect((t("ajustes-render-modo-rapido") as HTMLButtonElement).disabled).toBe(true);
     cleanup();
 
@@ -177,6 +177,47 @@ describe("MotorVideo", () => {
     montar({ videoNavegador: vi.fn(async () => estado({ estado: "listo" })) });
     await waitFor(() => expect((t("ajustes-render-modo-rapido") as HTMLButtonElement).disabled).toBe(false));
     expect(t("ajustes-render-rapido-aviso")).toBeNull();
+  });
+
+  it("409 → listo: el error del POST no reaparece como alerta", async () => {
+    let fase: NavegadorEstado["estado"] = "ausente";
+    const videoNavegador = vi.fn(async () => estado({ estado: fase }));
+    const { client } = montar({
+      videoNavegador,
+      videoNavegadorDescarga: vi.fn(async () => {
+        fase = "descargando";
+        throw new ApiError(409, "Ya hay una descarga del navegador en curso.");
+      }),
+    });
+    fireEvent.click(await screen.findByTestId("ajustes-video-descargar"));
+    await waitFor(() => expect(t("ajustes-video-progreso")).not.toBeNull());
+    expect(t("ajustes-video-error")).toBeNull();
+    fase = "listo";
+    await waitFor(() => expect(t("ajustes-video-estado")?.textContent).toBe("Listo"), { timeout: 3000 });
+    expect(client.videoNavegadorDescarga).toHaveBeenCalledTimes(1);
+    expect(t("ajustes-video-error")).toBeNull();
+  });
+
+  it("aviso de Rápido: listo y pendiente «Comprobando…»; con error de capacidades, texto propio", async () => {
+    montar({ videoNavegador: vi.fn(async () => estado({ estado: "listo" })), videoCapacidades: vi.fn(() => new Promise<CapacidadesVideo>(() => {})) });
+    await waitFor(() => expect(t("ajustes-render-rapido-aviso")?.textContent).toBe("Comprobando…"));
+    cleanup();
+    montar({
+      videoNavegador: vi.fn(async () => estado({ estado: "listo" })),
+      videoCapacidades: vi.fn(async () => {
+        throw new ApiError(500, "boom");
+      }),
+    });
+    await waitFor(() => expect(t("ajustes-render-rapido-aviso")?.textContent).toBe("No se han podido comprobar los codificadores"));
+  });
+
+  it("«Rápido» guardado sin GPU: no queda marcado; se marca el modo efectivo y lo guardado no se toca", async () => {
+    setRenderModo("rapido");
+    montar({ videoNavegador: vi.fn(async () => estado({ estado: "listo" })), videoCapacidades: vi.fn(async () => ({ chrome: "1", codificadores: [] })) });
+    await waitFor(() => expect(t("ajustes-render-rapido-aviso")).not.toBeNull());
+    expect(t("ajustes-render-modo-rapido")?.getAttribute("aria-checked")).toBe("false");
+    expect(t("ajustes-render-modo-compatible")?.getAttribute("aria-checked")).toBe("true");
+    expect(useRenderModo.getState().modo).toBe("rapido");
   });
 
   it("elegir un modo lo guarda y avisa", async () => {
@@ -196,3 +237,22 @@ describe("MotorVideo", () => {
     expect(screen.queryAllByRole("button", { name: /otro navegador|examinar|chrome|edge/i })).toHaveLength(0);
   });
 });
+
+describe("sinRutas", () => {
+  it.each([
+    ["No se pudo escribir en C:\\Users\\Marc Serra\\AppData\\x.tmp <b>", "No se pudo escribir en … <b>"],
+    ["fallo en D:/Mis Datos/seo studio/a.json.", "fallo en …"],
+    ["no existe \\\\srv\\compartido\\Mis Cosas\\f.bin", "no existe …"],
+    ["no existe \\\\?\\C:\\Users\\Marc\\f", "no existe …"],
+    ["abre '/home/marc/Mis Cosas/chrome' ya", "abre '…' ya"],
+    ["(/Users/marc/x)", "(…)"],
+    ["Content-Type application/json y 1/2 o y/o", "Content-Type application/json y 1/2 o y/o"],
+    ["ver https://storage.googleapis.com/chrome/x.zip", "ver https://storage.googleapis.com/chrome/x.zip"],
+  ])("%s", (entrada, salida) => {
+    expect(sinRutas(entrada)).toBe(salida);
+  });
+  it.each(["Marc Serra", "AppData", "compartido", "Mis Cosas"])("no deja «%s»", (nombre) => {
+    for (const r of [`C:\\Users\\${nombre}\\x`, `\\\\srv\\${nombre}\\x`, `/srv/${nombre}/x`]) expect(sinRutas(`error en ${r} fin`)).not.toContain(nombre);
+  });
+});
+

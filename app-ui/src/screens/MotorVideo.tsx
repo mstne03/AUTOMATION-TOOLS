@@ -23,8 +23,13 @@ const MODOS: Array<[RenderModo, string, string]> = [
   ["compatible", "Compatible", "Dos pasadas; funciona en cualquier equipo"],
 ];
 
-/** Las rutas del sistema no se enseñan (los mensajes del motor pueden traerlas). */
-const sinRutas = (t: string) => t.replace(/[A-Za-z]:\\[^\s"'»)]*/g, "…");
+/** Las rutas del sistema no se enseñan (los mensajes del motor pueden traerlas): `C:\…`, UNC y POSIX
+ *  de dos segmentos o más. Los segmentos intermedios admiten espacios; el último acaba en el primer
+ *  espacio. Se prefiere enmascarar de más: lo que sobra es texto, lo que falta es una ruta filtrada. */
+const SEG = String.raw`[^\\/:*?"<>|\r\n]+[\\/]`;
+const INICIO = String.raw`(?:\\\\\?\\)?(?:[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/]|/(?=[^\s\\/]+/))`;
+const RUTA = new RegExp(String.raw`(^|[\s"'(\[«])${INICIO}(?:${SEG})*[^\s\\/:*?"<>|»)'’]*`, "g");
+export const sinRutas = (t: string) => t.replace(RUTA, "$1…");
 const esNoInstalado = (e: unknown) => e instanceof ApiError && e.status === 503 && NO_INSTALADO.test(e.detail);
 
 export function MotorVideo() {
@@ -37,6 +42,12 @@ export function MotorVideo() {
   const listo = estado === "listo";
   const activa = !!estado && FASES_ACTIVAS.includes(estado);
   const cap = useCapacidadesVideo(listo);
+  const { reset: olvidarError } = descargar;
+
+  // Al retomar (409 → descargando → listo) el error del POST ya no es de este estado: que no reaparezca.
+  useEffect(() => {
+    if (activa || listo) olvidarError();
+  }, [activa, listo, olvidarError]);
 
   // Al salir de «listo» (p. ej. «Volver a descargar») las capacidades guardadas ya no valen.
   useEffect(() => {
@@ -56,7 +67,15 @@ export function MotorVideo() {
   const progreso = estado === "descargando" && d && d.tamano > 0 ? d.descargado / d.tamano : undefined;
   const hayGpu = !!cap.data?.codificadores?.some((c) => c.codificador !== "h264_mf"); // h264_mf (software) no cuenta como GPU (M7)
   const rapidoNo = !hayGpu;
-  const avisoRapido = !listo || cap.isPending ? "Comprobando codificadores…" : "No hay codificador de GPU: se usará Compatible";
+  const avisoRapido = !listo
+    ? "Descarga el navegador del render para comprobar los codificadores"
+    : cap.isPending
+      ? "Comprobando…"
+      : cap.isError || corrupto
+        ? "No se han podido comprobar los codificadores"
+        : "No hay codificador de GPU: se usará Compatible";
+  // «Rápido» guardado sin GPU no se marca (estaría deshabilitado y marcado): se enseña el modo efectivo.
+  const efectivo: RenderModo = modo === "rapido" && rapidoNo ? "compatible" : modo;
 
   const elegir = (m: RenderModo) => {
     if (m === modo) return;
@@ -124,7 +143,7 @@ export function MotorVideo() {
           {MODOS.map(([id, nombre, desc]) => {
             const deshabilitado = id === "rapido" && rapidoNo;
             return (
-              <button key={id} type="button" role="radio" aria-checked={modo === id} disabled={deshabilitado} className={cx(s.modelo, modo === id && s.modeloActivo, deshabilitado && v.deshabilitado)} data-testid={`ajustes-render-modo-${id}`} onClick={() => elegir(id)}>
+              <button key={id} type="button" role="radio" aria-checked={efectivo === id} disabled={deshabilitado} className={cx(s.modelo, efectivo === id && s.modeloActivo, deshabilitado && v.deshabilitado)} data-testid={`ajustes-render-modo-${id}`} onClick={() => elegir(id)}>
                 <span className={s.modeloNombre}>{nombre}</span>
                 <span className={s.ayuda}>{desc}</span>
               </button>

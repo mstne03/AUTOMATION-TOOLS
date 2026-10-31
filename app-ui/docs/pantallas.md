@@ -215,8 +215,11 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
     `ajustes-render-modo-rapido` («Una sola pasada con la GPU») y `ajustes-render-modo-compatible`
     («Dos pasadas; funciona en cualquier equipo»). «Rápido» está deshabilitado salvo que
     `capacidades.codificadores` incluya alguno distinto de `h264_mf` (software, M7), con
-    `ajustes-render-rapido-aviso`: «Comprobando codificadores…» (navegador no listo o capacidades
-    pendientes) o «No hay codificador de GPU: se usará Compatible». Guardado automático en
+    `ajustes-render-rapido-aviso`: navegador no listo «Descarga el navegador del render para
+    comprobar los codificadores»; listo y pendiente «Comprobando…»; error de capacidades (o
+    navegador corrupto) «No se han podido comprobar los codificadores»; sin GPU «No hay
+    codificador de GPU: se usará Compatible». Si «Rápido» está guardado pero no hay GPU, no se
+    marca: se marca el modo efectivo (Compatible) y lo guardado no se toca. Guardado automático en
     `localStorage` (`seo-studio.render-modo`; un valor inválido vale «auto») con toast «Modo de
     render guardado». `ajustes-render-modo-nota`: «La preferencia se guarda en este equipo; todavía
     no se aplica a los renders.»
