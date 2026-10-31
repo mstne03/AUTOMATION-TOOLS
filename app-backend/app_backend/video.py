@@ -49,6 +49,9 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 # guardar la prueba y la ruta fallaría siempre en máquinas lentas.
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
+# Por el segundo proceso del motor: un render largo no tapa la vista previa ni la voz, y su timeout no
+# los tumba. `video_estado` va aquí porque lee los jobs de la memoria del proceso que los lanzó.
+TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render", "video_estado"})
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -325,8 +328,17 @@ def comando_motor() -> tuple[list[str], Path]:
     return ["node", str(d / "dist" / "index.js")], d
 
 
-def entorno_motor(store) -> dict[str, str]:
-    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado)."""
+def motor_de(estado, tool: str) -> MotorVideo:
+    """Canal de `tool`: los jobs viven en la memoria del proceso del canal de render."""
+    return estado.motor_render if tool in TOOLS_CANAL_RENDER else estado.motor
+
+
+def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
+    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado).
+
+    `con_clave=False`: el canal de render no usa ElevenLabs. Así la clave no llega a ese proceso
+    (I5) y cambiarla no lo reinicia ni mata un render en curso.
+    """
     estado = config.STATE_DIR / "video"
     env = {
         "VIDEO_ENGINE_EMBEDDED": "1",
@@ -358,7 +370,7 @@ def entorno_motor(store) -> dict[str, str]:
             navegador.verificar(carpeta)
     except navegador.NavegadorError as e:
         raise MotorNoDisponible(str(e)) from None
-    clave = config.elevenlabs_api_key(store)
+    clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave
     return env

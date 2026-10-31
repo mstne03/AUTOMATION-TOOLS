@@ -123,6 +123,10 @@ def create_app(
         # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
         argv, cwd = video.comando_motor()
         app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
+        # Segundo proceso para las tools de video.TOOLS_CANAL_RENDER, sin la clave de ElevenLabs.
+        app.state.motor_render = video.MotorVideo(
+            argv, cwd, lambda: video.entorno_motor(yt_auth.store, con_clave=False)
+        )
         # Navegador del render (SEO-108): al arrancar solo se borran restos; nunca se descarga nada
         # sin que el usuario lo pida (I14).
         try:
@@ -137,6 +141,7 @@ def create_app(
         for t in tareas:
             t.cancel()
         await app.state.motor.cerrar()
+        await app.state.motor_render.cerrar()
         await app.state.jobs.stop()
 
     async def _arranque_kb(updater: KBUpdater) -> None:
