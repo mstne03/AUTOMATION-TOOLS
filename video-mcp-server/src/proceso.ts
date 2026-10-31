@@ -588,9 +588,14 @@ export async function procesosBajo(o: ObjetivoBarrido): Promise<ProcesoVivo[]> {
 }
 
 /**
- * Qué barrer: procesos con imagen del motor salvo los que cuelgan de un hijo vivo de `ejecutar` (por
- * la cadena de ParentProcessId, con un padre creado antes que el hijo para no seguir un pid reutilizado):
- * un timeout no mata la segunda pasada de otro trabajo. `noVerificables`: procesos con el nombre de un
+ * Qué barrer: procesos con imagen del motor salvo los que cuelgan de un hijo vivo de `ejecutar` o de otro
+ * motor vivo (por la cadena de ParentProcessId, con un padre creado antes que el hijo para no seguir un
+ * pid reutilizado): un timeout no mata la segunda pasada de otro trabajo ni el render del otro canal.
+ * Lo que cuelga de nuestro propio pid y no está en vuelo se barre, aunque pase por un Node: es una CLI
+ * nuestra que sobrevivió al taskkill. Otro motor exige evidencia positiva (R0 M4): el Node más alto de la
+ * cadena tiene que tener un padre vivo; si no, es trabajo de un motor muerto (huérfano). En desarrollo el
+ * Node es el de todos, así que un Chrome colgado de cualquier Node queda protegido; en integrado es el
+ * del bundle. `noVerificables`: procesos con el nombre de un
  * ejecutable del motor cuya ruta el sistema no da; no se pueden matar con seguridad (falla cerrado).
  * WMI deja sin ruta también a procesos ajenos (medido: un ffmpeg y varios Chrome de otra sesión), así
  * que antes se mira el ejecutable de su CommandLine: si es absoluto y de otro sitio, no son del motor.
@@ -599,16 +604,22 @@ export function seleccionarBarrido(
   todos: ProcesoVivo[],
   o: ObjetivoBarrido,
   vuelo: ReadonlyMap<number, number> = enVuelo,
+  propio: { pid: number; node: string } = { pid: process.pid, node: process.execPath },
 ): { matar: ProcesoVivo[]; noVerificables: ProcesoVivo[] } {
   const porPid = new Map(todos.map((p) => [p.pid, p]));
+  const nodeMotor = normalizar(propio.node);
   const protegido = (p: ProcesoVivo): boolean => {
     let actual: ProcesoVivo | undefined = p;
+    let nodeMasAlto: ProcesoVivo | undefined;
     for (let i = 0; actual && i < 64; i++) {
       const lanzado = vuelo.get(actual.pid);
       // Margen de 5 s entre el spawn medido en Node y la fecha de creación del sistema.
       if (lanzado !== undefined && (actual.creado === undefined || actual.creado >= lanzado - 5000)) return true;
+      if (actual.pid === propio.pid) return false;
+      if (actual.ruta && normalizar(actual.ruta) === nodeMotor) nodeMasAlto = actual;
       const padre: ProcesoVivo | undefined = actual.padre !== undefined ? porPid.get(actual.padre) : undefined;
-      if (!padre || padre.creado === undefined || actual.creado === undefined || padre.creado > actual.creado) return false;
+      // Fin de la cadena: otro motor solo si por encima de su Node más alto aún hay un padre vivo.
+      if (!padre || padre.creado === undefined || actual.creado === undefined || padre.creado > actual.creado) return !!nodeMasAlto && nodeMasAlto !== actual;
       actual = padre;
     }
     return false;
