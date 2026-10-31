@@ -62,6 +62,17 @@ export const VARIANTES = {
   runtimeSeekForzado: { fichero: "runtime", ancla: "window.__hfTypegpuTime=e,_s(e)}", nuevo: "window.__hfTypegpuTime=e,Cs(e)}" },
 };
 
+/**
+ * El vendor en disco ya lleva el parche de W2.6 (SEO-114): las variantes y el autotest parten del glue original, así
+ * que se deshace en memoria el parche (el equivalente de revertir shaders.iife.patch). Aborta si no aparece una vez.
+ */
+export function revertirParche(texto) {
+  const { ancla, nuevo } = VARIANTES.shadersParcheW26;
+  const veces = texto.split(nuevo).length - 1;
+  if (veces !== 1) throw new Error(`revertirParche: el glue parcheado aparece ${veces} veces en shaders (se esperaba 1)`);
+  return texto.replace(nuevo, () => ancla);
+}
+
 /** Aplica las variantes de `nombres` que tocan `fichero` ("runtime" | "shaders") a `texto`. */
 export function aplicar(nombres, fichero, texto) {
   for (const n of nombres) {
@@ -77,7 +88,7 @@ export function aplicar(nombres, fichero, texto) {
 
 if (process.argv.includes("--autotest") && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const assert = (await import("node:assert/strict")).default;
-  const textos = { runtime: fs.readFileSync(RUNTIME, "utf8"), shaders: fs.readFileSync(SHADERS, "utf8") };
+  const textos = { runtime: fs.readFileSync(RUNTIME, "utf8"), shaders: revertirParche(fs.readFileSync(SHADERS, "utf8")) };
   for (const f of ["runtime", "shaders"]) assert.equal(aplicar([], f, textos[f]), textos[f], `sin variante ${f} cambia`);
   for (const [n, v] of Object.entries(VARIANTES)) {
     const out = aplicar([n], v.fichero, textos[v.fichero]);
