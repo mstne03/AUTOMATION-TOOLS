@@ -319,21 +319,19 @@ function limpiar(raiz: string) {
 }
 
 /**
- * Composición mínima (540×960, 2 s, GSAP local) SIN CSP —simula que la CSP falla— con intentos de fuga.
+ * Composición mínima (540×960, 2 s, sin timeline) SIN CSP —simula que la CSP falla— con intentos de fuga.
  * `fugas`: "js" (lo que ejecuta Chrome: <img>, fetch, WebSocket, WebRTC, WebTransport) o "no" (composición
  * limpia, sin red ni WebRTC). Un <img src="http…"> escrito en el HTML ya no llega a Chrome: aborta en Node.
  */
 function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, fugas: "js" | "no") {
-  fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
-  fs.copyFileSync(path.join(SERVER_ROOT, "node_modules", "gsap", "dist", "gsap.min.js"), path.join(dir, "assets", "gsap.min.js"));
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, "index.html"),
-    `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><script src="assets/gsap.min.js"></script>
+    `<!doctype html><html lang="en"><head><meta charset="UTF-8" />
 <style>*{margin:0;padding:0}html,body{width:540px;height:960px;overflow:hidden;background:#123}#root{position:relative;width:540px;height:960px;overflow:hidden}</style></head>
-<body><div id="root" data-composition-id="main" data-start="0" data-duration="2" data-width="540" data-height="960">
+<body><div id="root" data-composition-id="main" data-no-timeline data-start="0" data-duration="2" data-width="540" data-height="960">
 <p style="color:#fff;font:48px sans-serif">fuga</p>
 </div><script>
-window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});
 ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 </script></body></html>`,
   );

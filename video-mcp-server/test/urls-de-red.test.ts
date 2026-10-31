@@ -151,7 +151,6 @@ describe("VENDOR_FIJADO", () => {
     "assets/vendor/three184/addons/loaders/FontLoader.js": path.join(NODE_MODULES, "three", "examples", "jsm", "loaders", "FontLoader.js"),
     "assets/vendor/three184/addons/geometries/TextGeometry.js": path.join(NODE_MODULES, "three", "examples", "jsm", "geometries", "TextGeometry.js"),
     "assets/vendor/three147.min.js": path.join(NODE_MODULES, "three147", "build", "three.min.js"),
-    "assets/gsap.min.js": path.join(NODE_MODULES, "gsap", "dist", "gsap.min.js"),
     "assets/fonts/Geist-Bold.typeface.json": path.join(PLANTILLA_DIR, "fuentes", "3d", "Geist-Bold.typeface.json"),
   };
 

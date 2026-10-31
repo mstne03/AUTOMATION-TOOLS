@@ -36,7 +36,7 @@ const fondo = fs
   .replace(/\{\{(\w+)\}\}/g, (m, k) => (k in marcas ? marcas[k] : m));
 if (/\{\{\w+\}\}/.test(fondo)) throw new Error("quedan marcadores sin sustituir en fondo-shader.html");
 
-// Raíz como la de composicion.ts, sin GSAP: `data-no-timeline` en #root y el host del fondo (z 10, data-no-timeline).
+// Raíz como la de composicion.ts: `data-no-timeline` en #root y el host del fondo (z 10, data-no-timeline).
 const index = `<!doctype html>
 <html lang="en" data-resolution="portrait">
   <head>

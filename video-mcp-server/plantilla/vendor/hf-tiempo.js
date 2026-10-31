@@ -1,10 +1,10 @@
-// hf-tiempo.js: motor de tiempo de las piezas sin GSAP (SEO-111; nace del spike spikes/waapi/, INFORME-waapi.md).
+// hf-tiempo.js: motor de tiempo de las piezas (SEO-111; nace del spike descrito en spikes/INFORME-waapi.md).
 // Código propio de SEO Studio (Marc Serra), sin código de terceros; misma licencia que el repositorio.
-//  - tween: un fromTo de GSAP como animación WAAPI. El runtime de HyperFrames la encuentra y fija su currentTime en
+//  - tween: una animación desde/hasta con WAAPI. El runtime de HyperFrames la encuentra y fija su currentTime en
 //    cada seek; el tiempo de WAAPI es el del documento, así que el retardo suma el inicio absoluto del host.
 //  - reloj: para lo que WAAPI no anima (texto, three.js): fn(tLocal) en cada evento `hf-seek`.
-//  - envoltura: fundido, punch y golpe de las escenas (traducción exacta de envolturaJs de composicion.ts).
-// Las curvas son las fórmulas de GSAP 3.15, muestreadas a `linear()` de CSS para que WAAPI las reproduzca.
+//  - envoltura: fundido, punch y golpe de las escenas.
+// Las curvas se muestrean a `linear()` de CSS para que WAAPI las reproduzca; origen en LICENCIAS.md.
 // Ante un dato no válido (curva, selector, id, tiempo, número no finito) lanza: nunca anima con basura en silencio
 // (I1, I11).
 // Envoltura: las escenas la reciben en {{ENVOLTURA_DATOS}}; las fotos (bloque-foto, también el bucle) la llevan dentro
@@ -34,7 +34,7 @@
     return v;
   }
 
-  // Como gsap-core.js 3.15: cada familia se define por su `in`; out e inOut se derivan igual que allí.
+  // Cada familia se define por su `in`; out e inOut se derivan de ella.
   var ENTRADA = Object.create(null);
   ENTRADA.expo = function (p) { return Math.pow(2, 10 * (p - 1)) * p + p * p * p * p * p * p * (1 - p); };
   ENTRADA.sine = function (p) { return p === 1 ? 1 : 1 - Math.cos((p * Math.PI) / 2); };
@@ -71,8 +71,8 @@
     return (cacheLinear[clave] = "linear(" + puntos.join(", ") + ")");
   }
 
-  // Propiedades de GSAP → CSS. x/y y los % comparten `translate`: un tween no puede mover solo una de las dos si
-  // otro tween mueve la otra en el mismo elemento (con GSAP sí se podía); se detecta y se lanza un error.
+  // Propiedades → CSS. x/y y los % comparten `translate`: un tween no puede mover solo una de las dos si otro tween
+  // mueve la otra en el mismo elemento; se detecta y se lanza un error.
   var TRANSFORMADAS = ["x", "y", "xPercent", "yPercent", "scale", "rotation"];
   // Solo cuentan las propiedades propias (no las del prototipo).
   function propia(p, k) {
@@ -113,8 +113,8 @@
       if (!l.length) throw new Error("hf-tiempo: " + sel + " no existe en " + id);
       return Array.prototype.slice.call(l);
     }
-    // tween(sel, desde, hasta, t, d, curva, opciones): como tl.fromTo(sel, desde, {…hasta, duration: d, ease}, t).
-    // `antes: false` equivale a immediateRender: false (no pinta el valor inicial antes de empezar).
+    // tween(sel, desde, hasta, t, d, curva, opciones): anima de `desde` a `hasta` entre t y t + d.
+    // `antes: false`: no pinta el valor inicial antes de empezar.
     function tween(sel, desde, hasta, t, d, nombre, op) {
       tiempo(t, "t");
       tiempo(d, "d");
@@ -131,7 +131,7 @@
         el.animate(kf, opciones).pause();
       });
     }
-    // Envoltura de escena ({{ENVOLTURA_DATOS}}): mismos tweens que envolturaJs de composicion.ts.
+    // Envoltura de escena ({{ENVOLTURA_DATOS}}).
     function envoltura(e) {
       if (!e || typeof e !== "object" || !finito(e.fundido) || e.fundido < 0 || typeof e.punch !== "boolean" || !Array.isArray(e.golpes) || !e.golpes.every(function (g) { return finito(g) && g >= 0; })) {
         throw new Error("hf-tiempo: envoltura no válida en " + id);

@@ -11,7 +11,6 @@ import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
 const CACHE = path.join(STATE_DIR, "capacidades.json");
 const SHADERS_JS = path.join(SERVER_ROOT, "plantilla", "vendor", "shaders.iife.js");
-const GSAP_JS = path.join(SERVER_ROOT, "node_modules", "gsap", "dist", "gsap.min.js");
 
 export interface PruebaGpu {
   webgpu: boolean;
@@ -56,7 +55,6 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
   try {
     fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
     fs.mkdirSync(path.join(dir, "compositions"), { recursive: true });
-    fs.copyFileSync(GSAP_JS, path.join(dir, "assets", "gsap.min.js"));
     fs.copyFileSync(SHADERS_JS, path.join(dir, "assets", "shaders.iife.js"));
     fs.writeFileSync(
       path.join(dir, "compositions", "fondo.html"),
@@ -66,11 +64,11 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
     );
     fs.writeFileSync(
       path.join(dir, "index.html"),
-      `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><script src="assets/gsap.min.js"></script>
+      `<!doctype html><html lang="en"><head><meta charset="UTF-8" />
 <style>*{margin:0;padding:0}html,body{width:540px;height:960px;overflow:hidden;background:#000}#root{position:relative;width:540px;height:960px;overflow:hidden}</style></head>
-<body><div id="root" data-composition-id="main" data-start="0" data-duration="1" data-width="540" data-height="960">
+<body><div id="root" data-composition-id="main" data-no-timeline data-start="0" data-duration="1" data-width="540" data-height="960">
 <div id="h-fondo" data-composition-id="fondo" data-composition-src="compositions/fondo.html" data-start="0" data-duration="1" data-track-index="1" data-no-timeline data-width="540" data-height="960" style="position:absolute;inset:0"></div>
-</div><script>window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});</script></body></html>`,
+</div></body></html>`,
     );
     const salida = path.join(dir, "gpu.mp4");
     const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "render", dir, "-o", salida, "--browser-gpu", "--quiet"], { timeoutMs: 240000 });

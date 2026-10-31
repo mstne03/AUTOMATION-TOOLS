@@ -169,11 +169,9 @@ describe("cableado de tiempos de las piezas (SEO-111)", () => {
     }
   });
 
-  it("copia hf-tiempo.js y mantiene gsap", () => {
+  it("copia hf-tiempo.js", () => {
     const { p } = plan("");
-    const destinos = p.copias.map((c) => c.destino);
-    expect(destinos).toContain("assets/hf-tiempo.js");
-    expect(destinos).toContain("assets/gsap.min.js");
+    expect(p.copias.map((c) => c.destino)).toContain("assets/hf-tiempo.js");
     expect(p.copias.find((c) => c.destino === "assets/hf-tiempo.js")!.origen).toBe(HF_TIEMPO_JS);
     expect(fs.existsSync(HF_TIEMPO_JS)).toBe(true);
   });

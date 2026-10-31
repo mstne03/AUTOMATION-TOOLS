@@ -1,6 +1,6 @@
 // I2 (a): la composición lleva una CSP en <meta> con default-src 'none' y ninguna fuente de red; la raíz no registra
-// timeline (data-no-timeline) y carga hf-tiempo.js junto a gsap (convivencia hasta W3.1). Se comprueba la plantilla y
-// el index.html generado, con y sin importmap (titulo3d).
+// timeline (data-no-timeline) y carga hf-tiempo.js. Se comprueba la plantilla y el index.html generado, con y sin
+// importmap (titulo3d).
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -104,9 +104,9 @@ describe.each(CASOS)("CSP de %s (I2 a)", (_, leer) => {
     expect(html).not.toMatch(/__timelines/);
   });
 
-  it("carga gsap.min.js y hf-tiempo.js", () => {
+  it("carga hf-tiempo.js y no gsap", () => {
     const html = leer();
-    expect(html).toContain('<script src="assets/gsap.min.js"></script>');
     expect(html).toContain('<script src="assets/hf-tiempo.js"></script>');
+    expect(html).not.toMatch(/gsap/i);
   });
 });

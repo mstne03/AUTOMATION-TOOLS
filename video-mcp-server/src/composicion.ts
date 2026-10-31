@@ -23,9 +23,8 @@ import type { ImagenEncontrada } from "./paths.js";
 export const PLANTILLA_DIR = path.join(SERVER_ROOT, "plantilla");
 export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
 export const NODE_MODULES = path.join(SERVER_ROOT, "node_modules");
-export const GSAP_JS = path.join(NODE_MODULES, "gsap", "dist", "gsap.min.js");
 export const SHADERS_JS = path.join(PLANTILLA_DIR, "vendor", "shaders.iife.js");
-/** Motor de tiempo WAAPI de las piezas (SEO-111). Convive con gsap.min.js hasta que W3.1 quite GSAP. */
+/** Motor de tiempo WAAPI de las piezas (SEO-111). */
 export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
 /** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
 const DURACION_MAXIMA = 180;
@@ -179,17 +178,6 @@ function pieza(nombre: string, valores: Record<string, string | number>): string
   return plantilla.replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) => (k in valores ? String(valores[k]) : m));
 }
 
-function envolturaJs(id: string, e: { fundido: number; punch: boolean; golpes: number[] }): string {
-  return `(function (tl, id, e) {
-            if (e.fundido > 0) tl.fromTo("#" + id + "-fundido", { opacity: 0 }, { opacity: 1, duration: e.fundido, ease: "none" }, 0);
-            if (e.punch) tl.fromTo("#" + id + "-punch", { scale: 1.07 }, { scale: 1, duration: 0.45, ease: "expo.out" }, 0);
-            var f = 1 / 30, p = [[0, 0], [22, -14], [-16, 10], [8, -4], [0, 0]];
-            e.golpes.forEach(function (t) {
-              for (var i = 0; i < 4; i++) tl.fromTo("#" + id + "-golpe", { x: p[i][0], y: p[i][1] }, { x: p[i + 1][0], y: p[i + 1][1], duration: f, ease: "none", immediateRender: false }, t + i * f);
-            });
-          })(tl, ${JSON.stringify(id)}, ${jsonParaScript(e)});`;
-}
-
 export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   const { guion, palabras: al } = e;
   const tema = validarTema(e.tema); // cubre también o.tema; el valor devuelto, nunca e.tema.
@@ -212,7 +200,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   for (const k of ["titulos", "subtitulos", "mono"] as const) {
     if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", f[k]!.archivo), destino: `assets/fonts/${f[k]!.archivo}` });
   }
-  copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" }, { origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
+  copias.push({ origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
 
   // ---- Ventanas de cada bloque ----
   const desde = al.segmentos.map((s, k) => (e.cortes?.[k] !== undefined ? e.cortes[k] : s.mostrarDesde));
@@ -319,8 +307,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       const [dx, dy] = DIRECCIONES[k % DIRECCIONES.length];
       p = ["bloque-foto.html", { IMG: escaparHtml(archivo), DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }) }];
     } else {
-      // ENVOLTURA (código GSAP) para las piezas de hoy; ENVOLTURA_DATOS (datos para hf.envoltura) para las migradas.
-      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA: envolturaJs(id, env), ENVOLTURA_DATOS: jsonParaScript(env) };
+      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA_DATOS: jsonParaScript(env) };
       switch (esc.tipo) {
         case "cifra":
           p = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
@@ -587,7 +574,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
 
 // ---------- Piezas de escena ----------
 
-type Comun = { ID: string; FUENTES: string; ENVOLTURA: string; ENVOLTURA_DATOS: string };
+type Comun = { ID: string; FUENTES: string; ENVOLTURA_DATOS: string };
 /** Plantilla de la pieza y sus valores; ID, INICIO y DURACION los pone anadirPieza. */
 type PiezaPlan = [string, Record<string, string | number>];
 type Ventana = { duracion: number; visible: number };
@@ -718,7 +705,6 @@ export const VENDOR_FIJADO: Record<string, string> = {
   "assets/vendor/three184/addons/loaders/FontLoader.js": "a8d78ab85e596ef6c274023ee165520000f010011553dbfafe5c966387aca3d8",
   "assets/vendor/three184/addons/geometries/TextGeometry.js": "edf69c1cd6087c84d020156d1adbb29b40b098e4cbe8da4c0c36bbadc58dceac",
   "assets/vendor/three147.min.js": "f34446bf875b5fb0dcd93819ffe1d9e182d46634ee855f5d904c6c4ac7cdbc95",
-  "assets/gsap.min.js": "92bb9a96476f983d212a2bc4f54c889039c1696dd4461d40a736860938570fbb",
   "assets/fonts/Geist-Bold.typeface.json": "e42c3305dcef66919fb1f2cf96101173c593abbd78eaed155025071b3fe6f621",
 };
 const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xlink"]);
