@@ -58,6 +58,8 @@
           var d = JSON.parse(document.getElementById(id + "-datos").textContent);
           var hf = HF.contexto(id, {{INICIO}});
           hf.envoltura({{ENVOLTURA_DATOS}});
+          // I11: un dato no válido se ve; no se anima con basura (con un NaN el reloj repintaría en cada seek).
+          if (!Number.isFinite(d.empieza) || !(d.duracionPeriodo > 0) || !Array.isArray(d.series) || !Array.isArray(d.periodos) || d.series.some(function (s) { return !Array.isArray(s.valores) || s.valores.length < d.periodos.length || !s.valores.every(Number.isFinite); })) throw new Error("escena-barras: datos no válidos");
           var SERIES = d.series, T = d.periodos.length, N = SERIES.length;
           var PD = d.duracionPeriodo, K = 10, KFD = PD / K, KFN = T > 1 ? (T - 1) * K + 1 : 1;
           var CARRERA = T > 1 ? (T - 1) * PD : 0;
