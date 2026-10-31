@@ -116,7 +116,7 @@
 
         // `data-composition-variables` is the single owner of every declared
         // default — parse it rather than repeating each default a second time
-        // in JS. `window.__hyperframes` is NOT guaranteed to exist yet when this
+        // in JS. `window.__hyperframes` (HFRT) is NOT guaranteed to exist yet when this
         // inline script runs, so it can only ever be an override, never the
         // source. Precedence: host CSS custom property, runtime variable bag,
         // declared default.
@@ -124,8 +124,8 @@
         JSON.parse(ROOT.getAttribute("data-composition-variables") || "[]").forEach(function (v) {
           DECL[v.id] = v.default;
         });
-        var HF = window.__hyperframes;
-        var V = (HF && HF.getVariables && HF.getVariables()) || {};
+        var HFRT = window.__hyperframes;
+        var V = (HFRT && HFRT.getVariables && HFRT.getVariables()) || {};
 
         function raw(id) {
           var css = CS.getPropertyValue("--" + id.toLowerCase()).trim();
@@ -219,6 +219,8 @@
           var el = document.createElement("img");
           el.id = "{{ID}}-img-" + k;
           el.alt = "";
+          // Anónimo: si la textura viene de otro origen (preview en iframe opaco), sin esto WebGL la rechaza.
+          el.crossOrigin = "anonymous";
           el.src = src;
           assets.appendChild(el);
 
@@ -235,7 +237,11 @@
             rec.aspect = el.naturalWidth / el.naturalHeight;
             tex.needsUpdate = true;
           }
-          el.addEventListener("load", ready);
+          // draw(ultimo): una foto que termina de cargar después del último dibujo no espera a un seek con otro t.
+          el.addEventListener("load", function () {
+            ready();
+            draw(ultimo);
+          });
           ready(); // a cache hit can complete before the listener is attached
           return rec;
         });
@@ -411,28 +417,20 @@
           renderer.render(scene, camera);
         }
 
-        window.__timelines = window.__timelines || {};
-        var tl = gsap.timeline({ paused: true });
-        {{ENVOLTURA}}
-
-        // Repaint from a property SETTER, not from onUpdate: gsap's seek(t)
-        // suppresses events by default, so an onUpdate callback silently never
-        // fires on a scrub and the canvas freezes on frame 0. Tweened values are
-        // always written during render, suppressed or not.
-        var driver = { _t: 0 };
-        Object.defineProperty(driver, "t", {
-          get: function () {
-            return this._t;
-          },
-          set: function (v) {
-            this._t = v;
-            draw(v);
-          },
-        });
-        tl.to(driver, { t: DUR, duration: DUR, ease: "none" }, 0);
-        window.__timelines["{{ID}}"] = tl;
-
+        // Repinta en cada `hf-seek`, y solo si el tiempo (acotado a [0, DUR]) cambió: draw recoloca 15 segmentos.
+        // El tiempo se redondea a 6 decimales como hacía el reloj anterior: sin eso, el lienzo difiere de la
+        // referencia en el último bit de los bordes (medido en W2.4: con el redondeo el lienzo es idéntico).
+        var ultimo = 0;
         draw(0);
+        var hf = HF.contexto("{{ID}}", {{INICIO}});
+        hf.envoltura({{ENVOLTURA_DATOS}});
+        hf.reloj(function (t) {
+          var u = Math.min(DUR, Math.max(0, Math.round(t * 1e6) / 1e6));
+          if (u !== ultimo) {
+            ultimo = u;
+            draw(u);
+          }
+        });
       })();
     </script>
   </body>
