@@ -330,18 +330,62 @@ function matarArbol(hijo: ChildProcess): Promise<void> {
       });
     });
   }
+  return matarArbolPosix(pid);
+}
+
+/** Pid de todos los descendientes de `pid` según la tabla (por `padre`). Pura; tolera ciclos y un pid desconocido. */
+export function descendientes(pid: number, tabla: { pid: number; padre?: number }[]): number[] {
+  const hijos = new Map<number, number[]>();
+  for (const p of tabla) {
+    if (p.padre === undefined) continue;
+    hijos.set(p.padre, [...(hijos.get(p.padre) ?? []), p.pid]);
+  }
+  const vistos = new Set<number>([pid]);
+  const cola = [pid];
+  const salida: number[] = [];
+  for (let actual = cola.shift(); actual !== undefined; actual = cola.shift()) {
+    for (const h of hijos.get(actual) ?? []) {
+      if (vistos.has(h)) continue;
+      vistos.add(h);
+      salida.push(h);
+      cola.push(h);
+    }
+  }
+  return salida;
+}
+
+/**
+ * POSIX: Puppeteer lanza Chrome en su propio grupo, así que `kill(-pid)` no lo alcanza. Se lista el árbol antes de
+ * matar (los huérfanos pasan a pid 1 y se perdería la relación), después el grupo y cada descendiente.
+ */
+async function matarArbolPosix(pid: number): Promise<void> {
+  let desc: number[] = [];
+  try {
+    desc = descendientes(pid, await listarProcesos());
+  } catch (e) {
+    log.warn(`No pude listar los descendientes del pid ${pid}: ${(e as Error).message}`);
+  }
   try {
     process.kill(-pid, "SIGKILL");
   } catch (e) {
     log.warn(`No pude matar el grupo de procesos ${pid}: ${(e as Error).message}`);
   }
-  return Promise.resolve();
+  for (const d of desc) {
+    try {
+      process.kill(d, "SIGKILL");
+    } catch {
+      /* ya muerto */
+    }
+  }
 }
 
 export type OpcionesEjecutar = Omit<SpawnOptions, "env" | "shell" | "stdio" | "detached"> & {
   onLinea?: (linea: string) => void;
-  timeoutMs?: number;
+  /** Obligatorio (I7): sin plazo, un nieto que retiene las tuberías bloquea la llamada para siempre. */
+  timeoutMs: number;
 };
+
+const plazoValido = (t: unknown): t is number => typeof t === "number" && Number.isFinite(t) && t > 0;
 
 /** true si la llamada es la CLI de HyperFrames: el script empaquetado, el Node del motor o cualquier `node`. */
 function esLlamadaCli(comando: string, args: string[]): boolean {
@@ -363,7 +407,9 @@ let colaCli: Promise<unknown> = Promise.resolve();
  * construido desde cero (I5). Si es la CLI de HyperFrames, además: solo con el Node del motor, modo
  * cerrado y HOME/cwd en hf-home (I13), dist y navegador comprobados antes de lanzar (R2-M3, I4) y en serie.
  */
-export function ejecutar(comando: string, args: string[], opciones: OpcionesEjecutar = {}): Promise<Resultado> {
+export function ejecutar(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
+  // Los .mjs y los tests no pasan por el tipo: se exige también en ejecución (0, NaN o ausente no valen).
+  if (!plazoValido(opciones?.timeoutMs)) return Promise.reject(new Error("ejecutar exige un timeoutMs finito y mayor que 0."));
   if (!esLlamadaCli(comando, args)) return lanzar(comando, args, opciones, false);
   if (!mismaRuta(comando, process.execPath)) {
     return Promise.reject(new Error(`La CLI de HyperFrames solo se lanza con el Node del motor (${process.execPath}), no con ${comando}.`));
@@ -429,20 +475,17 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       stderr += t;
       trocear(t);
     });
-    let temporizador: NodeJS.Timeout | undefined;
-    if (timeoutMs) {
-      temporizador = setTimeout(() => {
-        vencido = true;
-        // Se resuelve solo cuando el árbol ya está muerto: así el llamador no sigue con Chrome vivo.
-        void matarArbol(hijo).then(() => {
-          fuera();
-          if (terminado) return;
-          terminado = true;
-          if (onLinea && resto.trim()) onLinea(resto);
-          resolve({ code: null, stdout, stderr, timeout: true });
-        });
-      }, timeoutMs);
-    }
+    const temporizador = setTimeout(() => {
+      vencido = true;
+      // Se resuelve solo cuando el árbol ya está muerto: así el llamador no sigue con Chrome vivo.
+      void matarArbol(hijo).then(() => {
+        fuera();
+        if (terminado) return;
+        terminado = true;
+        if (onLinea && resto.trim()) onLinea(resto);
+        resolve({ code: null, stdout, stderr, timeout: true });
+      });
+    }, timeoutMs);
     hijo.on("error", (e) => {
       fuera();
       if (temporizador) clearTimeout(temporizador);
@@ -566,18 +609,27 @@ export async function listarProcesos(): Promise<ProcesoVivo[]> {
       });
     }
   } else if (process.platform === "linux") {
-    // ponytail: en Linux sin padre ni fecha (no es objetivo de la fase 1): no protege a los hijos en vuelo.
+    // Sin fecha de creación: la protección por cadena de padres de seleccionarBarrido no se activa (no es objetivo de la fase 1).
     for (const d of fs.readdirSync("/proc")) {
       if (!/^\d+$/.test(d)) continue;
       try {
-        todos.push({ pid: Number(d), ruta: fs.readlinkSync(`/proc/${d}/exe`) });
+        // El nombre (comm) puede llevar espacios y paréntesis: el padre es el segundo campo tras el ÚLTIMO ")".
+        const stat = fs.readFileSync(`/proc/${d}/stat`, "utf8");
+        const padre = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+        let ruta = "";
+        try {
+          ruta = fs.readlinkSync(`/proc/${d}/exe`);
+        } catch {
+          /* proceso ajeno: sin ruta, pero su pid y su padre sirven para recorrer el árbol */
+        }
+        todos.push({ pid: Number(d), ruta, padre: Number.isInteger(padre) ? padre : undefined });
       } catch {
-        /* proceso ajeno o ya muerto */
+        /* ya muerto */
       }
     }
   } else {
-    // ponytail: macOS no es objetivo de la fase 1; ahí el barrido no ve nada.
-    log.warn("El barrido de procesos no está implementado en este sistema.");
+    // I11: sin árbol de procesos no se puede matar ni barrer con seguridad. Fallo visible, no una lista vacía.
+    throw new Error(`El motor de vídeo no puede listar procesos en ${process.platform}: solo Windows y Linux.`);
   }
   return todos;
 }
