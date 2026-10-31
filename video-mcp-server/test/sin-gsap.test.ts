@@ -1,4 +1,5 @@
 // I12: ningún byte de GSAP llega al producto, ni por dependencia, ni por composición, ni por la prueba de GPU.
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,6 +35,15 @@ describe("sin GSAP (I12)", () => {
       expect(contenido, rel).not.toMatch(FUERA);
     }
     for (const c of p.copias) expect(c.destino).not.toMatch(FUERA);
+  });
+
+  it("el catálogo solo conserva el lock y las dos licencias, y nada versionado carga de un CDN (I2, I12)", () => {
+    const git = (...a: string[]) => execFileSync("git", ["ls-files", ...a], { cwd: SERVER_ROOT, encoding: "utf8" }).split(/\r?\n/).filter(Boolean);
+    expect(git("catalogo").sort()).toEqual(["catalogo/compositions/assets/fonts/Geist-OFL.txt", "catalogo/compositions/assets/fonts/OFL.txt", "catalogo/hyperframes.lock.json"]);
+    for (const f of git("plantilla", "catalogo")) {
+      if (/\.woff2$/.test(f)) continue;
+      expect(leer(f), f).not.toMatch(/jsdelivr|cdnjs|unpkg|gsap@/i);
+    }
   });
 
   it("src/composicion.ts y src/capacidades.ts no lo contienen", () => {
