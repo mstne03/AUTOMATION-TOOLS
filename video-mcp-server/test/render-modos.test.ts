@@ -62,7 +62,7 @@ else {
 
 import type { Config } from "../src/config.js";
 import { estado, fotograma } from "../src/herramientas.js";
-import { EXTENSIONES_AUDIO } from "../src/musica.js";
+import { EXTENSIONES_AUDIO, listarMusica } from "../src/musica.js";
 import { ErrorVideo, EXTENSIONES_IMAGEN, archivosVideo } from "../src/paths.js";
 import { argsEntrada, ErrorNavegador, ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
 import {
@@ -187,6 +187,15 @@ describe("entradas de ffmpeg y ffprobe (I15, R0 M5)", () => {
       const f = path.join(F.dir, "trampa.mp3");
       fs.writeFileSync(f, `ffconcat version 1.0\nfile '${victima.replaceAll("\\", "/")}'\n`);
       await expect(sondear(h!.ffprobe, f)).rejects.toThrow(/ffprobe no puede leer trampa\.mp3/);
+    });
+
+    it("listarMusica: un ffconcat renombrado .mp3 no llega a `hyperframes audio`, que no lleva lista blanca (L-2)", async () => {
+      const carpeta = path.join(F.dir, "musica-trampa");
+      fs.mkdirSync(carpeta);
+      fs.writeFileSync(path.join(carpeta, "trampa.mp3"), "ffconcat version 1.0\nfile 'otro.mp3'\n");
+      const [p] = await listarMusica(h!, carpeta);
+      expect(p.error).toMatch(/ffprobe no puede leer trampa\.mp3/);
+      expect(llamadas().filter((l) => l[0] === "audio")).toEqual([]);
     });
 
     it("con el demuxer ajeno, el fichero real tampoco pasa: la lista blanca manda", async () => {
@@ -334,7 +343,7 @@ async function prepararVideo(id: string) {
     if (r.code !== 0) throw new Error(r.stderr);
   };
   for (let n = 1; n <= 6; n++) await ff(["-f", "lavfi", "-i", "color=c=0x1f5c3a:s=108x192:d=1", "-frames:v", "1", path.join(dir, `img${n}.jpg`)]);
-  // AAC en ADTS con nombre .mp3: ffmpeg detecta el formato por contenido y el ffmpeg LGPL no trae LAME.
+  // MP3 real: `sondear` fija el demuxer por la extensión. Necesita libmp3lame, que el ffmpeg de W1.5 no traerá.
   await ff(["-f", "lavfi", "-i", "sine=frequency=220:duration=4", "-c:a", "libmp3lame", "-f", "mp3", path.join(dir, "voz.mp3")]);
   const guion = parsearGuion(GUION);
   const chars = [...guion.narracion];

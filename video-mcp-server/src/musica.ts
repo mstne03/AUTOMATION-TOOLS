@@ -155,8 +155,10 @@ export async function listarMusica(h: Herramientas, carpeta: string): Promise<Pi
     }
     const p: Pista = { archivo: nombre, ruta };
     try {
+      // sondear antes: `hyperframes audio` abre el fichero sin lista blanca ni demuxer. Lo sustituirá la normalización de I15.
+      const { duracion } = await sondear(h.ffprobe, ruta);
       const a = await analizarAudio(ruta);
-      p.duracion = a.duracion ?? (await sondear(h.ffprobe, ruta)).duracion;
+      p.duracion = a.duracion ?? duracion;
       p.bpm = a.bpm;
       p.lufs = a.lufs;
     } catch (e) {
