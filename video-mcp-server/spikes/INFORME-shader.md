@@ -154,6 +154,26 @@ La ampliación de `CONTROL_JS` del spike (`servir.mjs`, `control(true)`) cumple 
 **Ningún arreglo puede exigir `allow-same-origin`, `allow-popups`, `allow-top-navigation` ni llamar al iframe desde el
 padre por otra vía que no sea `postMessage`.** El (e) no toca el iframe ni el control.
 
+**Medidas de W2.6 (SEO-114), con el texto literal ya en `plantilla/vendor/shaders.iife.js`** (sin `--variantes`; Chrome 156 del
+sistema, `--headless=new`, sandbox por defecto, GPU `nvidia/lovelace`; 3 repeticiones cada una; SSIM de `comparar.mjs`
+contra S1 con el mismo vendor):
+
+| Escenario | Capturas | SSIM mín | `ms hasta listo` (mediana / máx) |
+|---|---|---|---|
+| S8 iframe + CSP del producto | 12/12 | 1,0000 | 50 / 58 |
+| S8 directo, sin CSP | 12/12 | 1,0000 | 32 / 35 |
+| S9 barrido 0–50 s (iframe + CSP) | 12/12 en los 4 instantes con referencia | 1,0000 | 47 / 53 |
+| S9 tres plays seguidos | 12/12 | 1,0000 | 49 / 58 |
+| S9 pausa a mitad | 12/12 | 1,0000 | 43 / 52 |
+| S9 rápido (60 seeks en 1 s) | 12/12 | 1,0000 | 52 / 67 |
+
+Los SHA-256 de las capturas son los de S1 (idénticas byte a byte). Ejecución sin salidas de red (`externas` 0), 0 procesos
+restantes y la única violación CSP es la `eval` de detección (`csp: 1`, §7). Límites: la cola de renders no se puede leer
+en el producto (`__dbgShader` no existe fuera de `spikes/`), así que «un solo render en curso» y «≤ 3 renders por 60
+llamadas» los fija `test/shaders-glue.test.ts` con un `Ji` falso; el barrido capturó los 51 instantes pero solo los 4 de S1
+tienen referencia. **No medido:** CfT 152/156 (exige `--disable-gpu-sandbox`, sin autorización de Marc), render de la CLI
+con el parche y `check` (el CLI parcheado añade ese flag en cada lanzamiento), WebView2 (M2).
+
 ## 7. Seguridad
 
 - **I2 (sin red):** 62 ejecuciones (más 3 de `shadersParcheW26`, con el mismo resultado), 442 peticiones al servidor, **0** con `Host` distinto de `127.0.0.1:<puerto>`,
