@@ -98,7 +98,6 @@ export function prepararSalida(salida) {
 export async function montar(motor, salida, guion = GUION_TODAS, { duracionVoz = 20, gpu = true } = {}) {
   const texto = GUIONES[guion] ?? (guion.trimStart().startsWith("---") ? guion : fs.readFileSync(guion, "utf8"));
   const ffdir = path.join(motor, "ffmpeg");
-  const navegador = path.join(motor, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
   const raiz = path.join(salida, "proyecto");
   const dir = path.join(raiz, "video001");
   prepararSalida(salida);
@@ -141,7 +140,7 @@ export async function montar(motor, salida, guion = GUION_TODAS, { duracionVoz =
       hashNarracion: g.hash,
     });
     fs.writeFileSync(path.join(dir, "palabras.json"), JSON.stringify(palabras, null, 2));
-    const o = { raiz, musica: false, musicaVolumen: 0.12, ffmpegDir: ffdir, browserPath: navegador };
+    const o = { raiz, musica: false, musicaVolumen: 0.12, ffmpegDir: ffdir };
     const comp = path.join(dir, "_composicion");
     const m = await montarComposicion(await prepararRender("video001", o), comp, o);
     return { dir: comp, duracion: m.duracion, avisos: m.avisos, usaWebgpu: m.usaWebgpu };

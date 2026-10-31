@@ -244,7 +244,6 @@ export interface OpcionesRender {
   musica: boolean;
   musicaVolumen: number;
   ffmpegDir?: string;
-  browserPath?: string;
   tema?: Tema;
   /** D11; por defecto "auto" (= MODO_AUTOMATICO). Exponerlo en la tool es de la oleada 2. */
   modo?: "auto" | "rapido" | "compatible";
@@ -341,7 +340,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
       await prepararMusica(h, prep.musica.ruta, path.join(tmp, "musica.mp3"), prep.musica.desde, D);
       musicaPlan = { volumen: prep.musica.volumen, automatizacion: automatizacionDucking(huecosDeVoz(prep.palabras.palabras, D)) };
       if (prep.guion.opciones.cortesAlRitmo) {
-        const a = await analizarAudio(h, path.join(tmp, "musica.mp3"));
+        const a = await analizarAudio(path.join(tmp, "musica.mp3"));
         const r = ajustarCortes(prep.palabras.segmentos, prep.palabras.palabras, a.beats);
         cortes = r.desde;
         avisos.push(

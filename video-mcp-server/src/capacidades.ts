@@ -137,7 +137,7 @@ export interface Capacidades {
   fondos: { disponibles: string[]; conWebgpu: string[]; usaranFallback: string[] };
 }
 
-export async function capacidades(h: Herramientas | null, reprobar: boolean, _browserPath?: string): Promise<Capacidades> {
+export async function capacidades(h: Herramientas | null, reprobar: boolean): Promise<Capacidades> {
   let gpu = leerPruebaGpu();
   if (h && (reprobar || !gpu)) gpu = await probarGpu(h);
   const pkg = JSON.parse(fs.readFileSync(path.join(SERVER_ROOT, "node_modules", "hyperframes", "package.json"), "utf8")) as { version: string };

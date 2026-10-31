@@ -4,7 +4,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import type { Palabra, Segmento } from "./alineacion.js";
-import { ejecutar, entornoConFfmpeg, sondear, type Herramientas } from "./proceso.js";
+import { ejecutar, sondear, type Herramientas } from "./proceso.js";
 import { log } from "./log.js";
 
 /**
@@ -35,12 +35,8 @@ export interface AnalisisAudio {
 }
 
 /** `hyperframes audio --only beats,bpm,loudness --json` sobre un archivo. */
-export async function analizarAudio(h: Herramientas, archivo: string): Promise<AnalisisAudio> {
-  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "audio", archivo, "--only", "beats,bpm,loudness", "--json"], {
-    env: entornoConFfmpeg(h),
-    cwd: path.dirname(archivo),
-    timeoutMs: 180000,
-  });
+export async function analizarAudio(archivo: string): Promise<AnalisisAudio> {
+  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "audio", archivo, "--only", "beats,bpm,loudness", "--json"], { timeoutMs: 180000 });
   if (r.code !== 0) throw new Error(`hyperframes audio falló con ${path.basename(archivo)}: ${(r.stderr || r.stdout).trim().slice(-300)}`);
   const j = JSON.parse(r.stdout.slice(r.stdout.indexOf("{"))) as {
     items?: { duration?: number; beats?: { times?: number[] }; bpm?: { value?: number }; loudness?: { lufsIntegrated?: number } }[];
@@ -159,7 +155,7 @@ export async function listarMusica(h: Herramientas, carpeta: string): Promise<Pi
     }
     const p: Pista = { archivo: nombre, ruta };
     try {
-      const a = await analizarAudio(h, ruta);
+      const a = await analizarAudio(ruta);
       p.duracion = a.duracion ?? (await sondear(h.ffprobe, ruta)).duracion;
       p.bpm = a.bpm;
       p.lufs = a.lufs;

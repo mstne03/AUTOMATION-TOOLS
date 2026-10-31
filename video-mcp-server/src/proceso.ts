@@ -118,14 +118,6 @@ export function entornoHijo(): NodeJS.ProcessEnv {
   return env;
 }
 
-/**
- * @deprecated `ejecutar` descarta cualquier env. Solo queda porque musica.ts y herramientas.ts (fuera de
- * W1.6) aún lo pasan; cuando sus dueños lo quiten, se borra junto con `OpcionesEjecutar.env`.
- */
-export function entornoConFfmpeg(_h?: Herramientas | null, _extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
-  return entornoHijo();
-}
-
 // ---------- Navegador del motor (I4, parte motor) ----------
 
 export class ErrorNavegador extends Error {}
@@ -349,8 +341,6 @@ function matarArbol(hijo: ChildProcess): Promise<void> {
 export type OpcionesEjecutar = Omit<SpawnOptions, "env" | "shell" | "stdio" | "detached"> & {
   onLinea?: (linea: string) => void;
   timeoutMs?: number;
-  /** @deprecated Se descarta: el entorno de todo hijo es entornoHijo() (I5, I13). Ver entornoConFfmpeg. */
-  env?: NodeJS.ProcessEnv;
 };
 
 /** true si la llamada es la CLI de HyperFrames: el script empaquetado, el Node del motor o cualquier `node`. */
@@ -400,11 +390,12 @@ async function lanzar(comando: string, args: string[], opciones: OpcionesEjecuta
 }
 
 function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
-  const { onLinea, timeoutMs, env: _descartado, ...spawnOpts } = opciones;
+  const { onLinea, timeoutMs, ...spawnOpts } = opciones;
   return new Promise((resolve, reject) => {
     // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
     const hijo = spawn(comando, args, {
       ...spawnOpts,
+      // Después del spread: un `env` llegado de un .mjs se pisa (I5).
       env: entornoHijo(),
       shell: false,
       windowsHide: true,

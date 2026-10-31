@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SERVER_ROOT } from "../src/raiz.js";
-import { entornoConFfmpeg, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
+import { entornoHijo, herramientasFfmpeg, sondear, type Herramientas } from "../src/proceso.js";
 import {
   MARCADOR,
   accesos,
@@ -20,10 +20,12 @@ import {
   copiaSinParche,
   ENTORNO_CERRADO,
   entornoLimpio,
+  BYPASS,
   FLAGS_RED,
   GPU_SIN_SANDBOX,
   ipNoInterna,
   PROXY_NULO,
+  RESOLVER,
   sumidero,
   sumideroUdp,
   type Sumidero,
@@ -257,6 +259,16 @@ async function hasta(cond: () => boolean, ms: number): Promise<boolean> {
 const CFT = process.env.HYPERFRAMES_BROWSER_PATH;
 
 /**
+ * Dirección de los sumideros: de loopback y sin excepción en la lista de proxy, para que ningún test abra conexiones ni
+ * escuchas fuera de loopback. VIDEO_SANDBOX_CON_LAN=1 (solo a mano) usa la IP de la interfaz en las pruebas con flags.
+ */
+const IP_CONTROL = "127.0.0.3";
+/** Los controles sin proxy también llevan reglas de resolución: solo se resuelven estos literales de loopback. */
+const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE [::1]`;
+/** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
+const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
+
+/**
  * Mata (con su árbol) los procesos de esta ejecución que sigan vivos: los que llevan `raiz` en la línea de
  * comandos (los Chrome de los controles, la CLI y sus hijos). El cierre en el motor es I7/W1.6.
  */
@@ -295,12 +307,12 @@ ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 }
 
 /** Intentos de salida de la spec y los observables en los sumideros. */
-// `externos`: destinos que saldrían del equipo sin proxy nulo (DNS de ejemplo.test, 203.0.113.1). Solo con los
-// flags del marcador puestos; los controles sin flags los omiten y usan solo sumideros propios.
+// `externos`: hosts `.test`, que las reglas de resolución dejan sin resolver. Solo con los flags del marcador puestos;
+// los controles sin flags los omiten y usan solo sumideros propios en loopback.
 const FUGAS_JS = (ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, externos = true) => `
 const nada = () => {};
 try { document.body.append(Object.assign(document.createElement("img"), { src: "http://${ip}:${tcp}/x.png" })); } catch (e) {}
-${externos ? `try { fetch("http://203.0.113.1/").catch(nada); } catch (e) {}
+${externos ? `try { fetch("http://salida.test/").catch(nada); } catch (e) {}
 try { new WebSocket("ws://ejemplo.test/w"); } catch (e) {}
 try { new Image().src = "//ejemplo.test/x.png"; } catch (e) {}` : ""}
 try { fetch("http://${ip}:${tcp}/f").catch(nada); } catch (e) {}
@@ -336,6 +348,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   let h: Herramientas;
   let ip: string;
   let marcador: (a: string[]) => string[];
+  let bypass: (url: string) => string[];
   let tcp: Sumidero;
   let tcp2: Sumidero;
   let udp: SumideroUdp;
@@ -350,9 +363,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     const hf = herramientasFfmpeg(process.env.FFMPEG_DIR);
     if (!hf) throw new Error("Define FFMPEG_DIR con la carpeta de ffmpeg.exe y ffprobe.exe");
     h = hf;
-    ip = ipNoInterna();
-    marcador = ((await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: (a: string[]) => string[] }).withHyperframesBrowserMarker;
-    entorno = entornoLimpio(entornoConFfmpeg(h, {}), { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: CFT });
+    ip = process.env.VIDEO_SANDBOX_CON_LAN === "1" ? ipNoInterna() : IP_CONTROL;
+    const k = (await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: (a: string[]) => string[]; seoStudioBypass: (url: string) => string[] };
+    marcador = k.withHyperframesBrowserMarker;
+    bypass = k.seoStudioBypass;
+    entorno = entornoLimpio(entornoHijo(), { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: CFT });
   });
 
   afterEach(async () => {
@@ -377,11 +392,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     expect(r.stdout.trim(), `procesos warmCheck.js vivos: ${r.stderr}`).toBe("0");
   });
 
-  const abrirSumideros = async () => {
-    tcp = await sumidero(ip);
+  const abrirSumideros = async (host = ip) => {
+    tcp = await sumidero(host);
     tcp2 = await sumidero("127.0.0.2");
-    udp = await sumideroUdp(ip);
-    udpWt = await sumideroUdp(ip); // solo WebTransport (QUIC): sin compartirlo con el STUN
+    udp = await sumideroUdp(host);
+    udpWt = await sumideroUdp(host); // solo WebTransport (QUIC): sin compartirlo con el STUN
   };
 
   /** Tamaño y fecha de `debug.log` junto al exe del CfT ("no existe" si no está). No se borra: puede ser compartido. */
@@ -391,27 +406,34 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   };
 
   it(
-    "reglas de especulación: a 127.0.0.2 no llegan; a 127.0.0.1/localhost SÍ (residual medido, sin bandera que lo corte)",
+    "reglas de especulación: a 127.0.0.1, localhost y 127.0.0.2 tampoco llegan (R2-M1); con la lista antigua, sí",
     async () => {
-      // Control positivo y medición del residual: ninguna bandera probada (Prerender2,
-      // SpeculationRulesPrefetchProxy, Prefetch, PrefetchPrerenderIntegration, PreloadingConfig,
-      // --disable-blink-features=SpeculationRules) corta el prefetch/prerender en CfT 152 ni 156.
-      // Lo que no es localhost/127.0.0.1 va al proxy nulo; el loopback exento (el servidor del render)
-      // sí se alcanza. Cuando una bandera lo corte, este test fallará: invertir la última aserción.
+      // Ninguna bandera probada (Prerender2, SpeculationRulesPrefetchProxy, Prefetch, PrefetchPrerenderIntegration,
+      // PreloadingConfig, --disable-blink-features=SpeculationRules) corta el prefetch/prerender en CfT 152 ni 156: lo
+      // corta la lista de proxy, que solo exceptúa el puerto exacto del servidor de la composición.
       const lo = await sumidero("127.0.0.1");
       const lo2 = await sumidero("127.0.0.2");
       const pagina = await servir(
         `<!doctype html><html><body><p>x</p><script>${especulacion(`http://127.0.0.2:${lo2.puerto}`)}${especulacion(`http://localhost:${lo.puerto}`)}</script></body></html>`,
       );
       try {
-        const dd = path.join(RAIZ, `dd-espec-${Date.now()}`);
-        const c = spawn(CFT!, [...marcador(["--headless", "--no-sandbox"]), `--user-data-dir=${dd}`, pagina.url], { windowsHide: true, stdio: "ignore" });
-        hijos.push(c);
+        const lanzar = (args: string[]) => {
+          const c = spawn(CFT!, [...args, `--user-data-dir=${path.join(RAIZ, `dd-espec-${Date.now()}`)}`, pagina.url], { windowsHide: true, stdio: "ignore" });
+          hijos.push(c);
+          return c;
+        };
+        const flags = marcador([...bypass(pagina.url), "--headless", "--no-sandbox"]);
+        let c = lanzar(flags);
+        await new Promise((r) => setTimeout(r, 8000));
+        await matarYAsentar(c);
+        expect(lo2.conexiones(), lo2.peticiones().join("\n")).toBe(0);
+        expect(lo.conexiones(), lo.peticiones().join("\n")).toBe(0);
+        c = lanzar(flags.map((a) => (a.startsWith("--proxy-bypass-list") ? LISTA_ANTIGUA : a)));
         const llego = await hasta(() => lo.peticiones().length > 0, 15000);
         await new Promise((r) => setTimeout(r, 2000));
         await matarYAsentar(c);
         expect(lo2.conexiones(), lo2.peticiones().join("\n")).toBe(0);
-        expect(llego, "control positivo: la regla hacia localhost debería llegar").toBe(true);
+        expect(llego, "control positivo: con la lista antigua, la regla hacia localhost debería llegar").toBe(true);
         expect(lo.peticiones().every((p) => /Sec-Purpose: prefetch/i.test(p)), lo.peticiones().join("\n")).toBe(true);
       } finally {
         await Promise.all([pagina.cerrar(), lo.cerrar(), lo2.cerrar()]);
@@ -432,11 +454,11 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
           hijos.push(c);
           return c;
         };
-        let c = lanzar(marcador(["--no-sandbox"]));
+        let c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]));
         await new Promise((r) => setTimeout(r, 8000));
         await matarYAsentar(c);
         expect(seis.conexiones()).toBe(0);
-        c = lanzar(["--no-proxy-server"]);
+        c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
         expect(await hasta(() => seis.conexiones() > 0, 15000), "control positivo: sin flags [::1] debería alcanzarse").toBe(true);
         await matarYAsentar(c);
       } finally {
@@ -469,8 +491,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   it(
     "control: sin los flags la fuga llega a los sumideros (TCP, 127.0.0.2 y STUN por UDP); con los del marcador, no",
     async () => {
-      await abrirSumideros();
-      const pagina = await servir(`<!doctype html><html><body><img src="http://${ip}:${tcp.puerto}/x.png"><script>${FUGAS_JS(ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, false)}</script></body></html>`);
+      await abrirSumideros(IP_CONTROL);
+      const pagina = await servir(`<!doctype html><html><body><img src="http://${IP_CONTROL}:${tcp.puerto}/x.png"><script>${FUGAS_JS(IP_CONTROL, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, false)}</script></body></html>`);
       try {
         const lanzar = (args: string[]) => {
           const dd = path.join(RAIZ, `dd-${Date.now()}`);
@@ -481,7 +503,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         // 1. Sin nada (se anula el proxy del sistema): llegan TCP, STUN y WebTransport (QUIC).
         // Medido: --disable-quic NO frena a WebTransport (solo con esa bandera llegan paquetes); lo frenan
         // el proxy nulo y las reglas de resolución. La bandera queda por HTTP/3, sin control propio aquí.
-        let c = lanzar(["--no-proxy-server"]);
+        let c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
         expect(
           await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0 && udpWt.paquetes() > 0, 15000),
           `tcp=${tcp.conexiones()} udp=${udp.paquetes()} webtransport=${udpWt.paquetes()}`,
@@ -489,17 +511,17 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         await matarYAsentar(c);
         // 2. Proxy nulo SIN el bypass explícito: 127.0.0.2 entra por el bypass implícito de loopback (MEDIUM-1).
         const antes2 = tcp2.conexiones();
-        c = lanzar([PROXY_NULO]);
+        c = lanzar([PROXY_NULO, REGLAS_CONTROL]);
         expect(await hasta(() => tcp2.conexiones() > antes2, 15000), "sin --proxy-bypass-list el loopback 127.0.0.2 debería alcanzarse").toBe(true);
         await matarYAsentar(c);
         // 3. Proxy nulo y reglas de resolución SIN el flag de WebRTC: el STUN a una IP literal sale.
         const antesUdp = udp.paquetes();
-        c = lanzar(marcador(["--no-sandbox"]).filter((a) => !a.startsWith("--force-webrtc-ip-handling-policy=")));
+        c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]).filter((a) => !a.startsWith("--force-webrtc-ip-handling-policy=")));
         expect(await hasta(() => udp.paquetes() > antesUdp, 15000), "sin el flag de WebRTC el STUN debería llegar").toBe(true);
         await matarYAsentar(c);
         // 4. Con los flags del marcador: nada en 10 s.
         const [t1, t2, u, w] = [tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()];
-        c = lanzar(marcador(["--no-sandbox"]));
+        c = lanzar(marcador([...bypass(pagina.url), "--no-sandbox"]));
         await new Promise((r) => setTimeout(r, 10000));
         await matarYAsentar(c);
         expect([tcp.conexiones() - t1, tcp2.conexiones() - t2, udp.paquetes() - u, udpWt.paquetes() - w]).toEqual([0, 0, 0, 0]);
@@ -568,7 +590,10 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     // 3. Flags del proceso browser, y HIGH-1: ninguno de un solo proceso y cada uno con un renderer Untrusted.
     expect(browsers.length, log).toBeGreaterThan(0);
     for (const b of browsers) {
-      for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED, MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
+      for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED.filter((x) => x !== BYPASS), MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
+      // El que navega lleva la excepción de su servidor; el resto (sonda de GPU, efectos), ninguna.
+      const lista = /--proxy-bypass-list=(\S+)/.exec(b.cmd)?.[0];
+      if (lista !== BYPASS) expect(lista, `browser#${b.pid}\n${log}`).toMatch(/^--proxy-bypass-list=<-loopback>;(localhost|127\.0\.0\.1):\d+$/);
       expect(b.cmd).not.toMatch(/--no-sandbox|--single-process|--in-process-gpu/);
       // Un browser de vida corta (la sonda de GPU de HyperFrames) puede cerrar antes de que el vigilante
       // vea su renderer; uno que vive 2 s o más sin renderer Untrusted es fallo (un solo proceso, HIGH-1).
@@ -720,8 +745,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     }, 420000);
 
     it("check: <img>, <video> y <audio> con URL no llegan a ffprobe; sin el parche, GET de Lavf", async () => {
-      await abrirSumideros();
-      const url = `http://${ip}:${tcp.puerto}`;
+      await abrirSumideros(IP_CONTROL);
+      const url = `http://${IP_CONTROL}:${tcp.puerto}`;
       const comp = proyecto("ffprobe", `<img src="${url}/x.png" alt=""><video id="v" src="${url}/x.mp4" data-start="0" data-duration="1"></video><audio id="a" src="${url}/x.mp3" data-start="0" data-duration="1"></audio>`);
       const r = await check(comp);
       expect(r.timeout).toBe(false);
