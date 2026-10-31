@@ -37,19 +37,68 @@ diff --git a/node_modules/hyperframes/dist/chunk-4UMPIPCQ.js b/node_modules/hype
  }
  
  export {
+diff --git a/node_modules/hyperframes/dist/chunk-CMDVJP4T.js b/node_modules/hyperframes/dist/chunk-CMDVJP4T.js
+--- a/node_modules/hyperframes/dist/chunk-CMDVJP4T.js
++++ b/node_modules/hyperframes/dist/chunk-CMDVJP4T.js
+@@ -9,6 +9,7 @@ import {
+   resolveManagedGpuMode,
+   rethrowAfterBrowserCleanup
+ } from "./chunk-T6SD37JZ.js";
++import { seoStudioBypass } from "./chunk-K4MJX7SR.js"; // SEO Studio (parche local, SEO-109, R2-M1): excepción de proxy por puerto.
+ import {
+   gotoWhenSent
+ } from "./chunk-MOEGCMKI.js";
+@@ -69,6 +70,8 @@ function launchKey(html, noListen, options) {
+   return JSON.stringify([viewport, compositionRequiresWebGpu(html), noListen, gpuMode]);
+ }
+ function prelaunchCompositionBrowser(html, browserGpuMode) {
++  // SEO Studio (parche local, SEO-109, R2-M1): el navegador se lanzaría sin conocer el puerto, y sin él no hay excepción de proxy.
++  return void 0;
+   const abort = new AbortController();
+   const options = { browserGpuMode, signal: abort.signal };
+   const key = launchKey(html, false, options);
+@@ -193,7 +196,7 @@ async function openSettledCompositionPage(html, url, options) {
+   const noListen = answer !== void 0;
+   let chromeBrowser;
+   try {
+-    const launched = await options.prelaunched?.take(launchKey(html, noListen, options)) ?? await launchCompositionBrowser(html, noListen, options);
++    const launched = await options.prelaunched?.take(launchKey(html, noListen, options)) ?? await launchCompositionBrowser(html, noListen, { ...options, seoStudioUrl: url }); // SEO Studio (parche local, SEO-109, R2-M1)
+     chromeBrowser = launched.browser;
+     const softwareWebGpu = launched.softwareWebGpu;
+     options.onBrowser?.(chromeBrowser);
+@@ -233,10 +236,10 @@ async function launchCompositionBrowser(html, noListen, options) {
+     options.signal?.throwIfAborted();
+     const webGpu = resolveLocalWebGpu(resolvedGpuMode, requiresWebGpu);
+     softwareWebGpu = webGpu.softwareWebGpu;
+-    const args = buildChromeArgs(
++    const args = [...buildChromeArgs(
+       { ...viewport, captureMode: "screenshot", requiresWebGpu },
+       webGpu.gpuConfig
+-    );
++    ), ...seoStudioBypass(options.seoStudioUrl)]; // SEO Studio (parche local, SEO-109, R2-M1): sin URL, new URL lanza y no se abre nada.
+     return launchManagedBrowser(puppeteer.default, {
+       headless: true,
+       signal: options.signal,
 diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
 --- a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
 +++ b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
-@@ -7,8 +7,35 @@ var __dirname = __hf_dirname(__filename);
+@@ -7,11 +7,48 @@ var __dirname = __hf_dirname(__filename);
  
  // ../core/dist/browserMarker.js
  var HYPERFRAMES_BROWSER_MARKER_ARG = "--hyperframes-owned-browser";
 +// SEO Studio (parche local, SEO-109): todo lanzamiento de Chrome de HyperFrames pasa por aquí.
 +// Windows: renderer con sandbox (I3); el proceso de GPU sin él solo donde HyperFrames quitaba el
-+// sandbox (riesgo residual aceptado); red solo en loopback aunque falle la CSP (I2b).
++// sandbox (riesgo residual aceptado); red solo al puerto de su servidor aunque falle la CSP (I2b, R2-M1).
++// <-loopback> quita la excepción implícita de loopback de Chrome: sin URL conocida no se exceptúa nada.
++var SEO_STUDIO_SIN_BYPASS = "--proxy-bypass-list=<-loopback>";
++var SEO_STUDIO_CON_BYPASS = /^--proxy-bypass-list=<-loopback>;(localhost|127\.0\.0\.1):\d{1,5}$/;
++function seoStudioBypass(url) {
++  const u = new URL(url);
++  return u.port && (u.hostname === "localhost" || u.hostname === "127.0.0.1") ? [`--proxy-bypass-list=<-loopback>;${u.hostname}:${u.port}`] : [];
++}
 +var SEO_STUDIO_ARGS_WIN32 = [
 +  "--proxy-server=127.0.0.1:1",
-+  "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1",
++  SEO_STUDIO_SIN_BYPASS,
 +  "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
 +  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 +  "--disable-quic",
@@ -62,8 +111,10 @@ diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hype
 +  if (args.some((a) => SEO_STUDIO_UN_PROCESO.test(a))) {
 +    throw new Error("SEO Studio: HyperFrames pidió --single-process; el renderer saldría del sandbox (I3)");
 +  }
-+  const extra = args.includes("--no-sandbox") ? ["--disable-gpu-sandbox", ...SEO_STUDIO_ARGS_WIN32] : SEO_STUDIO_ARGS_WIN32;
-+  const limpios = args.filter((a) => SEO_STUDIO_ARGS_WIN32.includes(a) || !SEO_STUDIO_FUERA.test(a));
++  const propio = args.find((a) => SEO_STUDIO_CON_BYPASS.test(a));
++  const fijos = propio ? SEO_STUDIO_ARGS_WIN32.map((a) => (a === SEO_STUDIO_SIN_BYPASS ? propio : a)) : SEO_STUDIO_ARGS_WIN32;
++  const extra = args.includes("--no-sandbox") ? ["--disable-gpu-sandbox", ...fijos] : fijos;
++  const limpios = args.filter((a) => fijos.includes(a) || !SEO_STUDIO_FUERA.test(a));
 +  // Sin esto, el servicio de red abre el respondedor mDNS (5353) con WebRTC. Chrome solo atiende el último
 +  // --disable-features: se funde con el de HyperFrames.
 +  const rasgos = limpios.filter((a) => a.startsWith("--disable-features=")).flatMap((a) => a.slice(19).split(","));
@@ -77,6 +128,10 @@ diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hype
  }
  
  export {
++  seoStudioBypass,
+   HYPERFRAMES_BROWSER_MARKER_ARG,
+   withHyperframesBrowserMarker
+ };
 diff --git a/node_modules/hyperframes/dist/chunk-L5MFWGGU.js b/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
 --- a/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
 +++ b/node_modules/hyperframes/dist/chunk-L5MFWGGU.js
@@ -249,7 +304,17 @@ diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hype
  import {
    alphaDecoderFor,
    pixelFormatHasAlpha,
-@@ -1047,6 +1048,7 @@ function resolveHeadlessShellPath(config) {
+@@ -78,7 +79,8 @@ import {
+   redactUrlQueryStrings
+ } from "./chunk-634HSJ3J.js";
+ import {
+-  withHyperframesBrowserMarker
++  withHyperframesBrowserMarker,
++  seoStudioBypass // SEO Studio (parche local, SEO-109, R2-M1)
+ } from "./chunk-K4MJX7SR.js";
+ import {
+   browserPathFromEnv,
+@@ -1047,6 +1049,7 @@ function resolveHeadlessShellPath(config) {
    return findManagedHeadlessShell(ours) ?? findSharedHeadlessShell(shared) ?? findCachedHeadlessShell(ours);
  }
  function resolveFullChromePath() {
@@ -257,7 +322,15 @@ diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hype
    const baseDir = join2(homedir(), ".cache", "puppeteer", "chrome");
    let versions;
    try {
-@@ -8839,6 +8841,7 @@ function urlInputArgs(input, {
+@@ -5746,6 +5749,7 @@ async function createCaptureSession(serverUrl, outputDir, options, onBeforeCaptu
+     gpuConfig
+   );
+   const withoutWaylandDisplay = await captureWithoutWaylandDisplay(resolvedGpuMode);
++  chromeArgs.push(...seoStudioBypass(serverUrl)); // SEO Studio (parche local, SEO-109, R2-M1): como argumento, cada puerto tiene su clave en el pool.
+   const browserLease = await acquireBrowser(chromeArgs, { ...config, withoutWaylandDisplay });
+   return constructCaptureSessionWithRollback({
+     browserLease,
+@@ -8839,6 +8843,7 @@ function urlInputArgs(input, {
    tool = "ffmpeg",
    caBundles = CA_BUNDLES
  } = {}) {
@@ -265,7 +338,7 @@ diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hype
    if (!/^https:\/\//i.test(input)) return [];
    const caFile = caBundles.find((path) => existsSync4(path));
    if (!caFile) {
-@@ -11220,6 +11223,8 @@ function isBlockedNetworkHost(hostname) {
+@@ -11220,6 +11225,8 @@ function isBlockedNetworkHost(hostname) {
    return addressType === 4 ? NON_PUBLIC_IPV4_ADDRESSES.check(h, "ipv4") : NON_PUBLIC_IPV6_ADDRESSES.check(h, "ipv6");
  }
  function assertPublicHttpsUrl(url) {
@@ -274,7 +347,7 @@ diff --git a/node_modules/hyperframes/dist/chunk-RDDVQSNQ.js b/node_modules/hype
    let parsed;
    try {
      parsed = new URL(url);
-@@ -18019,7 +18024,7 @@ function createFileServer(options) {
+@@ -18019,7 +18026,7 @@ function createFileServer(options) {
      });
    });
    return new Promise((resolve2) => {
@@ -315,7 +388,7 @@ diff --git b/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/h
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/hyperframes/dist/seo-studio-cierre.js
-@@ -0,0 +1,88 @@
+@@ -0,0 +0,88 @@
 +// SEO Studio (parche local, SEO-109, I14). Punto único del cierre de red de Node:
 +// - seoStudioCerrarRuta/Url rechazan una referencia del HTML o el CSS antes de tocar el disco.
 +// - En Windows, además, fs y child_process abortan el proceso ante una ruta UNC ya resuelta, venga de

@@ -17,7 +17,10 @@ export const HASHES = path.join(SERVER_ROOT, "patches", "hyperframes+0.8.206.sha
 
 /** Los flags que el parche (hunk A) añade en Windows a todo lanzamiento de Chrome. */
 export const PROXY_NULO = "--proxy-server=127.0.0.1:1";
-export const BYPASS = "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1";
+/** Sin URL no se exceptúa nada; `<-loopback>` quita la excepción implícita de loopback de Chrome (R2-M1). */
+export const BYPASS = "--proxy-bypass-list=<-loopback>";
+/** La excepción de un servidor concreto, host y puerto exactos. */
+export const bypassDe = (host: string, puerto: number): string => `${BYPASS};${host}:${puerto}`;
 export const RESOLVER = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1";
 export const WEBRTC = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 export const QUIC = "--disable-quic";

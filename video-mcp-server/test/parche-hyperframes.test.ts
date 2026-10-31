@@ -44,6 +44,7 @@ const MARCA_PARCHE = "SEO Studio (parche local, SEO-109";
 /** Ficheros que toca el parche, relativos a node_modules/hyperframes (las claves del .sha256.json). */
 const PARCHEADOS = [
   "dist/chunk-4UMPIPCQ.js",
+  "dist/chunk-CMDVJP4T.js",
   "dist/chunk-K4MJX7SR.js",
   "dist/chunk-L5MFWGGU.js",
   "dist/chunk-MFHYBSJC.js",
@@ -109,7 +110,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
   cerradas: {
     "chunk-L5MFWGGU.js": [6643], // inlineExternalScripts
     "chunk-N7ZMDVAK.js": [4181, 4200, 4571, 4577], // Google Fonts: fetchFontResource lanza antes
-    "chunk-RDDVQSNQ.js": [11427], // fetchWithValidatedRedirects: pasa antes por assertPublicHttpsUrl
+    "chunk-RDDVQSNQ.js": [11429], // fetchWithValidatedRedirects: pasa antes por assertPublicHttpsUrl
   },
   // Alcanzables, pero solo contra el servidor propio en 127.0.0.1 o por un par de sockets en memoria.
   loopback: {
@@ -117,7 +118,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-3R6SXPHD.js": [93, 166],
     "chunk-543U46OR.js": [13, 14, 49, 139, 228, 236, 315, 324, 335, 345, 349, 370, 372, 378, 380],
     "chunk-AJSU6KGS.js": [259],
-    "chunk-RDDVQSNQ.js": [5744],
+    "chunk-RDDVQSNQ.js": [5745],
   },
   // RESIDUAL: alcanzables, y solo las apaga el entorno (ENTORNO_CERRADO); W1.6 tiene que fijarlo siempre.
   soloEntorno: {
@@ -132,7 +133,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
   enChrome: {
     "capture-KKD5GMAF.js": [1690],
     "chunk-KLIPVNCO.js": [4574],
-    "chunk-RDDVQSNQ.js": [4023, 6136],
+    "chunk-RDDVQSNQ.js": [4024, 6138],
     "hyperframe.runtime.iife.js": [43, 366, 373, 1130],
   },
   // Otros comandos o flags que el motor no usa con render/check/snapshot.
@@ -150,7 +151,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-HJAJ6W4V.js": [34],
     "chunk-MNNK7RV5.js": [55],
     "chunk-N7ZMDVAK.js": [529, 530, 578, 579, 2085, 2086, 2134, 2135], // cargador wasm: el binario va en data:
-    "chunk-RDDVQSNQ.js": [9075], // declareProbeFactsUrl: solo renders distribuidos
+    "chunk-RDDVQSNQ.js": [9077], // declareProbeFactsUrl: solo renders distribuidos
     "chunk-SFYLZX5C.js": [31, 33, 34, 35, 120, 129, 196],
     "chunk-TSJVPPXT.js": [111, 139],
     "chunk-WQ6ZXHFQ.js": [11, 50],
@@ -178,7 +179,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-4DGLKB2H.js": [2853, 2914, 2952, 2955],
     "chunk-6ZFDNEMY.js": [295],
     "chunk-7SXL476O.js": [8414, 9938],
-    "chunk-CMDVJP4T.js": [221],
+    "chunk-CMDVJP4T.js": [224],
     "chunk-DEVZJ4AL.js": [228],
     "chunk-DPVXBVLL.js": [14766, 14771, 16138, 16842, 16843, 16844, 16973],
     "chunk-EXAX37XR.js": [242, 243],
@@ -187,7 +188,7 @@ const SALIDAS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-MFHYBSJC.js": [840, 2091],
     "chunk-MOEGCMKI.js": [93],
     "chunk-N7ZMDVAK.js": [4120, 4138, 4206],
-    "chunk-RDDVQSNQ.js": [914, 917, 5496, 5818, 6216, 11088, 11182, 11457, 11514, 11517, 12642, 18027, 18312, 18319],
+    "chunk-RDDVQSNQ.js": [915, 918, 5497, 5820, 6218, 11090, 11184, 11459, 11516, 11519, 12644, 18029, 18314, 18321],
     "chunk-WYB3VKLK.js": [277, 297],
     "cli.js": [168],
     "get-JVIDYMVP.js": [64],
@@ -230,14 +231,14 @@ const PROCESOS_NODE: Record<string, Record<string, number[]>> = {
     "chunk-7FMUTGOH.js": [9, 184],
     "chunk-7SXL476O.js": [424, 436, 3682, 3689, 4322, 8913, 9119, 9154, 9177],
     "chunk-AXEEZKIL.js": [43, 46, 382, 843, 1189],
-    "chunk-CMDVJP4T.js": [41, 558],
+    "chunk-CMDVJP4T.js": [42, 561],
     "chunk-EXAX37XR.js": [12],
     "chunk-FJW757TF.js": [43],
     "chunk-G6W55MTX.js": [24, 300, 443],
     "chunk-KGPLIH7B.js": [9, 46, 68],
     "chunk-L5MFWGGU.js": [8783, 9174, 13968, 14190],
     "chunk-QSFWGZG6.js": [15, 392, 397],
-    "chunk-RDDVQSNQ.js": [679, 1489, 4767, 4815, 4928, 4934, 4989, 4996, 8262, 8490, 8576, 8710, 8774, 8826, 8905, 9099, 10502, 10748, 14852, 14893, 17220, 17226],
+    "chunk-RDDVQSNQ.js": [680, 1490, 4768, 4816, 4929, 4935, 4990, 4997, 8264, 8492, 8578, 8712, 8776, 8828, 8907, 9101, 10504, 10750, 14854, 14895, 17222, 17228],
     "chunk-T6SD37JZ.js": [32, 37, 53],
     "chunk-UIOZIIB7.js": [9, 109],
     "chunk-VAS6HQX3.js": [9, 97],
@@ -375,11 +376,11 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     expect(inventario(/"--no-sandbox"/)).toEqual([
       "capture-KKD5GMAF.js:199", // captura de webs, solo Linux (I14: el motor no la usa)
       "chunk-4UMPIPCQ.js:54", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
-      "chunk-K4MJX7SR.js:28", // el propio hunk A (lo detecta para quitarlo)
-      "chunk-RDDVQSNQ.js:1253", // getHardwareGpuProbeArgs → marcador
-      "chunk-RDDVQSNQ.js:1530", // buildChromeArgs → marcador
-      "chunk-RDDVQSNQ.js:15808", // efectos de audio → marcador
-      "chunk-RDDVQSNQ.js:18342", // buildHdrChromeArgs → marcador (HDR cerrado por el hunk B2)
+      "chunk-K4MJX7SR.js:37", // el propio hunk A (lo detecta para quitarlo)
+      "chunk-RDDVQSNQ.js:1254", // getHardwareGpuProbeArgs → marcador
+      "chunk-RDDVQSNQ.js:1531", // buildChromeArgs → marcador
+      "chunk-RDDVQSNQ.js:15810", // efectos de audio → marcador
+      "chunk-RDDVQSNQ.js:18344", // buildHdrChromeArgs → marcador (HDR cerrado por el hunk B2)
     ]);
   });
 
@@ -395,10 +396,10 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
   it("inventario: todo .launch del dist es conocido y los que lanzan Chrome pasan por el marcador", () => {
     const sitios = inventario(/\.launch\b/);
     expect(sitios).toEqual([
-      "chunk-RDDVQSNQ.js:811", // this.options.launch: delega en launchManagedBrowser
-      "chunk-RDDVQSNQ.js:937", // sonda de GPU (probeLifecycle.launch / ppt.launch)
-      "chunk-RDDVQSNQ.js:1403", // launchBrowser del render
-      "chunk-RDDVQSNQ.js:18329", // HDR
+      "chunk-RDDVQSNQ.js:812", // this.options.launch: delega en launchManagedBrowser
+      "chunk-RDDVQSNQ.js:938", // sonda de GPU (probeLifecycle.launch / ppt.launch)
+      "chunk-RDDVQSNQ.js:1404", // launchBrowser del render
+      "chunk-RDDVQSNQ.js:18331", // HDR
       "chunk-T6SD37JZ.js:163", // launchOwnedBrowser (check, snapshot, sonda gestionada)
     ]);
     const lineas = lineasDist();
@@ -415,9 +416,12 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
 
   describe.runIf(process.platform === "win32")("flags de Chrome en Windows", () => {
     let marcador: Marcador;
+    let bypass: (url: string) => Args;
     let casos: [string, Args][];
     beforeAll(async () => {
-      marcador = ((await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: Marcador }).withHyperframesBrowserMarker;
+      const k = (await import(chunk("chunk-K4MJX7SR.js"))) as { withHyperframesBrowserMarker: Marcador; seoStudioBypass: (url: string) => Args };
+      marcador = k.withHyperframesBrowserMarker;
+      bypass = k.seoStudioBypass;
       const m = (await import(chunk("chunk-RDDVQSNQ.js"))) as {
         buildChromeArgs: (o: object, c: object) => Args;
         buildHdrChromeArgs: (w: number, h: number) => Args;
@@ -471,6 +475,38 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       expect(a).not.toContain("--no-proxy-server");
       expect(a.filter((x) => x.startsWith("--host-resolver-rules"))).toEqual([RESOLVER]);
       expect(a.filter((x) => x.startsWith("--force-webrtc-ip-handling-policy="))).toEqual([WEBRTC]);
+    });
+
+    const listas = (a: Args) => a.filter((x) => x.startsWith("--proxy-bypass-list"));
+
+    it("sin URL no exceptúa nada: loopback va al proxy nulo (R2-M1)", () => {
+      expect(listas(marcador(["--no-sandbox"]))).toEqual(["--proxy-bypass-list=<-loopback>"]);
+    });
+
+    it.each([
+      ["http://localhost:51234", "localhost:51234"],
+      ["http://127.0.0.1:51234/", "127.0.0.1:51234"],
+    ])("exceptúa solo %s", (url, regla) => {
+      expect(listas(marcador(["--no-sandbox", ...bypass(url)]))).toEqual([`--proxy-bypass-list=<-loopback>;${regla}`]);
+    });
+
+    it.each(["http://hyperframes-1.localhost/", "http://127.0.0.2:5000/", "http://ejemplo.test:5000/", "http://localhost/"])("sin excepción para %s", (url) => {
+      expect(bypass(url)).toEqual([]);
+    });
+
+    it.each(["--proxy-bypass-list=<-loopback>;localhost:1;*", "--proxy-bypass-list=<-loopback>;localhost", "--proxy-bypass-list=*"])("rechaza %s y queda cerrado", (flag) => {
+      expect(listas(marcador([flag]))).toEqual(["--proxy-bypass-list=<-loopback>"]);
+    });
+
+    it("la excepción propia sobrevive al doble paso por el marcador", () => {
+      expect(listas(marcador(marcador(bypass("http://localhost:51234"))))).toEqual(["--proxy-bypass-list=<-loopback>;localhost:51234"]);
+    });
+
+    it("el prelanzamiento está anulado: prelaunchCompositionBrowser devuelve undefined", () => {
+      // En un hijo y con una ruta que no existe: si el hunk faltara, ensureBrowser falla en vez de lanzar un navegador.
+      const env = entornoLimpio(process.env, { ...ENTORNO_CERRADO, HYPERFRAMES_BROWSER_PATH: path.join(os.tmpdir(), "no-existe.exe") });
+      const r = enHijo(llamada("chunk-CMDVJP4T.js", `({ executablePath: String(m.prelaunchCompositionBrowser("<html></html>", "software")) })`), env);
+      expect(r).toEqual({ ok: true, ruta: "undefined" });
     });
 
     it("funde --disable-features: Chrome solo atiende el último", () => {
