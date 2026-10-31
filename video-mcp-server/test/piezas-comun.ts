@@ -1,5 +1,6 @@
 // Ayudas comunes de los tests de migración de piezas GSAP → hf-tiempo (SEO-112, oleada 2): pieza ejecutada con un DOM
 // falso (sin motor), guiones de comparación, exclusión mutua entre renders y sonda de estado de la preview.
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { PlanComposicion } from "../src/composicion.js";
@@ -228,15 +229,41 @@ export async function conCandadoDeRender<T>(fn: () => Promise<T>): Promise<T> {
 export async function compararTunelPng(motor: string, refs: string, dirCand: string, salida: string) {
   const base = process.env.W2_SCRATCH?.trim() || path.join(refs, "..");
   const pngRef = path.join(base, "png-ref-tunel");
+  const sello = `${pngRef}.sello`;
+  const dirRef = path.join(refs, "TUNEL", "montaje", "proyecto", "video001", "_composicion");
   return conCandadoDeRender(async () => {
-    if (!fs.existsSync(pngRef)) {
+    // La caché va ligada a la referencia: si ref.mp4 cambia, el PNG guardado ya no la representa.
+    const sha = createHash("sha256").update(fs.readFileSync(path.join(refs, "TUNEL", "ref.mp4"))).digest("hex");
+    const guardado = fs.existsSync(sello) ? fs.readFileSync(sello, "utf8").trim() : null;
+    if (debeRehacerPngRef(fs.existsSync(pngRef), guardado, sha)) {
+      fs.rmSync(pngRef, { recursive: true, force: true });
       const tmp = `${pngRef}.tmp`;
       fs.rmSync(tmp, { recursive: true, force: true });
-      await renderizar(motor, path.join(refs, "TUNEL", "montaje", "proyecto", "video001", "_composicion"), tmp, path.join(base, "hf-home-png-ref"), { png: true, timeoutMs: 1_800_000 });
+      await renderizar(motor, dirRef, tmp, path.join(base, "hf-home-png-ref"), { png: true, timeoutMs: 1_800_000 });
       fs.renameSync(tmp, pngRef);
+      fs.writeFileSync(sello, sha);
     }
-    return compararPngContraReferencia(motor, pngRef, dirCand, salida);
+    const informe = await compararPngContraReferencia(motor, pngRef, dirCand, salida);
+    const aviso = avisoSsimAislado(informe.ssimMin);
+    if (aviso) process.stderr.write(aviso);
+    return informe;
   });
+}
+
+/** Decisión pura: la caché PNG se reutiliza solo si existe y su sello coincide con el SHA-256 actual de ref.mp4. */
+export function debeRehacerPngRef(existe: boolean, selloGuardado: string | null, shaActual: string): boolean {
+  return !existe || selloGuardado !== shaActual;
+}
+
+/** Umbral blando de TUNEL: el duro es 0,99; entre ambos hay ruido de ejecución que no justifica diagnóstico. */
+export const SSIM_AVISO_TUNEL = 0.9915;
+
+/** Aviso (o `null`) para un `ssimMin` bajo el umbral blando; no falla el test. */
+export function avisoSsimAislado(ssimMin: number): string | null {
+  return ssimMin < SSIM_AVISO_TUNEL
+    ? `[AVISO] TUNEL ssimMin=${ssimMin} < ${SSIM_AVISO_TUNEL}: un rojo aislado debe repetirse antes de diagnosticarlo.
+`
+    : null;
 }
 
 // ---------- Sonda de preview ----------

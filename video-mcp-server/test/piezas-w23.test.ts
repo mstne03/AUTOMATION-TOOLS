@@ -218,6 +218,15 @@ describe("escena-barras", () => {
     }
   });
 
+  it("valores con la longitud correcta y un null lanzan; sin `every(Number.isFinite)` no lanzaría", () => {
+    const T = d.periodos.length;
+    const malo = (x: Record<string, unknown>) => Object.assign(x, { series: [{ nombre: "A", valores: Array.from({ length: T }, (_, i) => (i === T - 1 ? null : i + 1)) }] });
+    expect(() => ejecutarPieza(conDatos(html, malo))).toThrow(/escena-barras/);
+    const sinComprobar = html.replace(" || !s.valores.every(Number.isFinite)", "");
+    expect(sinComprobar).not.toBe(html);
+    expect(() => ejecutarPieza(conDatos(sinComprobar, malo))).not.toThrow();
+  });
+
   it("mutación: el reloj es lo que mueve las barras", () => {
     const sinReloj = html.replace(/hf\.reloj\(/, "(function(f){})(");
     const r = ejecutarPieza(sinReloj);

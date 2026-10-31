@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compararContraReferencia, veredicto } from "../scripts/comparar-fotogramas.mjs";
 import { parsearGuion } from "../src/guion.js";
-import { conCandadoDeRender, ejecutarPieza, FORMA_GSAP, GUIONES_W2, SONDA_ESTADO } from "./piezas-comun.js";
+import { avisoSsimAislado, conCandadoDeRender, debeRehacerPngRef, ejecutarPieza, FORMA_GSAP, GUIONES_W2, SONDA_ESTADO } from "./piezas-comun.js";
 
 const ENTORNO = { ...process.env };
 afterEach(() => {
@@ -103,5 +103,20 @@ describe("conCandadoDeRender", () => {
   it("SONDA_ESTADO es una expresión asíncrona con el player", () => {
     expect(SONDA_ESTADO).toMatch(/^\(async \(\) => \{/);
     expect(SONDA_ESTADO).toContain("hf-seek");
+  });
+});
+
+describe("caché PNG de TUNEL y aviso de SSIM", () => {
+  it("debeRehacerPngRef: solo se reutiliza con caché y sello igual al SHA actual", () => {
+    expect(debeRehacerPngRef(true, "a", "a")).toBe(false);
+    expect(debeRehacerPngRef(false, "a", "a")).toBe(true);
+    expect(debeRehacerPngRef(true, "a", "b")).toBe(true);
+    expect(debeRehacerPngRef(true, null, "a")).toBe(true);
+  });
+
+  it("avisoSsimAislado: avisa bajo 0,9915 (también bajo 0,99) y calla en el umbral", () => {
+    expect(avisoSsimAislado(0.9914)).toMatch(/repetirse antes de diagnosticarlo/);
+    expect(avisoSsimAislado(0.98)).not.toBeNull();
+    expect(avisoSsimAislado(0.9915)).toBeNull();
   });
 });

@@ -160,6 +160,18 @@ describe("escena-cifra", () => {
     expect(num.textContent).toBe(medio); // un tiempo no finito se ignora
   });
 
+  it("el reloj redondea t a 6 decimales (y sin el redondeo no)", () => {
+    const g = globalThis as { __t?: number };
+    const con = (h: string) => h.replace("num.textContent = fmt(", "globalThis.__t = t; num.textContent = fmt(");
+    ejecutarPieza(con(html)).seek(inicio + 1.23456789);
+    expect(String(g.__t).split(".")[1].length).toBeLessThanOrEqual(6);
+    const sinRedondeo = con(html.replace("t = Math.round(t * 1e6) / 1e6;", ""));
+    expect(sinRedondeo).not.toContain("Math.round(t");
+    ejecutarPieza(sinRedondeo).seek(inicio + 1.23456789);
+    expect(String(g.__t).split(".")[1].length).toBeGreaterThan(6);
+    delete g.__t;
+  });
+
   it("cuenta <= 0 o valor no finito lanzan", () => {
     for (const malo of [{ cuenta: 0 }, { cuenta: -1 }, { cuenta: null }, { valor: null }]) {
       const m = html.replace(/(id="bloque4-datos" type="application\/json">)([^<]+)</, (_, a, j) => `${a}${JSON.stringify({ ...JSON.parse(j), ...malo })}<`);
