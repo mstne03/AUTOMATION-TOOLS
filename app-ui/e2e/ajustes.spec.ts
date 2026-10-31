@@ -25,6 +25,29 @@ test.describe("Ajustes", () => {
     await expect(page.getByRole("heading", { name: "Carpetas permitidas" })).toBeInViewport();
   });
 
+  for (const [ancho, alto] of [[900, 600], [1060, 600], [1101, 600], [1120, 600], [1200, 800]]) {
+    test(`subnavegación a ${ancho}x${alto}: el encabezado de cada sección queda visible y sin tapar`, async ({ page }) => {
+      await page.setViewportSize({ width: ancho, height: alto });
+      for (const id of ["general", "canales", "carpetas", "clave", "video", "avanzado"]) {
+        await page.getByTestId(`ajustes-nav-${id}`).click();
+        const h2 = page.locator(`#ajustes-${id} h2`).first();
+        // El scroll es suave: se espera a que el encabezado esté asentado y entonces se comprueba, con el
+        // hit-test del navegador, que el elemento en su punto central es él (o un hijo), no la subnav.
+        await expect
+          .poll(
+            () =>
+              h2.evaluate((el) => {
+                const r = el.getBoundingClientRect();
+                const arriba = document.elementFromPoint(r.left + Math.min(r.width / 2, 40), r.top + r.height / 2);
+                return { visible: r.top >= 0 && r.bottom <= innerHeight, tapado: !arriba || !(el === arriba || el.contains(arriba)) };
+              }),
+            { message: `encabezado de ${id}` },
+          )
+          .toEqual({ visible: true, tapado: false });
+      }
+    });
+  }
+
   test("modelo: tarjetas con precio, el cambio se guarda solo y avisa", async ({ page }) => {
     const s = await settings();
     const grupo = page.getByTestId("ajustes-model");
