@@ -100,7 +100,7 @@ capturas caen dentro del vaciado depende de cuántos renders quedan y del ritmo 
 | (b) Seek de calentamiento | control | **0/4** (SSIM ≥ 0,70) | +1 seek | no arregla nada | No |
 | (c) Variantes del adaptador `typegpu` | runtime (parche) | **0/4** las dos | — | — | No |
 | (d) Esperar a vaciar la cola antes de mostrar | control | 4/4 bien, pero **hasta 16,9 s** por seek | inaceptable en UX | — | No |
-| **(e) Glue «el último gana»** | `plantilla/vendor/shaders.iife.js` (parche, W2.6) | **3/3 S8 (12/12)**, barrido 0–50 s 51/51, 3 plays seguidos 4/4, pausa a 20 s 4/4, barrido rápido 60 seeks/1 s 4/4, `plasma`/`nebula`/`mesh` 4/4, con y sin CSP del producto, en modo directo y en iframe; S1 con el parche **idéntico** al original (51/51) | ~6 líneas; seek 13–16 ms (mediana) | parchear un bloque de tercero: se pierde al re-vendorizar | **Sí** |
+| **(e) Glue «el último gana»** | `plantilla/vendor/shaders.iife.js` (parche, W2.6) | **3/3 S8 (12/12)**, barrido 0–50 s 51/51, 3 plays seguidos 4/4, pausa a 20 s 4/4, barrido rápido 60 seeks/1 s 4/4, `plasma`/`nebula`/`mesh` 4/4, con y sin CSP del producto, en modo directo y en iframe; S1 con el parche **idéntico** al original (51/51). Texto literal aplicado y medido en W2.6 (SEO-114): `test/shaders-glue.test.ts`, `test/shaders-parche.test.ts` y «Medidas de W2.6» al final de este apartado | ~6 líneas; seek 13–16 ms (mediana) | parchear un bloque de tercero: se pierde al re-vendorizar | **Sí** |
 | (f) Fondo CSS en la preview | plantilla | no medido | — | rompe «lo que se ve es lo que se renderiza» | Solo si (e) se descarta |
 
 Mediana del coste de (e): `ms hasta listo` 13 (barrido), 14–16 (resto). Durante el play con (e) el shader va al día (no
@@ -153,6 +153,26 @@ La ampliación de `CONTROL_JS` del spike (`servir.mjs`, `control(true)`) cumple 
 
 **Ningún arreglo puede exigir `allow-same-origin`, `allow-popups`, `allow-top-navigation` ni llamar al iframe desde el
 padre por otra vía que no sea `postMessage`.** El (e) no toca el iframe ni el control.
+
+**Medidas de W2.6 (SEO-114), con el texto literal ya en `plantilla/vendor/shaders.iife.js`** (sin `--variantes`; Chrome 156 del
+sistema, `--headless=new`, sandbox por defecto, GPU `nvidia/lovelace`; 3 repeticiones cada una; SSIM de `comparar.mjs`
+contra S1 con el mismo vendor):
+
+| Escenario | Capturas | SSIM mín | `ms hasta listo` (mediana / máx) |
+|---|---|---|---|
+| S8 iframe + CSP del producto | 12/12 | 1,0000 | 50 / 58 |
+| S8 directo, sin CSP | 12/12 | 1,0000 | 32 / 35 |
+| S9 barrido 0–50 s (iframe + CSP) | 12/12 en los 4 instantes con referencia | 1,0000 | 47 / 53 |
+| S9 tres plays seguidos | 12/12 | 1,0000 | 49 / 58 |
+| S9 pausa a mitad | 12/12 | 1,0000 | 43 / 52 |
+| S9 rápido (60 seeks en 1 s) | 12/12 | 1,0000 | 52 / 67 |
+
+Los SHA-256 de las capturas son los de S1 (idénticas byte a byte). Ejecución sin salidas de red (`externas` 0), 0 procesos
+restantes y la única violación CSP es la `eval` de detección (`csp: 1`, §7). Límites: la cola de renders no se puede leer
+en el producto (`__dbgShader` no existe fuera de `spikes/`), así que «un solo render en curso» y «≤ 3 renders por 60
+llamadas» los fija `test/shaders-glue.test.ts` con un `Ji` falso; el barrido capturó los 51 instantes pero solo los 4 de S1
+tienen referencia. **No medido:** CfT 152/156 (exige `--disable-gpu-sandbox`, sin autorización de Marc), render de la CLI
+con el parche y `check` (el CLI parcheado añade ese flag en cada lanzamiento), WebView2 (M2).
 
 ## 7. Seguridad
 

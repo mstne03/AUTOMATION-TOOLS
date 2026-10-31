@@ -7,6 +7,7 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -30,13 +31,34 @@ const REF = {
   runtime: "cafd7cc9ef6867d0e08910ef27d471ebcb38127c2bc68b1e5c8950a513ac607e",
   cft: "909fa4a0d2866f5b5b6cabd0a3b3545edeaf84db361148dbc8e992e25e61e7e6",
   ffmpeg: "3e79ae0855dce679f3911069df641e9da7dc82aec76807205607338218cd956f",
+  // W2.6 (SEO-114): el vendor lleva el glue «el último gana». `shaders` es el hash upstream (lock) y se comprueba
+  // revirtiendo plantilla/vendor/shaders.iife.patch; `shadersParcheado` es el del fichero en disco (= test/shaders-comun.ts).
+  shadersParcheado: "012b904bcf2621aa8dd99e1959ba71ddc1de86b9958d5ac9f48a40ff94cef776",
   shaders: JSON.parse(fs.readFileSync(path.join(MOTOR, "catalogo", "hyperframes.lock.json"), "utf8"))["compositions/lib/shaders.iife.js"],
   puppeteer: JSON.parse(fs.readFileSync(path.join(MOTOR, "package-lock.json"), "utf8")).packages["node_modules/puppeteer-core"].version,
 };
 const sha = (f) => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+// Hash del vendor con el .patch revertido, en un temporal (como scripts/aplicar-parche.mjs: GIT_CEILING_DIRECTORIES).
+function hashShadersBase() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "verificar-shaders-"));
+  try {
+    const destino = path.join(tmp, "plantilla", "vendor", "shaders.iife.js");
+    fs.mkdirSync(path.dirname(destino), { recursive: true });
+    fs.copyFileSync(path.join(MOTOR, "plantilla", "vendor", "shaders.iife.js"), destino);
+    execFileSync("git", ["-c", "core.autocrlf=false", "apply", "--reverse", path.join(MOTOR, "plantilla", "vendor", "shaders.iife.patch")], {
+      cwd: tmp,
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(tmp) },
+      stdio: "ignore",
+    });
+    return sha(destino);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 const filas = [
   ["L4 runtime", sha(path.join(MOTOR, "node_modules", "hyperframes", "dist", "hyperframe.runtime.iife.js")), REF.runtime],
-  ["L4 shaders.iife.js", sha(path.join(MOTOR, "plantilla", "vendor", "shaders.iife.js")), REF.shaders],
+  ["L4 shaders.iife.js (parcheado)", sha(path.join(MOTOR, "plantilla", "vendor", "shaders.iife.js")), REF.shadersParcheado],
+  ["L4 shaders base (patch invertido)", hashShadersBase(), REF.shaders],
   ["L4 puppeteer-core", JSON.parse(fs.readFileSync(path.join(MOTOR, "node_modules", "puppeteer-core", "package.json"), "utf8")).version, REF.puppeteer],
   ["L4 chrome-headless-shell.exe", sha(path.join(VE, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe")), REF.cft],
   ["L4 ffmpeg.exe", sha(path.join(VE, "ffmpeg", "ffmpeg.exe")), REF.ffmpeg],
