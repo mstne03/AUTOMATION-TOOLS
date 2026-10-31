@@ -22,11 +22,10 @@
       <script>
         (function () {
           var D = {{DURACION}};
-          var tl = gsap.timeline({ paused: true });
-          tl.fromTo("#etiqueta-txt", { yPercent: 120, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.3, ease: "back.out(2)" }, 0);
-          tl.fromTo("#etiqueta-txt", { yPercent: 0, opacity: 1 }, { yPercent: -60, opacity: 0, duration: 0.2, ease: "power2.in", immediateRender: false }, D - 0.2);
-          window.__timelines = window.__timelines || {};
-          window.__timelines["etiqueta"] = tl;
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
+          hf.tween("#etiqueta-txt", { yPercent: 120, opacity: 0 }, { yPercent: 0, opacity: 1 }, 0, 0.3, "back.out(2)");
+          // Con D < 0,2 la salida arranca en 0 en vez de lanzar.
+          hf.tween("#etiqueta-txt", { yPercent: 0, opacity: 1 }, { yPercent: -60, opacity: 0 }, Math.max(0, D - 0.2), 0.2, "power2.in", { antes: false });
         })();
       </script>
     </div>
