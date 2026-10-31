@@ -73,9 +73,11 @@ async def test_validar_clave_elevenlabs_buena(client):
 
 async def test_validar_clave_elevenlabs_guardada(client):
     await client.put("/settings", json={"elevenlabs_api_key": "xi-buena"}, headers=AUTH)
-    r = await client.post("/settings/validate-elevenlabs-key", json={}, headers=AUTH)
-    assert r.json() == {"valida": True, "detalle": None}
-    await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
+    try:
+        r = await client.post("/settings/validate-elevenlabs-key", json={}, headers=AUTH)
+        assert r.json() == {"valida": True, "detalle": None}
+    finally:
+        await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
 
 
 async def test_clave_pegada_con_espacios_se_recorta(client):

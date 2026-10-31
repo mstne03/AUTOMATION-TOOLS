@@ -1166,10 +1166,11 @@ async def test_entorno_del_motor_fuera_del_bucle_de_eventos(cft_falso, tmp_path,
     async with _app(tmp_path, fake_anthropic) as (_, c):
         capacidades = asyncio.create_task(c.get("/video/capacidades", headers=AUTH))
         await asyncio.sleep(0.1)
-        t0 = time.perf_counter()
         r = await c.get("/video/navegador", headers=AUTH)
-        dt = time.perf_counter() - t0
-        assert r.status_code == 200 and dt < 0.2, dt
+        assert r.status_code == 200
+        # La propiedad real, sin umbral de tiempo (que depende de la carga del runner): /video/capacidades sigue
+        # esperando a `lento` (1 s) cuando /video/navegador ya ha respondido.
+        assert not capacidades.done()
         assert (await capacidades).status_code == 503
 
 
