@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { SERVER_ROOT } from "./raiz.js";
 import type { Guion } from "./guion.js";
 import { COLA_FINAL, type ResultadoAlineacion } from "./alineacion.js";
@@ -46,20 +47,41 @@ const DIRECCIONES: [number, number][] = [
 // "nebula" usa FractalNoise: el shader Nebula del catálogo es un efecto de forma (una esfera de cristal), no un fondo.
 const SHADERS: Record<string, string> = { aurora: "Aurora", plasma: "Plasma", nebula: "FractalNoise", mesh: "MeshGradient" };
 
-export interface Tema {
-  nombre?: string;
-  colores: { fondo: string; texto: string; acento: string; contorno?: string; secundario?: string };
-  fuentes: Record<"titulos" | "subtitulos", { familia: string; archivo: string; peso: number }> & {
-    mono?: { familia: string; archivo: string; peso: number };
-  };
-  tamanos: { gancho: number; ganchoMinimo: number; subtitulo: number; subtituloMinimo: number };
-  subtitulos?: { mayusculas?: boolean };
-  degradado?: { opacidad?: number };
-  paletaTunel?: string[];
+const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const Color = z.string().regex(COLOR_RE);
+// Lista cerrada: una familia solo existe con la cara que trae plantilla/fuentes/.
+const cara = <F extends string, A extends string, P extends number>(familia: F, archivo: A, peso: P) =>
+  z.strictObject({ familia: z.literal(familia), archivo: z.literal(archivo), peso: z.literal(peso) });
+const Fuente = z.union([
+  cara("Anton", "anton-latin-400-normal.woff2", 400),
+  cara("Inter Tight", "inter-tight-latin-800-normal.woff2", 800),
+  cara("JetBrains Mono", "jetbrains-mono-latin-700-normal.woff2", 700),
+]);
+const Tamano = z.number().int().min(8).max(400);
+const TEMA = z.strictObject({
+  nombre: z.string().max(200).optional(),
+  colores: z.strictObject({ fondo: Color, texto: Color, acento: Color, contorno: Color.optional(), secundario: Color.optional() }),
+  fuentes: z.strictObject({ titulos: Fuente, subtitulos: Fuente, mono: Fuente.optional() }),
+  tamanos: z
+    .strictObject({ gancho: Tamano, ganchoMinimo: Tamano, subtitulo: Tamano, subtituloMinimo: Tamano })
+    .refine((t) => t.ganchoMinimo <= t.gancho, { path: ["ganchoMinimo"] })
+    .refine((t) => t.subtituloMinimo <= t.subtitulo, { path: ["subtituloMinimo"] }),
+  subtitulos: z.strictObject({ mayusculas: z.boolean().optional() }).optional(),
+  degradado: z.strictObject({ opacidad: z.number().min(0).max(1).optional() }).optional(),
+  paletaTunel: z.array(Color).min(1).max(64).optional(),
+});
+
+export type Tema = z.infer<typeof TEMA>;
+
+/** I1: el tema se rechaza entero al cargar. El mensaje solo lleva las claves: un valor malo puede ser cualquier cosa. */
+export function validarTema(v: unknown): Tema {
+  const r = TEMA.safeParse(v);
+  if (!r.success) throw new Error(`Tema no válido: ${[...new Set(r.error.issues.map((i) => i.path.join(".") || "(raíz)"))].join(", ")}`);
+  return r.data;
 }
 
 export function cargarTema(dir = PLANTILLA_DIR): Tema {
-  return JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")) as Tema;
+  return validarTema(JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")));
 }
 
 export function escaparHtml(s: string): string {
@@ -80,19 +102,6 @@ export function jsonParaScript(v: unknown): string {
     .replace(/&/g, "\\u0026")
     .replace(new RegExp(" ", "g"), "\\u2028")
     .replace(new RegExp(" ", "g"), "\\u2029");
-}
-
-const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
-function color(v: string | undefined, porDefecto: string): string {
-  return v && COLOR_RE.test(v) ? v : porDefecto;
-}
-function familiaCss(f: string): string {
-  return f.replace(/[^\p{L}\p{N} _-]/gu, "");
-}
-function archivoFuente(f: string): string {
-  const base = path.basename(f);
-  if (!/^[\w.-]+\.(woff2?|ttf|otf)$/i.test(base)) throw new Error(`Nombre de fuente no válido en tema.json: ${f}`);
-  return base;
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -182,7 +191,8 @@ function envolturaJs(id: string, e: { fundido: number; punch: boolean; golpes: n
 }
 
 export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
-  const { guion, palabras: al, tema } = e;
+  const { guion, palabras: al } = e;
+  const tema = validarTema(e.tema); // cubre también o.tema; el valor devuelto, nunca e.tema.
   const o = guion.opciones;
   const avisos: string[] = [];
   const D = r3(al.duracionAudio + COLA_FINAL);
@@ -190,23 +200,17 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   if (D > DURACION_MAXIMA + COLA_FINAL) throw new Error(`La voz dura ${al.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
   const archivos: Record<string, string> = {};
   const copias: PlanComposicion["copias"] = [];
-  const colores = {
-    fondo: color(tema.colores.fondo, "#0B0F0C"),
-    texto: color(tema.colores.texto, "#F4F1E8"),
-    acento: color(tema.colores.acento, "#E8B931"),
-    contorno: color(tema.colores.contorno, "#000000"),
-    secundario: color(tema.colores.secundario, "#1F7A3A"),
-  };
+  const colores = { ...tema.colores, contorno: tema.colores.contorno ?? "#000000", secundario: tema.colores.secundario ?? "#1F7A3A" };
   const f = tema.fuentes;
   const fuentesCss = (["titulos", "subtitulos", "mono"] as const)
     .filter((k) => f[k])
     .map(
       (k) =>
-        `@font-face { font-family: "${familiaCss(f[k]!.familia)}"; src: url("assets/fonts/${archivoFuente(f[k]!.archivo)}") format("woff2"); font-weight: ${Number(f[k]!.peso) || 400}; font-style: normal; font-display: block; }`,
+        `@font-face { font-family: "${f[k]!.familia}"; src: url("assets/fonts/${f[k]!.archivo}") format("woff2"); font-weight: ${f[k]!.peso}; font-style: normal; font-display: block; }`,
     )
     .join("\n        ");
   for (const k of ["titulos", "subtitulos", "mono"] as const) {
-    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", archivoFuente(f[k]!.archivo)), destino: `assets/fonts/${archivoFuente(f[k]!.archivo)}` });
+    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", f[k]!.archivo), destino: `assets/fonts/${f[k]!.archivo}` });
   }
   copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" }, { origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
 
@@ -343,7 +347,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
             .map((img, i) => (img ? `assets/img${i + 1}${img.extension}` : undefined))
             .filter((x): x is string => !!x);
           e.imagenes.forEach((img, i) => img && copias.push({ origen: img.ruta, destino: `assets/img${i + 1}${img.extension}` }));
-          const paleta = (tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto]).filter((c) => COLOR_RE.test(c));
+          const paleta = tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto];
           p = ["escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento }];
           break;
         }
@@ -562,12 +566,12 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     `--texto: ${colores.texto};`,
     `--acento: ${colores.acento};`,
     `--contorno: ${colores.contorno};`,
-    `--fuente-titulos: "${familiaCss(f.titulos.familia)}", sans-serif;`,
-    `--peso-titulos: ${Number(f.titulos.peso) || 400};`,
-    `--fuente-subtitulos: "${familiaCss(f.subtitulos.familia)}", sans-serif;`,
-    `--peso-subtitulos: ${Number(f.subtitulos.peso) || 800};`,
+    `--fuente-titulos: "${f.titulos.familia}", sans-serif;`,
+    `--peso-titulos: ${f.titulos.peso};`,
+    `--fuente-subtitulos: "${f.subtitulos.familia}", sans-serif;`,
+    `--peso-subtitulos: ${f.subtitulos.peso};`,
     `--mayusculas: ${tema.subtitulos?.mayusculas === false ? "none" : "uppercase"};`,
-    `--degradado: ${Math.min(1, Math.max(0, tema.degradado?.opacidad ?? 0.78))};`,
+    `--degradado: ${tema.degradado?.opacidad ?? 0.78};`,
   ].join("\n        ");
   const importmap = usa3d
     ? `    <script type="importmap">{"imports":{"three":"./assets/vendor/three184/three.module.js","three/addons/":"./assets/vendor/three184/addons/"}}</script>`
