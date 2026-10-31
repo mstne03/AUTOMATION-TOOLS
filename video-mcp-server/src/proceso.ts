@@ -223,9 +223,14 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   const relExe = path.relative(raiz, path.resolve(navegador)).split(path.sep).join("/");
   if (relExe !== EXE_NAVEGADOR) throw fallo("el ejecutable del navegador no está en su sitio");
 
+  if (esperados.has(claveRel(LOG_CHROME))) throw fallo("el manifiesto lista el log de Chrome");
   let encontrados: string[];
   try {
-    encontrados = recorrer(raiz).filter((r) => r !== NOMBRE_MANIFIESTO && claveRel(r) !== claveRel(LOG_CHROME));
+    const todos = recorrer(raiz);
+    const log = todos.find((r) => claveRel(r) === claveRel(LOG_CHROME));
+    // Sin hash: un enlace duro dejaría cambiarlo desde fuera (como en el backend, I6).
+    if (log && fs.lstatSync(path.join(raiz, ...log.split("/"))).nlink !== 1) throw new Error(`${LOG_CHROME} tiene otro enlace duro`);
+    encontrados = todos.filter((r) => r !== NOMBRE_MANIFIESTO && r !== log);
   } catch (e) {
     throw fallo((e as Error).message);
   }

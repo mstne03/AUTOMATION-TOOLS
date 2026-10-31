@@ -355,6 +355,83 @@ def test_verificar_rechaza_hardlinks(cft_falso, tmp_path):
 
 
 @solo_windows
+def _instalado_con_log(cft_falso) -> Path:
+    ruta, _ = cft_falso
+    navegador.instalar_desde_zip(ruta)
+    return _version() / config.NAVEGADOR_LOG
+
+
+def test_debug_log_de_chrome_no_pide_redescargar(cft_falso):
+    log = _instalado_con_log(cft_falso)
+    log.write_bytes(b"[ERROR] x")
+    assert navegador.verificar(_version()).is_file()
+    assert video.entorno_motor(_Store())["HYPERFRAMES_BROWSER_PATH"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS no distingue mayúsculas")
+def test_debug_log_en_mayusculas_se_tolera_igual_que_en_el_motor(cft_falso):
+    log = _instalado_con_log(cft_falso)
+    log.with_name("debug.LOG").write_bytes(b"x")
+    assert navegador.verificar(_version()).is_file()
+
+
+def test_debug_log_que_es_carpeta_con_dll_se_rechaza(cft_falso):
+    log = _instalado_con_log(cft_falso)
+    log.mkdir()
+    (log / "x.dll").write_bytes(b"x")
+    with pytest.raises(NavegadorError, match=r"sobra .*debug\.log/x\.dll"):
+        navegador.verificar(_version())
+
+
+def test_debug_log_en_otra_ruta_se_rechaza(cft_falso):
+    _instalado_con_log(cft_falso)
+    (_version() / "debug.log").write_bytes(b"x")
+    with pytest.raises(NavegadorError, match=r"sobra .*debug\.log"):
+        navegador.verificar(_version())
+
+
+def test_otro_nombre_junto_al_exe_se_rechaza(cft_falso):
+    log = _instalado_con_log(cft_falso)
+    log.with_name("debug.log.dll").write_bytes(b"x")
+    with pytest.raises(NavegadorError, match="sobra"):
+        navegador.verificar(_version())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="enlaces de Windows")
+def test_debug_log_enlace_se_rechaza(cft_falso, tmp_path):
+    log = _instalado_con_log(cft_falso)
+    destino = tmp_path / "destino"
+    destino.mkdir()
+    _junction(log, destino)
+    with pytest.raises(NavegadorError, match="es un enlace"):
+        navegador.verificar(_version())
+
+
+def test_debug_log_con_otro_enlace_duro_se_rechaza(cft_falso, tmp_path):
+    log = _instalado_con_log(cft_falso)
+    log.write_bytes(b"x")
+    os.link(log, tmp_path / "fuera.log")
+    with pytest.raises(NavegadorError, match="otro enlace duro"):
+        navegador.verificar(_version())
+
+
+def test_manifiesto_que_lista_el_log_es_corrupto(cft_falso, tmp_path, monkeypatch):
+    _instalado_con_log(cft_falso)
+    manifiesto = _version() / config.NAVEGADOR_MANIFIESTO
+    obj = json.loads(manifiesto.read_bytes())
+    obj["ficheros"][config.NAVEGADOR_LOG] = "0" * 64
+    datos = json.dumps(obj).encode()
+    manifiesto.write_bytes(datos)
+    monkeypatch.setattr(config, "NAVEGADOR_MANIFIESTO_SHA256", _sha(datos))
+    with pytest.raises(NavegadorError, match="lista el log de Chrome"):
+        navegador.verificar(_version())
+
+
+def test_motor_y_backend_toleran_la_misma_ruta():
+    fuente = (Path(__file__).parents[2] / "video-mcp-server" / "src" / "proceso.ts").read_text(encoding="utf-8")
+    assert f'const LOG_CHROME = "{config.NAVEGADOR_LOG}";' in fuente
+
+
 def test_verificar_rechaza_junction_dentro(cft_falso, tmp_path):
     _instalar_en(tmp_path / "v")
     (tmp_path / "centinela").mkdir()

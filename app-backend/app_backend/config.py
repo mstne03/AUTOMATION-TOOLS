@@ -111,6 +111,8 @@ NAVEGADOR_MANIFIESTO_SHA256 = "51085c8fa3f8c022a832617bab007a5099bb9c1b519c88893
 NAVEGADOR_DIR = STATE_DIR / "video" / "navegador"  # fuera de video/proyectos y de la preview
 NAVEGADOR_EXE = "chrome-headless-shell-win64/chrome-headless-shell.exe"
 NAVEGADOR_MANIFIESTO = "MANIFIESTO-SHA256.json"
+# Chrome lo escribe junto a su exe y ninguna bandera lo evita: única excepción a I4 (decisión M-2).
+NAVEGADOR_LOG = "chrome-headless-shell-win64/debug.log"
 
 ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
 

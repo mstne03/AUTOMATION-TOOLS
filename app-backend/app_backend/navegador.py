@@ -250,6 +250,11 @@ def _arbol(carpeta: Path) -> set[str]:
     return rutas
 
 
+def _es_log(rel: str) -> bool:
+    """¿Es la ruta exacta del log de Chrome? Como el motor: NTFS no distingue mayúsculas."""
+    return rel.lower() == config.NAVEGADOR_LOG.lower() if sys.platform == "win32" else rel == config.NAVEGADOR_LOG
+
+
 def verificar(carpeta: Path) -> Path:
     """Comprueba `carpeta` contra su manifiesto anclado y devuelve la ruta del exe.
 
@@ -284,7 +289,10 @@ def verificar(carpeta: Path) -> Path:
             raise _corrupto(f"entrada no permitida {_corto(nombre)}")
     if config.NAVEGADOR_EXE not in esperados:
         raise _corrupto("el manifiesto no incluye el ejecutable")
-    reales = _arbol(carpeta) - {config.NAVEGADOR_MANIFIESTO}
+    if any(_es_log(n) for n in esperados):
+        raise _corrupto("el manifiesto lista el log de Chrome")
+    # El log no se hashea (Chrome lo reescribe), pero `_arbol` ya ha rechazado enlaces y hardlinks.
+    reales = {r for r in _arbol(carpeta) if r != config.NAVEGADOR_MANIFIESTO and not _es_log(r)}
     if sobran := sorted(reales - set(esperados)):
         raise _corrupto(f"sobra {_corto(sobran[0])}")
     if faltan := sorted(set(esperados) - reales):
