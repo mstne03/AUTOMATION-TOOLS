@@ -102,7 +102,12 @@ export function cli(
 export function copiaSinParche(): { bin: string; borrar(): void } {
   const dir = fs.mkdtempSync(path.join(SERVER_ROOT, "node_modules", ".sin-parche-"));
   const hf = path.join(dir, "hyperframes");
-  fs.cpSync(HF, hf, { recursive: true, filter: (p) => !/[\\/]dist[\\/](skills|docs|templates)([\\/]|$)/.test(p) });
+  // HF es una junction de pnpm: cpSync la recrearía como enlace simbólico (EPERM sin privilegio o modo desarrollador y,
+  // con él, un enlace al paquete real que el `git apply --reverse` parchearía). Se copia el directorio real, sin enlaces.
+  const real = fs.realpathSync(HF);
+  fs.cpSync(real, hf, { recursive: true, filter: (p) => !/[\\/]dist[\\/](skills|docs|templates)([\\/]|$)/.test(p) });
+  // Las dependencias de pnpm viven junto al paquete real: una junction (no exige privilegio) las hace resolubles desde la copia.
+  fs.symlinkSync(path.dirname(real), path.join(dir, "node_modules"), "junction");
   const r = spawnSync("git", ["-c", "core.autocrlf=false", "apply", "--reverse", "-p3", PARCHE], {
     cwd: hf,
     env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(hf) },

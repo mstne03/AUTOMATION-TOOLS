@@ -775,7 +775,8 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   // sin el parche: demuestran que sin los hunks la salida existe y que el sumidero la vería.
   describe("I14: salidas de red de Node", () => {
     let sinParche: { bin: string; borrar(): void };
-    beforeAll(() => {
+    // Una prueba y no un beforeAll: si la preparación falla, vitest salta el bloque entero y queda en verde sin medir nada.
+    it("prepara la copia de HyperFrames sin el parche", () => {
       sinParche = copiaSinParche();
     }, 60000);
     afterAll(() => sinParche?.borrar());
