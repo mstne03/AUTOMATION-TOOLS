@@ -36,6 +36,7 @@ import {
 
 const UNTRUSTED = 0;
 const MEDIUM = 8192;
+const LOW = 4096;
 
 interface Muestra {
   pid: number;
@@ -49,7 +50,16 @@ interface Muestra {
   /** Milisegundos (TickCount) de la primera y la última vez que el vigilante vio el proceso. */
   primera: number;
   ultima: number;
+  /** Última lectura de un token legible (TickCount) y si el proceso ya había salido al releerlo. */
+  lowHasta: number;
+  salio: boolean;
 }
+
+/**
+ * Admisión acotada de un renderer visto en Low (4096): solo si salió (no quedó vivo en Low) y vivió
+ * menos de 2 s. Low vivo al parar, o Low durante 2 s o más, es fallo (el sandbox no bajó el token).
+ */
+export const lowAdmitido = (m: Pick<Muestra, "salio" | "primera" | "lowHasta">) => m.salio && m.lowHasta - m.primera < 2000;
 
 // Constante: rutas y PID llegan por variables de entorno, nada se interpola en el script.
 const VIGILANTE = String.raw`
@@ -137,6 +147,16 @@ $parada = $env:VIGIA_PARADA
 $desde = (Get-Date).AddSeconds(-2)
 $tope = (Get-Date).AddMinutes(15)
 $vistos = @{}
+# Un renderer visto en Low que muere antes de pasar a Untrusted ya no está en $nuestros: se relee aparte.
+# Nivel >= 0: vale esa lectura; -1: el proceso ya salió (su último nivel fue Low).
+function ReleerLow {
+  foreach ($v in @($vistos.Values)) {
+    if ($v.integridad -ne 4096 -or $v.salio) { continue }
+    $n = [Integridad]::Nivel($v.pid)
+    if ($n -ge 0) { $v.integridad = $n; $v.lowHasta = [Environment]::TickCount }
+    elseif ($n -eq -1) { $v.salio = $true }
+  }
+}
 [Console]::Out.WriteLine('LISTO')
 [Console]::Out.Flush()
 while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
@@ -159,7 +179,7 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
   foreach ($id in $nuestros.Keys) {
     $p = $nuestros[$id]
     if (-not $vistos.ContainsKey($id)) {
-      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0 }
+      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0; lowHasta = 0; salio = $false }
     }
     $v = $vistos[$id]
     # El tipo sale de la línea de comandos: hasta tenerla, el proceso queda como '?' y se reintenta.
@@ -182,6 +202,7 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
     # inicial (Low) y lo baja a Untrusted al terminar de inicializarse (LowerToken).
     $n = [Integridad]::Nivel($id)
     if ($n -ge 0 -or $v.integridad -lt 0) { $v.integridad = $n }
+    if ($n -ge 0) { $v.lowHasta = [Environment]::TickCount }
   }
   # Sockets: CIM tarda cerca de 1 s con carga y los servidores viven poco, así que entre dos consultas
   # CIM se leen las tablas del sistema varias veces, con los PID ya conocidos.
@@ -194,9 +215,11 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
       if ($c[0] -eq 'T' -and $v.escucha -notcontains $c[1]) { $v.escucha += $c[1] }
       if ($c[0] -eq 'U' -and $v.udp -notcontains $c[1]) { $v.udp += $c[1] }
     }
+    ReleerLow
     Start-Sleep -Milliseconds 25
   }
 }
+ReleerLow
 [Console]::Out.WriteLine((ConvertTo-Json -InputObject @($vistos.Values) -Depth 4 -Compress))
 `;
 
@@ -238,7 +261,7 @@ async function vigilar(exe: string, marca: string): Promise<Vigilante> {
 }
 
 const esLoopback = (dir: string) => dir.startsWith("127.0.0.1:");
-const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
+const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} t=${m.lowHasta - m.primera}/${m.ultima - m.primera}ms salio=${m.salio} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
 
 /** Mata el árbol del Chrome de un control (c.kill() solo mata el proceso browser y sus hijos siguen). */
 const matar = (c: ChildProcess) => spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
@@ -349,6 +372,16 @@ function servir(html: string): Promise<{ url: string; puerto: number; servidas()
     }),
   );
 }
+
+describe("lowAdmitido", () => {
+  const m = (salio: boolean, ms: number) => ({ salio, primera: 1000, lowHasta: 1000 + ms });
+  it("admite Low salido en menos de 2 s; rechaza vivo, y salido en 2 s o más", () => {
+    expect(lowAdmitido(m(true, 500))).toBe(true);
+    expect(lowAdmitido(m(true, 1999))).toBe(true);
+    expect(lowAdmitido(m(true, 2000))).toBe(false);
+    expect(lowAdmitido(m(false, 100))).toBe(false);
+  });
+});
 
 describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", () => {
   const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video sandbox "));
@@ -636,7 +669,14 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     // about:blank inicial que Chrome cambia al navegar): no hay token que leer, se registra y no cuenta.
     // Cualquier otro valor (Medium, Low, -2, -3, -4: existe y no se puede leer) es fallo.
     expect(renderers.length, log).toBeGreaterThan(0);
-    for (const m of renderers) expect([UNTRUSTED, -1], log).toContain(m.integridad);
+    // Excepción acotada: Low (4096) que salió en menos de 2 s sin llegar a Untrusted (carrera de muestreo).
+    for (const m of renderers) {
+      if (m.integridad === LOW && lowAdmitido(m)) {
+        process.stderr.write(`renderer #${m.pid} visto en Low y salido (${m.lowHasta - m.primera} ms)\n`);
+        continue;
+      }
+      expect([UNTRUSTED, -1], `${m.integridad === LOW ? "Low vivo o >= 2 s\n" : ""}${log}`).toContain(m.integridad);
+    }
     // Al menos uno medido de verdad: si todos fueran -1, el bucle anterior no probaría nada.
     expect(renderers.some((r) => r.integridad === UNTRUSTED), log).toBe(true);
     const salidos = renderers.filter((m) => m.integridad === -1).length;
