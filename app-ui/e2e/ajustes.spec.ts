@@ -17,7 +17,7 @@ test.describe("Ajustes", () => {
     await expect(page.getByRole("button", { name: /^Guardar$/ })).toHaveCount(0);
     await expect(page.getByTestId("ajustes-guardar")).toHaveCount(0);
     const nav = page.getByTestId("ajustes-subnav");
-    await expect(nav.getByRole("button")).toHaveText(["General", "Canales de YouTube", "Carpetas permitidas", "Clave de Anthropic", "Avanzado"]);
+    await expect(nav.getByRole("button")).toHaveText(["General", "Canales de YouTube", "Carpetas permitidas", "Clave de Anthropic", "Motor de vídeo", "Avanzado"]);
     await expect(page.getByTestId("ajustes-nav-general")).toHaveAttribute("aria-current", "true");
     await page.getByTestId("ajustes-nav-carpetas").click();
     await expect(page.getByTestId("ajustes-nav-carpetas")).toHaveAttribute("aria-current", "true");
