@@ -49,18 +49,20 @@
         (function () {
           var id = "{{ID}}";
           var d = JSON.parse(document.getElementById(id + "-datos").textContent);
-          var tl = gsap.timeline({ paused: true });
-          {{ENVOLTURA}}
-          tl.fromTo("#" + id + "-svg", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.5, ease: "power2.out" }, d.empieza);
-          tl.fromTo("#" + id + "-titulo", { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, d.empieza);
+          var hf = HF.contexto(id, {{INICIO}});
+          var env = {{ENVOLTURA_DATOS}};
+          hf.envoltura(env);
+          // Los datos no traen `empieza`: el mapa entra al acabar la envoltura y el título al acabar el mapa (así se renderizaba).
+          // Se conserva ese orden para que el render no cambie (arreglarlo es decisión de composicion.ts).
+          var fin = Math.max(env.fundido, env.punch ? 0.45 : 0, Math.max.apply(null, env.golpes.map(function (g) { return g + 4 / 30; }).concat(0)));
+          hf.tween("#" + id + "-svg", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1 }, fin, 0.5, "power2.out");
+          hf.tween("#" + id + "-titulo", { opacity: 0, y: -20 }, { opacity: 1, y: 0 }, fin + 0.5, 0.4, "power2.out");
           d.destacadas.forEach(function (z, i) {
-            var t = d.enciende + i * 0.25;
-            tl.fromTo("#" + z, { fill: "rgba(244, 241, 232, 0.16)", stroke: "rgba(11, 15, 12, 0.85)" },
-              { fill: d.colores.acento, stroke: d.colores.texto, duration: 0.3, ease: "power2.out", immediateRender: false }, t);
+            if (!/^[a-z][a-z0-9-]*$/.test(z)) throw new Error("mapa: id de zona no válido " + String(z));
+            hf.tween("#" + z, { fill: "rgba(244, 241, 232, 0.16)", stroke: "rgba(11, 15, 12, 0.85)" },
+              { fill: d.colores.acento, stroke: d.colores.texto }, d.enciende + i * 0.25, 0.3, "power2.out", { antes: false });
           });
-          tl.fromTo("#" + id + "-etq", { opacity: 0, yPercent: 120 }, { opacity: 1, yPercent: 0, duration: 0.3, ease: "back.out(2)" }, d.etiqueta);
-          window.__timelines = window.__timelines || {};
-          window.__timelines[id] = tl;
+          hf.tween("#" + id + "-etq", { opacity: 0, yPercent: 120 }, { opacity: 1, yPercent: 0 }, d.etiqueta, 0.3, "back.out(2)");
         })();
       </script>
     </div>
