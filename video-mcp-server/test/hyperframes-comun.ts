@@ -16,12 +16,12 @@ export const PARCHE = path.join(SERVER_ROOT, "patches", "hyperframes+0.8.206.pat
 export const HASHES = path.join(SERVER_ROOT, "patches", "hyperframes+0.8.206.sha256.json");
 
 /** Los flags que el parche (hunk A) añade en Windows a todo lanzamiento de Chrome. */
-export const PROXY_NULO = "--proxy-server=127.0.0.1:1";
+export const PROXY_NULO = "--proxy-server=0.0.0.0:1";
 /** Sin URL no se exceptúa nada; `<-loopback>` quita la excepción implícita de loopback de Chrome (R2-M1). */
 export const BYPASS = "--proxy-bypass-list=<-loopback>";
 /** La excepción de un servidor concreto, host y puerto exactos. */
 export const bypassDe = (host: string, puerto: number): string => `${BYPASS};${host}:${puerto}`;
-export const RESOLVER = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1";
+export const RESOLVER = "--host-resolver-rules=MAP localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1";
 export const WEBRTC = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 export const QUIC = "--disable-quic";
 export const SIN_DECODIFICADOR = "--disable-accelerated-video-decode";
@@ -144,7 +144,7 @@ export interface Sumidero {
 }
 
 /** Servidor TCP que cuenta conexiones y guarda su primer trozo (no responde nada). */
-export function sumidero(host = "127.0.0.1"): Promise<Sumidero> {
+export function sumidero(host = "127.0.0.1", puerto = 0): Promise<Sumidero> {
   let n = 0;
   const textos: string[] = [];
   const sockets = new Set<net.Socket>();
@@ -158,7 +158,7 @@ export function sumidero(host = "127.0.0.1"): Promise<Sumidero> {
   });
   return new Promise((ok, mal) => {
     s.once("error", mal);
-    s.listen(0, host, () => {
+    s.listen(puerto, host, () => {
       ok({
         host,
         puerto: (s.address() as net.AddressInfo).port,

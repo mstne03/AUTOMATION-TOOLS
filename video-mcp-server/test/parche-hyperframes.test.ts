@@ -296,6 +296,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     const env = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(SERVER_ROOT) };
     const r = spawnSync("git", ["-c", "core.autocrlf=false", "apply", "--verbose", "--reverse", "--check", PARCHE], { cwd: SERVER_ROOT, env, encoding: "utf8" });
     expect(r.status, `git apply --reverse --check: ${r.stderr}`).toBe(0);
+    expect(fs.readFileSync(PARCHE, "utf8"), "cabecera canónica del fichero nuevo").toContain("diff --git a/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/hyperframes/dist/seo-studio-cierre.js\nnew file mode 100644\n--- /dev/null\n+++ b/node_modules/hyperframes/dist/seo-studio-cierre.js\n@@ -0,0 +1,88 @@\n");
     expect(r.stderr + r.stdout).not.toMatch(/Skipped/i);
     for (const rel of PARCHEADOS) expect(r.stderr + r.stdout).toContain(`Checking patch node_modules/hyperframes/${rel}`);
     // git apply puede saltarse un fichero sin avisar: se mira el contenido de cada uno.

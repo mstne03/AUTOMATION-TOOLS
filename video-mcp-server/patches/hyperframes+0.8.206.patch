@@ -97,9 +97,9 @@ diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hype
 +  return u.port && (u.hostname === "localhost" || u.hostname === "127.0.0.1") ? [`--proxy-bypass-list=<-loopback>;${u.hostname}:${u.port}`] : [];
 +}
 +var SEO_STUDIO_ARGS_WIN32 = [
-+  "--proxy-server=127.0.0.1:1",
++  "--proxy-server=0.0.0.0:1",
 +  SEO_STUDIO_SIN_BYPASS,
-+  "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
++  "--host-resolver-rules=MAP localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
 +  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 +  "--disable-quic",
 +  "--disable-accelerated-video-decode"
@@ -384,11 +384,11 @@ diff --git a/node_modules/hyperframes/dist/cli.js b/node_modules/hyperframes/dis
  import { createRequire as __hf_createRequire } from "node:module";
  import { fileURLToPath as __hf_fileURLToPath } from "node:url";
  import { dirname as __hf_dirname } from "node:path";
-diff --git b/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/hyperframes/dist/seo-studio-cierre.js
+diff --git a/node_modules/hyperframes/dist/seo-studio-cierre.js b/node_modules/hyperframes/dist/seo-studio-cierre.js
 new file mode 100644
 --- /dev/null
 +++ b/node_modules/hyperframes/dist/seo-studio-cierre.js
-@@ -0,0 +0,88 @@
+@@ -0,0 +1,88 @@
 +// SEO Studio (parche local, SEO-109, I14). Punto único del cierre de red de Node:
 +// - seoStudioCerrarRuta/Url rechazan una referencia del HTML o el CSS antes de tocar el disco.
 +// - En Windows, además, fs y child_process abortan el proceso ante una ruta UNC ya resuelta, venga de
