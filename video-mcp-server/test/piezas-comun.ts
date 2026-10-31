@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { PlanComposicion } from "../src/composicion.js";
+import { compararPngContraReferencia, renderizar } from "../scripts/comparar-fotogramas.mjs";
 import { GUION_TODAS, GUION_TUNEL } from "../scripts/montar.mjs";
 
 const HF_TIEMPO = fs.readFileSync(new URL("../plantilla/vendor/hf-tiempo.js", import.meta.url), "utf8");
@@ -17,7 +18,14 @@ export function piezaHtml(p: PlanComposicion, nombre: string): string {
 }
 
 export type Animacion = { sel: string; kf: object[]; op: { delay: number; duration: number; easing: string; fill: string } };
-export type ElementoFalso = { textContent: string; style: Record<string, string> };
+export type ElementoFalso = {
+  textContent: string;
+  style: Record<string, string>;
+  children: ElementoFalso[];
+  /** Llama a los oyentes registrados con `addEventListener(tipo, …)` (p. ej. `load` de una imagen). */
+  disparar(tipo: string): void;
+  [propiedad: string]: unknown;
+};
 export type EjecucionPieza = {
   animaciones: Animacion[];
   /** Despacha `hf-seek` con `{ detail: { time: t } }` a los oyentes de la pieza. */
@@ -28,6 +36,7 @@ export type EjecucionPieza = {
 type Nodo = ElementoFalso & {
   id: string;
   children: Nodo[];
+  addEventListener(tipo: string, f: () => void): void;
   animate(kf: object[], op: Animacion["op"]): { pause(): void };
   appendChild(n: Nodo): Nodo;
   getAttribute(n: string): string | null;
@@ -52,12 +61,19 @@ export function ejecutarPieza(html: string): EjecucionPieza {
   const raizId = /data-composition-id="([^"]+)"/.exec(html)?.[1];
 
   const cache = new Map<string, Nodo[]>();
+  const alertas = new Map<Nodo, Map<string, (() => void)[]>>();
   const nodo = (clave: string, id = ""): Nodo => {
     const n: Nodo = {
       id,
       textContent: texto.get(id) ?? "",
       style: {},
       children: [],
+      addEventListener(tipo, f) {
+        (alertas.get(n) ?? alertas.set(n, new Map()).get(n)!).set(tipo, [...(alertas.get(n)!.get(tipo) ?? []), f]);
+      },
+      disparar(tipo) {
+        (alertas.get(n)?.get(tipo) ?? []).forEach((f) => f());
+      },
       animate(kf, op) {
         animaciones.push({ sel: clave, kf, op });
         return { pause() {} };
@@ -66,7 +82,8 @@ export function ejecutarPieza(html: string): EjecucionPieza {
         n.children.push(h);
         return h;
       },
-      getAttribute: () => null,
+      // Solo el contenedor tiene atributos útiles: `data-composition-variables` (declaración de variables de la pieza).
+      getAttribute: (a) => (a === "data-composition-variables" && id === raizId ? /data-composition-variables='([^']*)'/.exec(html)?.[1] ?? null : null),
       setAttribute() {},
       querySelector: (sel) => resolver(sel)[0] ?? null,
       querySelectorAll: (sel) => resolver(sel),
@@ -201,6 +218,25 @@ export async function conCandadoDeRender<T>(fn: () => Promise<T>): Promise<T> {
   } finally {
     fs.rmSync(candado, { recursive: true, force: true });
   }
+}
+
+/**
+ * SSIM por fotograma de TUNEL por PNG sin pérdida (x264 recuantiza el grano y baja el SSIM aunque la pieza sea idéntica).
+ * La referencia GSAP se renderiza una vez a PNG (~1 GB, ~7 min) en `W2_SCRATCH` (o junto a W2_REFS, que no se toca) y se
+ * reutiliza; se escribe en un directorio temporal y se renombra, para no dejar una caché a medias. Todo bajo el candado.
+ */
+export async function compararTunelPng(motor: string, refs: string, dirCand: string, salida: string) {
+  const base = process.env.W2_SCRATCH?.trim() || path.join(refs, "..");
+  const pngRef = path.join(base, "png-ref-tunel");
+  return conCandadoDeRender(async () => {
+    if (!fs.existsSync(pngRef)) {
+      const tmp = `${pngRef}.tmp`;
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await renderizar(motor, path.join(refs, "TUNEL", "montaje", "proyecto", "video001", "_composicion"), tmp, path.join(base, "hf-home-png-ref"), { png: true, timeoutMs: 1_800_000 });
+      fs.renameSync(tmp, pngRef);
+    }
+    return compararPngContraReferencia(motor, pngRef, dirCand, salida);
+  });
 }
 
 // ---------- Sonda de preview ----------

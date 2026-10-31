@@ -195,10 +195,8 @@ const MIOS = /^(h-)?(gancho|bloque2)(-|$)/;
 describe.skipIf(!motor)("contra el render GSAP congelado", () => {
   const trabajo = path.join(process.env.W2_SCRATCH ?? path.join(os.tmpdir(), "w2-w21"), "cand");
 
-  // FONDO_CSS (cifra sin golpe) no se exige: en su fotograma 127 (t = 4,2333 s) la cuenta vale 4721,5011 y GSAP, que redondea
-  // el tiempo a 1e-8 y el valor a 1e-6, da 4721,4975 («4,721»); el valor exacto da «4,722». Un dígito distinto ensancha el
-  // texto (Anton no es tabular) y ese único fotograma baja a SSIM 0,9686. No es un fallo de la pieza: es un empate de
-  // redondeo de ese guion. La cifra sin golpe la cubre el test unitario.
+  // FONDO_CSS (cifra sin golpe) lo mide W2.2. Su fotograma 127 (t = 4,2333 s) era un empate de redondeo: la cuenta valía 4721,5011
+  // y GSAP, que redondea el tiempo, daba 4721,4975. La cifra redondea ahora el tiempo a 6 decimales como el reloj anterior.
   const clave = "TODAS" as const;
   it(`SSIM >= 0,99 por fotograma, mismo nº de fotogramas y check sin errores (${clave})`, { timeout: 1_800_000 }, async () => {
     const dirCand = path.join(trabajo, clave, "montaje");

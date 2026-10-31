@@ -7,7 +7,7 @@ import { compararContraReferencia } from "../scripts/comparar-fotogramas.mjs";
 import { montar } from "../scripts/montar.mjs";
 import { sondearPreview } from "../scripts/sondear-preview.mjs";
 import { plan } from "./ayudas-plan.js";
-import { conCandadoDeRender, ejecucionConMotor, ejecutarPieza, FORMA_GSAP, GUIONES_W2, piezaHtml } from "./piezas-comun.js";
+import { compararTunelPng, conCandadoDeRender, ejecucionConMotor, ejecutarPieza, FORMA_GSAP, GUIONES_W2, piezaHtml } from "./piezas-comun.js";
 
 const TITULO3D = "escenas:\n  6:\n    tipo: titulo3d\n    texto: AGUA";
 const TUNEL = "escenas:\n  6:\n    tipo: tunel";
@@ -107,6 +107,96 @@ describe("escena-tunel", () => {
   it("no pinta nada con innerHTML", () => {
     expect(html).not.toMatch(/innerHTML|insertAdjacentHTML|document\.write|outerHTML/);
   });
+
+  // Comportamiento con un THREE falso que acepta cualquier llamada y cuenta los `render` del renderizador.
+  const comodin = (): any => {
+    const propias = new Map<string | symbol, unknown>();
+    return new Proxy(function () {}, {
+      get: (_t, k) => (propias.has(k) ? propias.get(k) : k === Symbol.toPrimitive ? () => 0 : comodin()),
+      set: (_t, k, v) => (propias.set(k, v), true),
+      apply: () => comodin(),
+      construct: () => comodin(),
+    });
+  };
+  /** Sonda que va antes de la pieza: THREE falso y un registro del orden en que se asignan `crossOrigin` y `src` de cada imagen. */
+  const SONDA_TUNEL = `<script>
+    window.THREE = globalThis.__THREE_FALSO;
+    (function () {
+      var crear = document.createElement;
+      document.createElement = function (tag) {
+        var el = crear.call(document, tag);
+        if (tag === "img") {
+          var orden = [], vals = {};
+          ["crossOrigin", "src"].forEach(function (k) {
+            Object.defineProperty(el, k, { set: function (v) { orden.push(k); vals[k] = v; }, get: function () { return vals[k]; } });
+          });
+          el.orden = orden;
+        }
+        return el;
+      };
+    })();
+  </script>
+  <script>
+    (function () {`;
+  function ejecutarTunel(fuente: string) {
+    let dibujos = 0;
+    const THREE = comodin();
+    THREE.WebGLRenderer = function () {
+      return { setPixelRatio() {}, setSize() {}, setClearColor() {}, render: () => void dibujos++ };
+    };
+    const g = globalThis as Record<string, unknown>;
+    g.__THREE_FALSO = THREE;
+    g.getComputedStyle = () => ({ getPropertyValue: () => "" });
+    try {
+      const r = ejecutarPieza(fuente.replace(/<script>\s*\(function \(\) \{/, SONDA_TUNEL));
+      return { r, dibujos: () => dibujos, fotos: () => r.elemento(`${ID}-assets`).children };
+    } finally {
+      delete g.__THREE_FALSO;
+      delete g.getComputedStyle;
+    }
+  }
+
+  it("dibuja una vez al montar y solo una por cada tiempo distinto; un hf-seek no finito o repetido no dibuja", () => {
+    const { r, dibujos } = ejecutarTunel(html);
+    expect(dibujos()).toBe(1); // draw(0)
+    r.seek(inicio + 1);
+    expect(dibujos()).toBe(2);
+    r.seek(inicio + 1);
+    r.seek(NaN);
+    r.seek(inicio + 1 + 1e-9); // mismo tiempo a 6 decimales
+    expect(dibujos()).toBe(2);
+    r.seek(inicio + 2);
+    expect(dibujos()).toBe(3);
+  });
+
+  it("las fotos se piden con crossOrigin anónimo asignado antes de src", () => {
+    const { fotos } = ejecutarTunel(html);
+    expect(fotos().length).toBeGreaterThan(0);
+    for (const f of fotos()) {
+      expect(f.crossOrigin).toBe("anonymous");
+      expect(f.orden).toEqual(["crossOrigin", "src"]);
+    }
+  });
+
+  it("una foto que carga después del último dibujo repinta ese mismo tiempo (draw(ultimo))", () => {
+    const { r, dibujos, fotos } = ejecutarTunel(html);
+    r.seek(inicio + 1);
+    const antes = dibujos();
+    const foto = fotos()[0];
+    foto.naturalWidth = 400;
+    foto.naturalHeight = 300;
+    foto.disparar("load");
+    expect(dibujos()).toBe(antes + 1);
+    // Mutación: sin `draw(ultimo)` la foto no se vería hasta el siguiente seek con otro tiempo.
+    expect(html).toContain("draw(ultimo);");
+    const m = ejecutarTunel(html.replace("draw(ultimo);", ""));
+    m.r.seek(inicio + 1);
+    const a = m.dibujos();
+    m.fotos()[0].naturalWidth = 400;
+    m.fotos()[0].naturalHeight = 300;
+    m.fotos()[0].disparar("load");
+    expect(m.dibujos()).toBe(a);
+  });
 });
 
 // ---------- Motor: SSIM contra GSAP y hf-seek con three.js en preview ----------
@@ -177,38 +267,42 @@ const p95 = (v: number[]) => [...v].sort((a, b) => a - b)[Math.min(v.length - 1,
 const montajes = new Map<string, ReturnType<typeof montar>>();
 /** Un montaje por clave y ejecución: el de SSIM y el de preview comparten el mismo. */
 const montarCand = (clave: keyof typeof GUIONES_W2) => {
-  if (!montajes.has(clave)) montajes.set(clave, montar(motor!.motor, path.join(CAND, clave, "montaje"), GUIONES_W2[clave]));
+  if (!montajes.has(clave)) montajes.set(clave, conCandadoDeRender(() => montar(motor!.motor, path.join(CAND, clave, "montaje"), GUIONES_W2[clave])));
   return montajes.get(clave)!;
 };
 
 describe.runIf(motor)("W2.4 con motor", () => {
   const casos = [
-    { clave: "TODAS" as const, modo: "host" as const, ssimEsperado: true },
-    // Hallazgo W2.4: el túnel migrado da SSIM mínimo 0,9887 (< 0,99). Medido por PNG sin pérdida da 0,9884: no es x264 ni
-    // el túnel, es 1 fotograma (t = 2,167 s; el siguiente da 0,9904) de la salida del gancho (power4.in, ~94 px por
-    // fotograma). No se baja el umbral. `it.fails`: pasa mientras falle, y avisa cuando se arregle.
-    { clave: "TUNEL" as const, modo: "scene" as const, ssimEsperado: false },
+    { clave: "TODAS" as const, modo: "host" as const },
+    // TUNEL se mide por PNG sin pérdida: x264 recuantiza el grano (suelo por mp4 0,9875). Suelo por PNG ~0,9927.
+    { clave: "TUNEL" as const, modo: "scene" as const },
   ];
-  for (const { clave, modo, ssimEsperado } of casos) {
-    (ssimEsperado ? it : it.fails)(`${clave}: SSIM >= 0,99 por fotograma contra el render GSAP`, async () => {
+  for (const { clave, modo } of casos) {
+    it(`${clave}: SSIM >= 0,99 por fotograma contra el render GSAP${clave === "TUNEL" ? " (por PNG)" : ""}`, async () => {
       const { refs } = motor!;
       const montaje = await montarCand(clave);
-      if (clave === "TODAS") expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
-      const informe = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(refs, clave, "ref.mp4"), montaje.dir, path.join(CAND, clave, "comparacion")));
+      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
+      const salida = path.join(CAND, clave, "comparacion");
+      const informe =
+        clave === "TUNEL"
+          ? await compararTunelPng(motor!.motor, refs, montaje.dir, salida)
+          : await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(refs, clave, "ref.mp4"), montaje.dir, salida));
       process.stderr.write(`[W2.4 ${clave}] ${JSON.stringify({ fotogramas: informe.fotogramasCandidata, ssimMin: informe.ssimMin, ssimMedia: informe.ssimMedia, peores: informe.peores.slice(0, 3) })}
 `);
       expect(informe.fotogramasCandidata).toBe(informe.fotogramasReferencia);
       expect(informe.ssimMin).toBeGreaterThanOrEqual(0.99);
       expect(informe.ok).toBe(true);
-    }, 900_000);
+    }, 1_800_000);
 
     it(`${clave}: preview con hf-seek, play y seek tras play`, async () => {
       const { refs } = motor!;
       const montaje = await montarCand(clave);
       const tiempos = tiemposBloque(montaje.dir);
       const refDir = path.join(refs, clave, "montaje", "proyecto", "video001", "_composicion");
-      const cand = await sondearPreview({ navegador: NAVEGADOR, dir: montaje.dir, sonda: sonda(tiempos, modo) });
-      const ref = await sondearPreview({ navegador: NAVEGADOR, dir: refDir, sonda: sonda(tiempos, modo) });
+      const [cand, ref] = await conCandadoDeRender(async () => [
+        await sondearPreview({ navegador: NAVEGADOR, dir: montaje.dir, sonda: sonda(tiempos, modo) }),
+        await sondearPreview({ navegador: NAVEGADOR, dir: refDir, sonda: sonda(tiempos, modo) }),
+      ]);
       // El fondo aurora de TODAS necesita WebGPU, que el navegador del motor no ofrece en la preview: no es de esta pieza.
       const errores = cand.erroresPagina.filter((e: string) => !/WebGPU unavailable/.test(e));
       expect(errores).toEqual([]);

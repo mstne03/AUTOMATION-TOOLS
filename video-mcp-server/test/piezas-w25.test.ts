@@ -82,9 +82,12 @@ describe("subtitulos sin GSAP (unit)", () => {
       });
 
       it("mutación: sin un tween falta una animación", () => {
-        const roto = html.replace(/\n\s*hf\.tween\(txt, \{ opacity: 0, scale: 0\.92 \}[^\n]*/, "");
+        // La entrada del grupo es otro tween en impacto (desde/hasta) que en el resto.
+        const entrada = estilo === "impacto" ? /\n\s*hf\.tween\(txt, desde, hasta[^\n]*/ : /\n\s*hf\.tween\(txt, \{ opacity: 0, scale: 0\.92 \}[^\n]*/;
+        const roto = html.replace(entrada, "");
+        expect(roto).not.toBe(html);
         const n = (h: string) => ejecutarPieza(h).animaciones.length;
-        if (estilo !== "impacto") expect(n(roto)).toBeLessThan(n(html));
+        expect(n(roto)).toBeLessThan(n(html));
       });
     });
   }
@@ -180,14 +183,14 @@ ${cuerpo}
   };
 
   for (const estilo of ["karaoke", "pildora", "neon"]) {
-    it(`${estilo}: nº de animaciones del peor guion de 180 s ≤ 3000 y igual al del timeline GSAP`, () => {
+    it(`${estilo}: nº de animaciones del peor guion de 180 s ≤ 1500 (umbral de coste) y igual al del timeline GSAP`, () => {
       const html = piezaHtml(denso(estilo), "subtitulos");
       const d = datosDe(html);
       const palabras = d.grupos.flatMap((g) => g.palabras).length;
       expect(palabras).toBeGreaterThan(250);
       const n = ejecutarPieza(html).animaciones.length;
       expect(n).toBe(esperadas(d).length);
-      expect(n).toBeLessThanOrEqual(3000);
+      expect(n).toBeLessThanOrEqual(1500);
     });
   }
 });
@@ -205,10 +208,10 @@ describe.skipIf(!motor)("subtitulos contra el render GSAP congelado (motor)", ()
       const { motor: m, refs } = motor!;
       const cand = path.join(refs, "..", "cand-w25", clave);
       fs.rmSync(cand, { recursive: true, force: true });
-      const montaje = await montar(m, path.join(cand, "montaje"), GUIONES_W2[clave]);
+      const montaje = await conCandadoDeRender(() => montar(m, path.join(cand, "montaje"), GUIONES_W2[clave]));
       const html = fs.readFileSync(path.join(montaje.dir, "compositions", "subtitulos.html"), "utf8");
       expect(html).not.toMatch(FORMA_GSAP);
-      if (clave === "TODAS") expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
+      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
       const informe = await conCandadoDeRender(() => compararContraReferencia(m, path.join(refs, clave, "ref.mp4"), montaje.dir, path.join(cand, "salida")));
       expect(informe.fotogramasCandidata).toBe(informe.fotogramasReferencia);
       expect(informe.ssimMin).toBeGreaterThanOrEqual(0.99);
@@ -252,7 +255,9 @@ describe.skipIf(!motor)("subtitulos en la preview frente a la referencia GSAP (m
       // (b) el runtime reparte hf-seek durante el play y WAAPI no se desfasa.
       expect(rc.play.hfSeeks).toBeGreaterThan(0);
       expect(rc.play.animaciones).toBeGreaterThan(0);
-      if (rc.play.desfaseMedianaMs !== null) expect(rc.play.desfaseMedianaMs).toBeLessThanOrEqual(3.1);
+      // Sin desfase medido (null) no se verificó nada: es un fallo, no un pase.
+      expect(rc.play.desfaseMedianaMs).not.toBeNull();
+      expect(rc.play.desfaseMedianaMs!).toBeLessThanOrEqual(3.1);
       // (c) cada seek tras 12 s de play da exactamente el estado en frío.
       expect(rc.tras).toEqual(rc.frio);
     }, 300_000);
@@ -298,9 +303,15 @@ describe.skipIf(!motor || !process.env.W25_MEDIR)("subtitulos: coste en preview 
       const g = GUION_COSTE(estilo, duracion, denso);
       const dir = path.join(refs, "..", "cand-w25", `coste-${estilo}-${duracion}`);
       fs.rmSync(dir, { recursive: true, force: true });
-      const m = await montar(motor!.motor, dir, g.texto, { duracionVoz: g.duracion });
+      const m = await conCandadoDeRender(() => montar(motor!.motor, dir, g.texto, { duracionVoz: g.duracion }));
       const r = await conCandadoDeRender(() => sondearPreview({ navegador: NAVEGADOR, dir: m.dir, sonda: SONDA_COSTE }));
       fs.writeFileSync(path.join(dir, "coste.json"), JSON.stringify({ ...(r.resultado as object), errores: r.erroresPagina }, null, 2));
+      // Umbrales del plan: 1500 animaciones y 8 ms de mediana de seek. Los fotogramas perdidos no se miden en el headless sin GPU.
+      const c = r.resultado as { animaciones: number; seekMedianaMs: number; seekP95Ms: number };
+      expect(r.erroresPagina.filter((e: string) => !/WebGPU unavailable/.test(e))).toEqual([]);
+      expect(c.animaciones).toBeGreaterThan(0);
+      expect(c.animaciones).toBeLessThanOrEqual(1500);
+      expect(c.seekMedianaMs).toBeLessThanOrEqual(8);
     }, 600_000);
   }
 });

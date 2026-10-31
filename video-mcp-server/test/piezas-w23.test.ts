@@ -8,7 +8,7 @@ import { compararContraReferencia } from "../scripts/comparar-fotogramas.mjs";
 import { montar } from "../scripts/montar.mjs";
 import { sondearPreview } from "../scripts/sondear-preview.mjs";
 import { plan, planDeGuion } from "./ayudas-plan.js";
-import { conCandadoDeRender, ejecutarPieza, ejecucionConMotor, FORMA_GSAP, GUIONES_W2, piezaHtml, SONDA_ESTADO } from "./piezas-comun.js";
+import { compararTunelPng, conCandadoDeRender, ejecutarPieza, ejecucionConMotor, FORMA_GSAP, GUIONES_W2, piezaHtml, SONDA_ESTADO } from "./piezas-comun.js";
 
 const BARRAS = `escenas:
   4:
@@ -84,6 +84,10 @@ describe("capas", () => {
     expect(fin).toBe(`00:${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`);
     r.seek(NaN);
     expect(r.elemento("capas-contador").textContent).toBe(fin);
+  });
+
+  it("una duración no finita lanza (I11) en vez de acotar con NaN", () => {
+    for (const malo of [null, "x"]) expect(() => ejecutarPieza(conDatos(html, (d) => ((d as { duracion: unknown }).duracion = malo))), String(malo)).toThrow(/capas/);
   });
 
   it("un id de destello no válido lanza", () => {
@@ -184,6 +188,36 @@ describe("escena-barras", () => {
     expect(JSON.stringify(estado(r))).toBe(a);
   });
 
+  it("texto hostil en título, series, prefijo, sufijo y fuente: escapado y solo por textContent", () => {
+    const hostil = `escenas:
+  4:
+    tipo: barras
+    titulo: "<img src=x onerror=alert(1)>"
+    fuente: "<b>fuente</b>"
+    prefijo: "<"
+    sufijo: "</script><i>{{ID}}"
+    periodos: [2020, 2022]
+    series:
+      "<u>Alpha</u>": [5, 8]
+      "Beta&": [2, 6]`;
+    const h = Object.values(plan(hostil).p.archivos).find((x) => x.includes("-periodo"))!;
+    expect(h).not.toMatch(/<img src=x|<b>fuente|<u>Alpha/);
+    expect(h).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(h.match(/HF\.contexto\([^)]*\)/g)).toHaveLength(1);
+    const r = ejecutarPieza(h);
+    r.seek(1e9);
+    const id = /data-composition-id="([^"]+)"/.exec(h)![1];
+    // El valor lleva el prefijo y el sufijo hostiles como texto, no como marcado.
+    expect(r.elemento(`${id}-f0`).querySelector(".valor")!.textContent).toMatch(/^<\d+<\/script><i>\{\{ID\}\}$/);
+    expect(h).not.toMatch(/innerHTML/);
+  });
+
+  it("datos no finitos o inconsistentes lanzan (I11) en vez de repintar en cada seek", () => {
+    for (const malo of [{ empieza: null }, { empieza: "x" }, { duracionPeriodo: 0 }, { duracionPeriodo: null }, { series: [{ nombre: "A", valores: [1, null] }] }, { series: [{ nombre: "A", valores: [1] }] }]) {
+      expect(() => ejecutarPieza(conDatos(html, (x) => Object.assign(x, malo))), JSON.stringify(malo)).toThrow(/escena-barras/);
+    }
+  });
+
   it("mutación: el reloj es lo que mueve las barras", () => {
     const sinReloj = html.replace(/hf\.reloj\(/, "(function(f){})(");
     const r = ejecutarPieza(sinReloj);
@@ -240,54 +274,96 @@ describe("escena-mapa", () => {
   it("sin innerHTML", () => {
     expect(html).not.toMatch(/innerHTML/);
   });
+
+  it("texto hostil en título y etiqueta: escapado, sin marcado ni marcadores sin sustituir", () => {
+    const hostil = `escenas:
+  5:
+    tipo: mapa
+    region: europa
+    titulo: "<img src=x onerror=alert(1)> {{INICIO}}"
+    destacar: [Spain, Italy]
+    etiqueta: "</div><script>alert(1)</script>"`;
+    const { p: pm } = plan(hostil);
+    const h = Object.values(pm.archivos).find((x) => x.includes("-etq-caja"))!;
+    expect(h).not.toMatch(/<img src=x|<script>alert/);
+    expect(h).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(h).toContain("&lt;/div&gt;&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(h.match(/HF\.contexto\([^)]*\)/g)).toHaveLength(1);
+    expect(() => ejecutarPieza(h)).not.toThrow();
+  });
+
+  it("datos no válidos lanzan antes de animar", () => {
+    for (const malo of [{ destacadas: "no-es-lista" }, { destacadas: [7] }, { destacadas: ["x, #y"] }]) {
+      expect(() => ejecutarPieza(conDatos(html, (x) => Object.assign(x, malo))), JSON.stringify(malo)).toThrow();
+    }
+  });
 });
 
 // ---------- Motor: SSIM contra GSAP y estado de la preview ----------
 
 const motor = ejecucionConMotor();
-const dirTmp = fs.mkdtempSync(path.join(os.tmpdir(), "w23-"));
+const dirTmp = motor ? fs.mkdtempSync(path.join(os.tmpdir(), "w23-")) : "";
 
 describe.skipIf(!motor)("W2.3 con motor", () => {
   for (const clave of ["TODAS", "TUNEL"] as const) {
-    // TUNEL: el mp4 no sirve para medir el grano (la referencia con SOLO el grano a 0,152 da 0,9875 por x264), pero NO es
-    // lo que baja esta candidata. Por PNG sin pérdida (scripts/comparar-fotogramas.mjs, `ssimPng`): suelo ref/ref 0,9927,
-    // grano 0,152 0,9923 y candidata integrada 0,9884, con SOLO 1 fotograma < 0,99 (t = 2,167 s, la salida del gancho;
-    // ver W2.1). Se mantiene el skip hasta cerrar esa diferencia; no se baja el umbral.
-    (clave === "TUNEL" ? it.skip : it)(
-      `SSIM ≥ 0,99 por fotograma contra GSAP (${clave})`,
+    // TUNEL se mide por PNG sin pérdida (x264 recuantiza el grano: por mp4 la propia referencia da 0,9875 contra sí misma con
+    // el grano a 0,152). El suelo por PNG es ~0,9927 (el render no es bit a bit determinista entre ejecuciones).
+    it(
+      `SSIM ≥ 0,99 por fotograma contra GSAP (${clave}${clave === "TUNEL" ? ", por PNG" : ""})`,
       async () => {
-        const m = await montar(motor!.motor, path.join(dirTmp, `cand-${clave}`), GUIONES_W2[clave]);
-        if (clave === "TODAS") expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
-        const inf = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(motor!.refs, clave, "ref.mp4"), m.dir, path.join(dirTmp, `cmp-${clave}`)));
-        process.stderr.write(`[W2.3] ${clave}: ssimMin=${inf.minimo ?? inf.ssimMin} media=${inf.media ?? inf.ssimMedia} fotogramas=${inf.fotogramasCandidata}/${inf.fotogramasReferencia}\n`);
+        const m = await conCandadoDeRender(() => montar(motor!.motor, path.join(dirTmp, `cand-${clave}`), GUIONES_W2[clave]));
+        expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
+        const salida = path.join(dirTmp, `cmp-${clave}`);
+        const inf =
+          clave === "TUNEL"
+            ? await compararTunelPng(motor!.motor, motor!.refs, m.dir, salida)
+            : await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(motor!.refs, clave, "ref.mp4"), m.dir, salida));
+        process.stderr.write(`[W2.3] ${clave}: ssimMin=${inf.ssimMin} media=${inf.ssimMedia} fotogramas=${inf.fotogramasCandidata}/${inf.fotogramasReferencia}
+`);
         expect(inf.fotogramasCandidata).toBe(inf.fotogramasReferencia);
+        expect(inf.ssimMin).toBeGreaterThanOrEqual(0.99);
         expect(inf.ok).toBe(true);
       },
       3_600_000,
     );
 
+    // El túnel no tiene ningún elemento de capas, barras ni mapa: su preview es de W2.4.
+    if (clave !== "TODAS") continue;
+
     it(
       `preview: la candidata iguala a la referencia en frío y tras 12 s de play (${clave})`,
       async () => {
         const navegador = path.join(motor!.motor, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe");
-        const cand = (await montar(motor!.motor, path.join(dirTmp, `prev-${clave}`), GUIONES_W2[clave])).dir;
+        const cand = (await conCandadoDeRender(() => montar(motor!.motor, path.join(dirTmp, `prev-${clave}`), GUIONES_W2[clave]))).dir;
         const ref = path.join(motor!.refs, clave, "montaje", "proyecto", "video001", "_composicion");
-        const a = (await sondearPreview({ navegador, dir: cand, sonda: SONDA_ESTADO })).resultado as any;
-        const b = (await sondearPreview({ navegador, dir: ref, sonda: SONDA_ESTADO })).resultado as any;
+        const [a, b] = (await conCandadoDeRender(async () => [
+          (await sondearPreview({ navegador, dir: cand, sonda: SONDA_ESTADO })).resultado,
+          (await sondearPreview({ navegador, dir: ref, sonda: SONDA_ESTADO })).resultado,
+        ])) as any[];
         const cerca = (x: any, y: any) =>
           x.rect.every((v: number, i: number) => Math.abs(v - y.rect[i]) <= 0.75) && Math.abs(x.opacity - y.opacity) <= 0.01 && x.texto === y.texto;
         // Solo los elementos de estas tres piezas.
         const propios = (e: any) => /^(capas|bloque4|bloque5|.*-f\d|.*-periodo|.*-z\d)/.test(e.id) || /^capas/.test(e.id);
         const fallos: string[] = [];
+        let comparados = 0;
         for (const t of Object.keys(a.frio)) {
-          for (const e of a.frio[t].filter(propios)) {
+          const mios = a.frio[t].filter(propios);
+          expect(mios.length, `t=${t}: ningún elemento propio en la candidata`).toBeGreaterThan(0);
+          for (const e of mios) {
             const o = b.frio[t].find((x: any) => x.id === e.id);
-            if (o && !cerca(e, o)) fallos.push(`frío t=${t} ${e.id}`);
+            comparados++;
+            if (!o) fallos.push(`frío t=${t} ${e.id}: falta en la referencia`);
+            else if (!cerca(e, o)) fallos.push(`frío t=${t} ${e.id}`);
           }
           // Seek tras play = seek en frío, de la propia candidata.
           if (JSON.stringify(a.tras[t]) !== JSON.stringify(a.frio[t])) fallos.push(`tras play t=${t}`);
         }
+        expect(comparados).toBeGreaterThan(0);
         expect(a.play.hfSeeks).toBeGreaterThan(0);
+        expect(a.play.animaciones).toBeGreaterThan(0);
+        // Mediana del desfase WAAPI frente al reloj del player; null (nada medido) es un fallo, no un pase.
+        expect(a.play.desfaseMedianaMs).not.toBeNull();
+        expect(a.play.desfaseMedianaMs).toBeLessThanOrEqual(3.1);
         expect(fallos).toEqual([]);
       },
       600_000,
