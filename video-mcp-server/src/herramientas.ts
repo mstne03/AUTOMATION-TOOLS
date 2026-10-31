@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { archivosVideo, imagenesValidadas, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -43,6 +43,17 @@ function leerPalabras(ruta: string): ResultadoAlineacion | undefined {
   }
 }
 
+/** Imágenes de la carpeta; si alguna es un recurso rechazado (I6), no lanza: devuelve el motivo en `aviso` y ninguna imagen. */
+function imagenesOAviso(dir: string): { imagenes: (ImagenEncontrada | undefined)[]; ignoradas: string[]; avisos: string[]; aviso?: string } {
+  try {
+    const { imagenes, ignoradas, avisos } = imagenesValidadas(dir);
+    return { imagenes, ignoradas, avisos };
+  } catch (e) {
+    if (!(e instanceof ErrorVideo)) throw e;
+    return { imagenes: new Array(6).fill(undefined), ignoradas: [], avisos: [], aviso: e.message };
+  }
+}
+
 /** Escritura atómica: primero a un temporal y luego renombrado. */
 function escribirAtomico(ruta: string, datos: string | Buffer): void {
   const tmp = `${ruta}.tmp-${process.pid}`;
@@ -73,16 +84,8 @@ export function listar(cfg: Config): Respuesta {
   const ids = listarIds(cfg.videoRoot);
   const videos = ids.map((id) => {
     const r = archivosVideo(cfg.videoRoot, id);
-    // Un enlace simbólico sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
-    let imagenes: ReturnType<typeof imagenesValidadas>["imagenes"] = [];
-    let ignoradas: string[] = [];
-    let aviso: string | undefined;
-    try {
-      ({ imagenes, ignoradas } = imagenesValidadas(r.dir));
-    } catch (e) {
-      if (!(e instanceof ErrorVideo)) throw e;
-      aviso = e.message;
-    }
+    // Un recurso sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
+    const { imagenes, ignoradas, aviso } = imagenesOAviso(r.dir);
     const { guion } = leerGuion(r.guion);
     // Imágenes requeridas = bloques sin escena (sin guion válido, las 6).
     const requeridas = guion ? bloquesConFoto(guion.opciones.escenas) : [1, 2, 3, 4, 5, 6];
@@ -157,8 +160,10 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   const avisos: string[] = [];
   const { guion, problemas } = leerGuion(r.guion);
 
-  const { imagenes, avisos: avisosImg } = imagenesValidadas(r.dir);
+  // Un recurso rechazado (enlace, hardlink) se informa como aviso: solo el render lo rechaza (I6).
+  const { imagenes, avisos: avisosImg, aviso: avisoImagenes } = imagenesOAviso(r.dir);
   avisos.push(...avisosImg);
+  if (avisoImagenes) avisos.push(`No he podido leer las imágenes: ${avisoImagenes}`);
   const infoImagenes: { n: number; encontrada: boolean; nombre?: string; ancho?: number; alto?: number; avisoResolucion?: boolean }[] = [];
   for (const [i, img] of imagenes.entries()) {
     if (!img) {

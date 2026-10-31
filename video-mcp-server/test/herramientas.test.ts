@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Config } from "../src/config.js";
-import { generarVoz, guardarGuion, listar } from "../src/herramientas.js";
+import { estado, generarVoz, guardarGuion, listar } from "../src/herramientas.js";
 import { ErrorGuion, hashNarracion } from "../src/guion.js";
 
 const RAIZ = fs.mkdtempSync(path.join(os.tmpdir(), "video tools "));
@@ -91,5 +91,18 @@ describe("herramientas", () => {
     await expect(generarVoz(cfg, { id: "video003" }, fetchError as unknown as typeof fetch)).rejects.toThrow(/401[\s\S]*ELEVENLABS_API_KEY/);
     await expect(generarVoz(cfg, { id: "video003" }, fetchError as unknown as typeof fetch)).rejects.not.toThrow(/sk-secreta/);
     expect(fs.existsSync(path.join(RAIZ, "video003", "voz.mp3"))).toBe(false);
+  });
+
+  it("estado avisa de una foto con hardlink en vez de lanzar (y el listado no se rompe)", async () => {
+    guardarGuion(cfg, { id: "video050", contenido: GUION });
+    const dir = path.join(RAIZ, "video050");
+    const ajeno = path.join(RAIZ, "ajeno.jpg");
+    fs.writeFileSync(ajeno, "ajeno");
+    fs.linkSync(ajeno, path.join(dir, "img1.jpg"));
+    const r = await estado(cfg, "video050");
+    expect(r.texto).toMatch(/enlace duro/);
+    expect(String((r.datos as { avisos: string[] }).avisos.join(" "))).toMatch(/enlace duro/);
+    expect((r.datos as { imagenes: { encontrada: boolean }[] }).imagenes.every((i) => !i.encontrada)).toBe(true);
+    expect(listar(cfg).texto).toMatch(/video050/);
   });
 });
