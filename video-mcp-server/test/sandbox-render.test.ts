@@ -50,16 +50,17 @@ interface Muestra {
   /** Milisegundos (TickCount) de la primera y la última vez que el vigilante vio el proceso. */
   primera: number;
   ultima: number;
-  /** Última lectura de un token legible (TickCount) y si el proceso ya había salido al releerlo. */
-  lowHasta: number;
-  salio: boolean;
+  /** Código de salida al parar el vigilante; 259 (STILL_ACTIVE): sigue vivo. */
+  salida: number;
 }
 
 /**
- * Admisión acotada de un renderer visto en Low (4096): solo si salió (no quedó vivo en Low) y vivió
- * menos de 2 s. Low vivo al parar, o Low durante 2 s o más, es fallo (el sandbox no bajó el token).
+ * Renderer que terminó en Low sin poder haber tocado la composición. Solo pasa en la sonda de GPU: tiene
+ * dos renderers (pestaña inicial y la de WebGL), cierra en cuanto responde el segundo y el primero sale
+ * antes de bajar el token. Exige cierre limpio y un browser sin excepción de proxy, que no navega al
+ * servidor. El HIGH-1 sigue exigiendo otro renderer Untrusted en ese browser, y JS no responde en Low.
  */
-export const lowAdmitido = (m: Pick<Muestra, "salio" | "primera" | "lowHasta">) => m.salio && m.lowHasta - m.primera < 2000;
+export const lowSinComposicion = (m: Pick<Muestra, "integridad" | "salida">, lista?: string) => m.integridad === LOW && m.salida === 0 && lista === BYPASS;
 
 // Constante: rutas y PID llegan por variables de entorno, nada se interpola en el script.
 const VIGILANTE = String.raw`
@@ -69,6 +70,8 @@ using System; using System.Runtime.InteropServices;
 public static class Integridad {
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint a, bool h, int pid);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint c);
+  public static long Salida(IntPtr h) { uint c; return GetExitCodeProcess(h, out c) ? (long)c : -1L; }
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr t, int c, IntPtr i, int l, out int r);
   [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr s, uint n);
@@ -124,12 +127,17 @@ public static class Integridad {
     }
     return r.ToArray();
   }
-  public static int Nivel(int pid) {
+  // El asa se retiene hasta el final: el token sigue legible tras la salida y el PID no se reutiliza.
+  // Cero si no se pudo abrir; error 87 (ERROR_INVALID_PARAMETER): el proceso ya no existe.
+  public static IntPtr Abrir(int pid, out int error) {
     IntPtr h = OpenProcess(0x1000, false, pid);
-    // -1: el proceso ya no existe (87, ERROR_INVALID_PARAMETER); -4: existe pero no se puede abrir.
-    if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? -1 : -4;
+    error = h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+    return h;
+  }
+  // Nivel definitivo: el token de un proceso solo baja, así que vale leerlo al final, vivo o salido.
+  public static int Nivel(IntPtr h) {
     IntPtr t;
-    if (!OpenProcessToken(h, 0x8, out t)) { CloseHandle(h); return -2; }
+    if (!OpenProcessToken(h, 0x8, out t)) return -2;
     int r; GetTokenInformation(t, 25, IntPtr.Zero, 0, out r);
     IntPtr b = Marshal.AllocHGlobal(r);
     try {
@@ -137,7 +145,7 @@ public static class Integridad {
       IntPtr sid = Marshal.ReadIntPtr(b);
       int n = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
       return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(n - 1)));
-    } finally { Marshal.FreeHGlobal(b); CloseHandle(t); CloseHandle(h); }
+    } finally { Marshal.FreeHGlobal(b); CloseHandle(t); }
   }
 }
 "@
@@ -147,16 +155,7 @@ $parada = $env:VIGIA_PARADA
 $desde = (Get-Date).AddSeconds(-2)
 $tope = (Get-Date).AddMinutes(15)
 $vistos = @{}
-# Un renderer visto en Low que muere antes de pasar a Untrusted ya no está en $nuestros: se relee aparte.
-# Nivel >= 0: vale esa lectura; -1: el proceso ya salió (su último nivel fue Low).
-function ReleerLow {
-  foreach ($v in @($vistos.Values)) {
-    if ($v.integridad -ne 4096 -or $v.salio) { continue }
-    $n = [Integridad]::Nivel($v.pid)
-    if ($n -ge 0) { $v.integridad = $n; $v.lowHasta = [Environment]::TickCount }
-    elseif ($n -eq -1) { $v.salio = $true }
-  }
-}
+$asas = @{}
 [Console]::Out.WriteLine('LISTO')
 [Console]::Out.Flush()
 while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
@@ -179,7 +178,11 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
   foreach ($id in $nuestros.Keys) {
     $p = $nuestros[$id]
     if (-not $vistos.ContainsKey($id)) {
-      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0; lowHasta = 0; salio = $false }
+      $vistos[$id] = [ordered]@{ pid = $id; ppid = [int]$p.ParentProcessId; exe = [string]$p.ExecutablePath; tipo = '?'; integridad = -9; cmd = ''; escucha = @(); udp = @(); primera = [Environment]::TickCount; ultima = 0; salida = -1 }
+      $e = 0
+      $asas[$id] = [Integridad]::Abrir($id, [ref]$e)
+      # -1: el proceso ya no existe; -4: existe pero no se puede abrir.
+      if ($asas[$id] -eq [IntPtr]::Zero) { $vistos[$id].integridad = if ($e -eq 87) { -1 } else { -4 } }
     }
     $v = $vistos[$id]
     # El tipo sale de la línea de comandos: hasta tenerla, el proceso queda como '?' y se reintenta.
@@ -198,11 +201,6 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
       }
     }
     $v.ultima = [Environment]::TickCount
-    # Se relee en cada vuelta y vale la última lectura: el sandbox arranca el proceso con un token
-    # inicial (Low) y lo baja a Untrusted al terminar de inicializarse (LowerToken).
-    $n = [Integridad]::Nivel($id)
-    if ($n -ge 0 -or $v.integridad -lt 0) { $v.integridad = $n }
-    if ($n -ge 0) { $v.lowHasta = [Environment]::TickCount }
   }
   # Sockets: CIM tarda cerca de 1 s con carga y los servidores viven poco, así que entre dos consultas
   # CIM se leen las tablas del sistema varias veces, con los PID ya conocidos.
@@ -215,11 +213,18 @@ while (-not (Test-Path -LiteralPath $parada) -and (Get-Date) -lt $tope) {
       if ($c[0] -eq 'T' -and $v.escucha -notcontains $c[1]) { $v.escucha += $c[1] }
       if ($c[0] -eq 'U' -and $v.udp -notcontains $c[1]) { $v.udp += $c[1] }
     }
-    ReleerLow
     Start-Sleep -Milliseconds 25
   }
 }
-ReleerLow
+# El sandbox arranca el proceso con un token inicial (Low) y lo baja a Untrusted antes de ejecutar nada
+# de la página (LowerToken). Se lee una sola vez, al final y por el asa: un muestreo no vería un renderer
+# que baja y sale entre dos consultas CIM (medido: Untrusted 30 ms y salida con código 0).
+foreach ($id in @($vistos.Keys)) {
+  if ($asas[$id] -ne [IntPtr]::Zero) {
+    $vistos[$id].integridad = [Integridad]::Nivel($asas[$id])
+    $vistos[$id].salida = [Integridad]::Salida($asas[$id])
+  }
+}
 [Console]::Out.WriteLine((ConvertTo-Json -InputObject @($vistos.Values) -Depth 4 -Compress))
 `;
 
@@ -260,8 +265,9 @@ async function vigilar(exe: string, marca: string): Promise<Vigilante> {
   };
 }
 
+const listaBypass = (b?: Muestra) => /--proxy-bypass-list=(\S+)/.exec(b?.cmd ?? "")?.[0];
 const esLoopback = (dir: string) => dir.startsWith("127.0.0.1:");
-const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} t=${m.lowHasta - m.primera}/${m.ultima - m.primera}ms salio=${m.salio} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
+const resumen = (ms: Muestra[]) => ms.map((m) => `${m.tipo}#${m.pid}<${m.ppid} il=${m.integridad} t=${m.ultima - m.primera}ms salida=${m.salida} tcp=[${m.escucha}] udp=[${m.udp}]${m.tipo === "browser" ? ` cmd=${m.cmd}` : ""}`).join("\n");
 
 /** Mata el árbol del Chrome de un control (c.kill() solo mata el proceso browser y sus hijos siguen). */
 const matar = (c: ChildProcess) => spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
@@ -373,13 +379,14 @@ function servir(html: string): Promise<{ url: string; puerto: number; servidas()
   );
 }
 
-describe("lowAdmitido", () => {
-  const m = (salio: boolean, ms: number) => ({ salio, primera: 1000, lowHasta: 1000 + ms });
-  it("admite Low salido en menos de 2 s; rechaza vivo, y salido en 2 s o más", () => {
-    expect(lowAdmitido(m(true, 500))).toBe(true);
-    expect(lowAdmitido(m(true, 1999))).toBe(true);
-    expect(lowAdmitido(m(true, 2000))).toBe(false);
-    expect(lowAdmitido(m(false, 100))).toBe(false);
+describe("lowSinComposicion", () => {
+  it("solo admite Low con cierre limpio en un browser sin excepción de proxy", () => {
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, BYPASS)).toBe(true);
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, `${BYPASS};localhost:1234`)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 0 }, undefined)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 259 }, BYPASS)).toBe(false);
+    expect(lowSinComposicion({ integridad: LOW, salida: 1 }, BYPASS)).toBe(false);
+    expect(lowSinComposicion({ integridad: MEDIUM, salida: 0 }, BYPASS)).toBe(false);
   });
 });
 
@@ -565,17 +572,19 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   );
 
   it(
-    "control: el vigilante ve Medium con --no-sandbox y Untrusted sin él",
+    "control: el vigilante lee Medium con --no-sandbox y Untrusted sin él, con Chrome ya salido",
     async () => {
       for (const [flags, esperado] of [[["--no-sandbox"], MEDIUM], [[], UNTRUSTED]] as [string[], number][]) {
         const marca = `vigia-control-${Date.now()}`;
         const v = await vigilar(CFT!, marca);
         const dd = path.join(RAIZ, marca);
-        const c = spawn(CFT!, ["--headless", `--user-data-dir=${dd}`, ...flags, "data:text/html,<p>hola</p>"], { windowsHide: true, stdio: "ignore" });
+        const c = spawn(CFT!, ["--headless", `--user-data-dir=${dd}`, PROXY_NULO, RESOLVER, ...flags, "data:text/html,<p>hola</p>"], { windowsHide: true, stdio: "ignore" });
         hijos.push(c);
-        await new Promise((r) => setTimeout(r, 8000)); // con el equipo cargado el renderer tarda en nacer
-        const ms = await v.parar();
+        // Margen para que todo renderer llegue a su nivel: en la ruta del CfT 156 cada proceso tarda 2 s en
+        // arrancar. Se mata antes de parar: el token se lee del proceso ya salido, como en la sonda de GPU.
+        await new Promise((r) => setTimeout(r, 15000));
         matar(c);
+        const ms = await v.parar();
         const renderers = ms.filter((m) => m.tipo === "renderer");
         expect(renderers.length, resumen(ms)).toBeGreaterThan(0);
         for (const r of renderers) expect(r.integridad, `${flags}: ${resumen(ms)}`).toBe(esperado);
@@ -665,17 +674,16 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
   function comprobarProcesos(ms: Muestra[], log: string, conWebRtc: boolean) {
     const renderers = ms.filter((m) => m.tipo === "renderer");
     const browsers = ms.filter((m) => m.tipo === "browser");
-    // 2. Todo renderer medido, en Untrusted. -1 = el renderer ya había salido cuando se fue a leer (el
-    // about:blank inicial que Chrome cambia al navegar): no hay token que leer, se registra y no cuenta.
+    // 2. Todo renderer medido, en Untrusted: nivel definitivo, leído al final por el asa, haya salido o no.
+    // -1 = ya no existía al ir a abrirlo tras verlo en CIM: no hay token que leer, se registra y no cuenta.
     // Cualquier otro valor (Medium, Low, -2, -3, -4: existe y no se puede leer) es fallo.
     expect(renderers.length, log).toBeGreaterThan(0);
-    // Excepción acotada: Low (4096) que salió en menos de 2 s sin llegar a Untrusted (carrera de muestreo).
     for (const m of renderers) {
-      if (m.integridad === LOW && lowAdmitido(m)) {
-        process.stderr.write(`renderer #${m.pid} visto en Low y salido (${m.lowHasta - m.primera} ms)\n`);
+      if (lowSinComposicion(m, listaBypass(browsers.find((b) => b.pid === m.ppid)))) {
+        process.stderr.write(`renderer #${m.pid} de la sonda salió en Low sin composición\n`);
         continue;
       }
-      expect([UNTRUSTED, -1], `${m.integridad === LOW ? "Low vivo o >= 2 s\n" : ""}${log}`).toContain(m.integridad);
+      expect([UNTRUSTED, -1], log).toContain(m.integridad);
     }
     // Al menos uno medido de verdad: si todos fueran -1, el bucle anterior no probaría nada.
     expect(renderers.some((r) => r.integridad === UNTRUSTED), log).toBe(true);
@@ -695,7 +703,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     for (const b of browsers) {
       for (const f of [GPU_SIN_SANDBOX, ...FLAGS_RED.filter((x) => x !== BYPASS), MARCADOR]) expect(b.cmd, `${f} en browser#${b.pid}\n${log}`).toContain(f);
       // El que navega lleva la excepción de su servidor; el resto (sonda de GPU, efectos), ninguna.
-      const lista = /--proxy-bypass-list=(\S+)/.exec(b.cmd)?.[0];
+      const lista = listaBypass(b);
       if (lista !== BYPASS) expect(lista, `browser#${b.pid}\n${log}`).toMatch(/^--proxy-bypass-list=<-loopback>;(localhost|127\.0\.0\.1):\d+$/);
       expect(b.cmd).not.toMatch(/--no-sandbox|--single-process|--in-process-gpu/);
       // Un browser de vida corta (la sonda de GPU de HyperFrames) puede cerrar antes de que el vigilante
