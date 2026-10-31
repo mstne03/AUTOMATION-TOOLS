@@ -47,11 +47,34 @@ describe("curvas de hf-tiempo.js", () => {
     }
   });
 
-  it("linear() de expo.out tiene 65 puntos y extremos 0 y 1", () => {
+  it("linear() de expo.out tiene 257 puntos y extremos 0 y 1", () => {
     const l = cargarHf().linear("expo.out");
     expect(l.startsWith("linear(0, ")).toBe(true);
     expect(l.endsWith(", 1)")).toBe(true);
-    expect(l.slice("linear(".length, -1).split(", ")).toHaveLength(65);
+    expect(l.slice("linear(".length, -1).split(", ")).toHaveLength(257);
+  });
+
+  // Con 64 puntos power4.in se desviaba ~6e-4 y expo.inOut 2,7e-3: en un contorno que se mueve ~94 px por fotograma el
+  // SSIM por PNG de TUNEL bajaba de 0,99 (SEO-112). Con 256 el peor caso (expo.inOut) queda en ~1,9e-4.
+  it("la interpolación por tramos de linear() se desvía de la curva menos de 2e-4", () => {
+    const HF = cargarHf();
+    for (const k of Object.keys(CONGELADAS)) {
+      const f = HF.curva(k);
+      const pts = HF.linear(k).slice("linear(".length, -1).split(", ").map(Number);
+      const N = pts.length - 1;
+      let peor = 0;
+      for (let j = 0; j <= 4000; j++) {
+        const p = j / 4000, x = p * N, i = Math.min(N - 1, Math.floor(x));
+        peor = Math.max(peor, Math.abs(pts[i] + (pts[i + 1] - pts[i]) * (x - i) - f(p)));
+      }
+      expect(peor, k).toBeLessThan(2e-4);
+    }
+  });
+
+  it("linear() se calcula una vez por curva y distingue curvas con parámetros distintos", () => {
+    const HF = cargarHf();
+    expect(HF.linear("power4.in")).toBe(HF.linear("power4.in"));
+    expect(HF.linear("back.out(1.7)")).not.toBe(HF.linear("back.out(3)"));
   });
 
   it("una curva desconocida lanza, también las claves heredadas de Object (L3)", () => {
