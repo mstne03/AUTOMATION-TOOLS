@@ -111,7 +111,9 @@ export async function sondearPreview({ navegador, dir, sonda, sinCsp = false, ma
   if (!navegador || !fs.existsSync(navegador)) throw new Error(`Falta el navegador (executablePath obligatorio): ${navegador}`);
   const s = await servirComposicion({ dir, sinCsp, marcoSinCsp, reescribirMeta, sinDnsPrefetchOff });
   // Entorno mínimo para Chrome (L4): nada del entorno del desarrollador.
-  const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), args: ["--autoplay-policy=no-user-gesture-required", ...argsExtra] });
+  // Sin DNS ni salida (R2-L6): las reglas también cubren literales IP (medido en CfT 152 y 156) y sin proxy del sistema.
+  const args = ["--autoplay-policy=no-user-gesture-required", "--no-proxy-server", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1", ...argsExtra];
+  const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), args });
   const erroresPagina = [];
   try {
     const page = await browser.newPage();
