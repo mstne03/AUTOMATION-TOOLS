@@ -171,8 +171,9 @@ Los SHA-256 de las capturas son los de S1 (idénticas byte a byte). Ejecución s
 restantes y la única violación CSP es la `eval` de detección (`csp: 1`, §7). Límites: la cola de renders no se puede leer
 en el producto (`__dbgShader` no existe fuera de `spikes/`), así que «un solo render en curso» y «≤ 3 renders por 60
 llamadas» los fija `test/shaders-glue.test.ts` con un `Ji` falso; el barrido capturó los 51 instantes pero solo los 4 de S1
-tienen referencia. **No medido:** CfT 152/156 (exige `--disable-gpu-sandbox`, sin autorización de Marc), render de la CLI
-con el parche y `check` (el CLI parcheado añade ese flag en cada lanzamiento), WebView2 (M2).
+tienen referencia. Render real con la CLI parcheada (CfT 152, el flujo normal del producto): 612/612 fotogramas, SSIM mínimo
+1,0000 frente al glue original y `check` limpio; la CLI pide un render por fotograma, así que no ejercita la cola.
+**No medido:** las sondas S8/S9 en CfT 152/156 (exigen `--disable-gpu-sandbox`, sin autorización de Marc) y WebView2 (M2).
 
 ## 7. Seguridad
 
