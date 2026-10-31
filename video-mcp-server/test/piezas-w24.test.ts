@@ -281,7 +281,8 @@ describe.runIf(motor)("W2.4 con motor", () => {
     it(`${clave}: SSIM >= 0,99 por fotograma contra el render GSAP${clave === "TUNEL" ? " (por PNG)" : ""}`, async () => {
       const { refs } = motor!;
       const montaje = await montarCand(clave);
-      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
+      // Solo TODAS lleva el fondo aurora (WebGPU): el túnel no tiene fondo con shader y su montaje no usa la GPU.
+      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(clave === "TODAS");
       const salida = path.join(CAND, clave, "comparacion");
       const informe =
         clave === "TUNEL"

@@ -312,7 +312,8 @@ describe.skipIf(!motor)("W2.3 con motor", () => {
       `SSIM ≥ 0,99 por fotograma contra GSAP (${clave}${clave === "TUNEL" ? ", por PNG" : ""})`,
       async () => {
         const m = await conCandadoDeRender(() => montar(motor!.motor, path.join(dirTmp, `cand-${clave}`), GUIONES_W2[clave]));
-        expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
+        // Solo TODAS lleva el fondo aurora (WebGPU): el túnel no tiene fondo con shader y su montaje no usa la GPU.
+        expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(clave === "TODAS");
         const salida = path.join(dirTmp, `cmp-${clave}`);
         const inf =
           clave === "TUNEL"

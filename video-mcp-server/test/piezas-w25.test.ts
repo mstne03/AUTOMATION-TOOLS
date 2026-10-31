@@ -211,7 +211,8 @@ describe.skipIf(!motor)("subtitulos contra el render GSAP congelado (motor)", ()
       const montaje = await conCandadoDeRender(() => montar(m, path.join(cand, "montaje"), GUIONES_W2[clave]));
       const html = fs.readFileSync(path.join(montaje.dir, "compositions", "subtitulos.html"), "utf8");
       expect(html).not.toMatch(FORMA_GSAP);
-      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(true);
+      // Solo TODAS lleva el fondo aurora (WebGPU): los guiones de subtítulos no tienen fondo con shader y no usan la GPU.
+      expect(montaje.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${montaje.avisos.join(" | ")}`).toBe(clave === "TODAS");
       const informe = await conCandadoDeRender(() => compararContraReferencia(m, path.join(refs, clave, "ref.mp4"), montaje.dir, path.join(cand, "salida")));
       expect(informe.fotogramasCandidata).toBe(informe.fotogramasReferencia);
       expect(informe.ssimMin).toBeGreaterThanOrEqual(0.99);
