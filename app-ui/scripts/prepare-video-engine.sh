@@ -91,6 +91,7 @@ echo "== Motor: build"
 echo "== Motor: copia y dependencias de producción"
 cp -r "$MOTOR/dist" "$DEST/app/dist"
 cp "$MOTOR/package.json" "$MOTOR/package-lock.json" "$DEST/app/"
+mkdir -p "$DEST/app/patches" && cp "$MOTOR/patches/hyperframes+$HYPERFRAMES_VERSION.sha256.json" "$DEST/app/patches/"
 # plantilla y catalogo: solo lo versionado (nada de salidas locales que se hayan colado).
 git -C "$MOTOR" ls-files -z plantilla catalogo | tar -C "$MOTOR" --null -T - -cf - | tar -C "$DEST/app" -xf -
 # --ignore-scripts: ningún script de instalación de terceros se ejecuta al empaquetar; los binarios

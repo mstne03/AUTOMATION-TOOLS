@@ -26,7 +26,6 @@ import {
   GPU_SIN_SANDBOX,
   HASHES,
   HF,
-  ipNoInterna,
   MARCADOR,
   PARCHE,
   PROXY_NULO,
@@ -316,7 +315,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     /** Copia solo lo parcheado, tal como está ahora, en una carpeta con node_modules/hyperframes. */
     const copia = (): string => {
       const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "video parche "));
-      for (const rel of PARCHEADOS) {
+      for (const rel of [...PARCHEADOS, "bin/hyperframes.mjs"]) {
         fs.mkdirSync(path.dirname(path.join(raiz, "node_modules", "hyperframes", rel)), { recursive: true });
         fs.copyFileSync(path.join(HF, rel), path.join(raiz, "node_modules", "hyperframes", rel));
       }
@@ -352,6 +351,36 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
         expect(r.status).toBe(1);
         expect(r.stderr).toContain("git no se resuelve fuera de");
       } finally {
+        fs.rmSync(raiz, { recursive: true, force: true });
+      }
+    });
+
+    it("falla con bin/hyperframes.mjs cambiado: sinParche también se comprueba", () => {
+      const raiz = copia();
+      try {
+        fs.appendFileSync(path.join(raiz, "node_modules", "hyperframes", "bin", "hyperframes.mjs"), "// tocado");
+        const r = aplicar(raiz);
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("bin/hyperframes.mjs: SHA-256 inesperado");
+      } finally {
+        fs.rmSync(raiz, { recursive: true, force: true });
+      }
+    });
+
+    it.each(["ficheros", "sinParche"])("R0 M1: un JSON sin %s no da por bueno el dist", (clave) => {
+      const servidor = fs.mkdtempSync(path.join(os.tmpdir(), "video hashes "));
+      const raiz = copia();
+      try {
+        fs.cpSync(path.dirname(script), path.join(servidor, "scripts"), { recursive: true });
+        fs.cpSync(path.dirname(PARCHE), path.join(servidor, "patches"), { recursive: true });
+        const j = JSON.parse(fs.readFileSync(HASHES, "utf8")) as Record<string, unknown>;
+        delete j[clave];
+        fs.writeFileSync(path.join(servidor, "patches", path.basename(HASHES)), JSON.stringify(j));
+        const r = spawnSync(process.execPath, [path.join(servidor, "scripts", "aplicar-parche.mjs"), raiz], { encoding: "utf8", windowsHide: true });
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("no lista ficheros");
+      } finally {
+        fs.rmSync(servidor, { recursive: true, force: true });
         fs.rmSync(raiz, { recursive: true, force: true });
       }
     });
@@ -1078,7 +1107,6 @@ describe("I7: servidores de HyperFrames solo en loopback", () => {
   });
 
   it("createFileServer del motor de HyperFrames escucha en 127.0.0.1", async () => {
-    const ip = ipNoInterna();
     const { createFileServer } = (await import(chunk("chunk-RDDVQSNQ.js"))) as {
       createFileServer: (o: object) => Promise<{ port: number; close: () => unknown }>;
     };
@@ -1086,7 +1114,7 @@ describe("I7: servidores de HyperFrames solo en loopback", () => {
     const srv = await createFileServer({ projectDir: tmp, compiledDir: tmp, port: 0 });
     try {
       expect(await conecta("127.0.0.1", srv.port)).toBe(true);
-      expect(await conecta(ip, srv.port)).toBe(false);
+      expect(await conecta("127.0.0.2", srv.port)).toBe(false); // en 0.0.0.0 respondería también aquí, sin salir de loopback
     } finally {
       await srv.close();
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -37,8 +37,9 @@ try {
   } catch {
     git(["--verbose"], "inherit");
   }
-  const { ficheros } = JSON.parse(fs.readFileSync(HASHES, "utf8"));
-  for (const [fichero, esperado] of Object.entries(ficheros)) {
+  const { ficheros, sinParche } = JSON.parse(fs.readFileSync(HASHES, "utf8"));
+  if (!Object.keys(ficheros ?? {}).length || !Object.keys(sinParche ?? {}).length) throw new Error("el JSON de hashes no lista ficheros");
+  for (const [fichero, esperado] of Object.entries({ ...ficheros, ...sinParche })) {
     const hash = createHash("sha256").update(fs.readFileSync(path.join(raiz, "node_modules", "hyperframes", fichero))).digest("hex");
     if (hash !== esperado) throw new Error(`${fichero}: SHA-256 inesperado (${hash})`);
   }

@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { log } from "./log.js";
 import { STATE_DIR } from "./estado.js";
+import { SERVER_ROOT } from "./raiz.js";
 // Ciclo de imports con musica.ts: HYPERFRAMES_BIN solo se lee dentro de ejecutar(), nunca al cargar.
 import { HYPERFRAMES_BIN } from "./musica.js";
 
@@ -146,6 +147,9 @@ const sinPrefijoLargo = (p: string): string => p.replace(/^\\\\\?\\/, "");
 /** Clave de comparación de una ruta relativa del manifiesto (NTFS no distingue mayúsculas). */
 const claveRel = (rel: string): string => (process.platform === "win32" ? rel.toLowerCase() : rel);
 
+const rutaRelativaValida = (rel: string): boolean =>
+  !!rel && !rel.includes("\\") && !rel.includes(":") && !rel.startsWith("/") && !rel.split("/").some((p) => p === ".." || p === "." || p === "");
+
 function sha256(fichero: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash("sha256");
@@ -198,9 +202,7 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   }
   const esperados = new Map<string, { rel: string; hash: string }>();
   for (const [rel, hash] of Object.entries(m.ficheros as Record<string, unknown>)) {
-    if (!rel || rel.includes("\\") || rel.includes(":") || rel.startsWith("/") || rel.split("/").some((p) => p === ".." || p === "." || p === "")) {
-      throw fallo(`ruta no válida en el manifiesto: ${rel}`);
-    }
+    if (!rutaRelativaValida(rel)) throw fallo(`ruta no válida en el manifiesto: ${rel}`);
     if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw fallo(`hash no válido para ${rel}`);
     if (esperados.has(claveRel(rel))) throw fallo(`${rel} aparece dos veces en el manifiesto`);
     esperados.set(claveRel(rel), { rel, hash });
@@ -244,6 +246,43 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   for (const rel of encontrados) {
     const { hash } = esperados.get(claveRel(rel))!;
     if ((await sha256(path.join(raiz, ...rel.split("/")))) !== hash) throw fallo(`${rel} no coincide con el manifiesto`);
+  }
+}
+
+const HASHES_DIST = ["patches", "hyperframes+0.8.206.sha256.json"];
+/** Sin estos, el JSON no prueba nada aunque cuadre: la entrada, el marcador de Chrome y el cierre de red (R0 M1). */
+const OBLIGATORIOS_DIST = ["bin/hyperframes.mjs", "dist/cli.js", "dist/seo-studio-cierre.js", "dist/chunk-K4MJX7SR.js"];
+
+/**
+ * R2-M3: los ficheros parcheados de HyperFrames y su bin, contra los SHA-256 fijados, antes de cada CLI y también en
+ * desarrollo. Detecta un bundle sin parche, una instalación rota, un antivirus y una versión cambiada. Es integridad,
+ * no autenticidad: el JSON vive junto al dist y lo puede escribir cualquier proceso del usuario. Residual: los otros
+ * 319 ficheros de dist/ y node_modules quedan sin hash, y entre comprobar y lanzar hay una ventana (aceptada, como I4).
+ */
+export async function verificarDist(raiz: string = SERVER_ROOT): Promise<void> {
+  const fallo = (motivo: string) => new ErrorNavegador(`La instalación del motor de vídeo está incompleta (${motivo}): reinstala SEO Studio.`);
+  const hf = path.join(raiz, "node_modules", "hyperframes");
+  let version: unknown;
+  let m: { version?: unknown; ficheros?: unknown; sinParche?: unknown };
+  try {
+    version = (JSON.parse(fs.readFileSync(path.join(hf, "package.json"), "utf8")) as { version?: unknown }).version;
+    m = JSON.parse(fs.readFileSync(path.join(raiz, ...HASHES_DIST), "utf8")) as typeof m;
+  } catch {
+    throw fallo("no puedo leer la versión o los hashes del parche");
+  }
+  if (typeof m.version !== "string" || m.version !== version) throw fallo(`hyperframes ${String(version)} y los hashes de ${String(m.version)}`);
+  const listas = [m.ficheros, m.sinParche];
+  if (!listas.every((l) => !!l && typeof l === "object" && !Array.isArray(l) && Object.keys(l).length)) throw fallo("el JSON no lista ficheros");
+  const esperados = Object.entries({ ...(m.ficheros as object), ...(m.sinParche as object) }) as [string, unknown][];
+  for (const [rel, hash] of esperados) {
+    if (!rutaRelativaValida(rel)) throw fallo(`ruta no válida: ${rel}`);
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) throw fallo(`hash no válido para ${rel}`);
+  }
+  for (const rel of OBLIGATORIOS_DIST) if (!esperados.some(([r]) => r === rel)) throw fallo(`el JSON no fija ${rel}`);
+  for (const [rel, hash] of esperados) {
+    const fichero = path.join(hf, ...rel.split("/"));
+    if (!existe(fichero)) throw fallo(`falta ${rel}`);
+    if ((await sha256(fichero)) !== hash) throw fallo(`${rel} no coincide`);
   }
 }
 
@@ -332,7 +371,7 @@ let colaCli: Promise<unknown> = Promise.resolve();
 /**
  * Único punto por el que el motor lanza procesos: sin shell, argumentos en array y con el entorno
  * construido desde cero (I5). Si es la CLI de HyperFrames, además: solo con el Node del motor, modo
- * cerrado y HOME/cwd en hf-home (I13), navegador comprobado antes de lanzar (I4) y en serie.
+ * cerrado y HOME/cwd en hf-home (I13), dist y navegador comprobados antes de lanzar (R2-M3, I4) y en serie.
  */
 export function ejecutar(comando: string, args: string[], opciones: OpcionesEjecutar = {}): Promise<Resultado> {
   if (!esLlamadaCli(comando, args)) return lanzar(comando, args, opciones, false);
@@ -340,6 +379,7 @@ export function ejecutar(comando: string, args: string[], opciones: OpcionesEjec
     return Promise.reject(new Error(`La CLI de HyperFrames solo se lanza con el Node del motor (${process.execPath}), no con ${comando}.`));
   }
   const turno = colaCli.then(async () => {
+    await verificarDist();
     await verificarNavegador();
     // cwd fijo: la CLI aplica el .env de su cwd a su entorno (cli.js), y busca ffmpeg en él.
     return lanzar(comando, args, { ...opciones, cwd: hfHome() }, true);

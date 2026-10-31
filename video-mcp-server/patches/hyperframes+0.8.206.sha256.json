@@ -14,5 +14,8 @@
     "dist/cli.js": "fa8ed3bea5de2f9698cba539b7c584f593a3f7c0dac05fbfed76d2cb96c37bc9",
     "dist/seo-studio-cierre.js": "ebc0edd54e87ac005d27f124de744baffa7274ac91c45c6da2dec6ac26f838aa",
     "dist/warmCheck.js": "241dc233b1d2c5c8f97e03b5949be9f4f8355e974beed75dac1397317c5d0151"
+  },
+  "sinParche": {
+    "bin/hyperframes.mjs": "f82692a0d34d8cafb73cf06150067f211fdaa6919abb46359733400c1172252a"
   }
 }
