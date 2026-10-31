@@ -808,12 +808,41 @@ const fraccion = (v?: string): number | undefined => {
   return a && b ? a / b : undefined;
 };
 
+/** Demuxer de cada extensión admitida (I15). Son nombres de `-f`; componentes.conf lista sus `image_*_pipe`. */
+const DEMUXERS: Readonly<Record<string, string>> = {
+  ".png": "png_pipe",
+  ".jpg": "jpeg_pipe",
+  ".jpeg": "jpeg_pipe",
+  ".webp": "webp_pipe",
+  ".mp3": "mp3",
+  ".wav": "wav",
+  ".flac": "flac",
+  ".ogg": "ogg",
+  ".m4a": "mov",
+  ".mp4": "mov",
+  ".mov": "mov",
+  ".webm": "matroska",
+  ".mkv": "matroska",
+};
+
 /**
- * ffprobe de un medio. Con `soloMp4` (el MP4 propio): solo fichero local y demuxer mp4, cuenta los
- * paquetes y cualquier error de ffprobe, aunque salga con 0, es un fallo.
+ * Opciones de entrada de todo fichero que abren ffmpeg o ffprobe: solo el protocolo `file`, con el demuxer fijado
+ * por la extensión y sin sondear otro. Fallo cerrado: una ruta UNC es DNS y SMB (captura de NTLM), otro esquema abre
+ * un protocolo, y un nombre sin extensión conocida no se abre. No sustituye a la normalización al importar (I15).
+ */
+export function argsEntrada(archivo: string, demuxer = DEMUXERS[path.extname(archivo).toLowerCase()]): string[] {
+  const unc = /^[\\/]{2}/.test(archivo) || path.win32.resolve(archivo).startsWith("\\\\");
+  if (unc || /^[a-z][a-z0-9+.-]+:/i.test(archivo)) throw new Error(`El motor solo abre medios por ruta local: ${path.basename(archivo)}.`);
+  if (!demuxer) throw new Error(`El motor no admite este formato de medio: ${path.basename(archivo)}.`);
+  return ["-protocol_whitelist", "file", "-format_whitelist", demuxer, "-f", demuxer];
+}
+
+/**
+ * ffprobe de un medio. Con `soloMp4` (el MP4 propio): demuxer mp4, cuenta los paquetes y cualquier error de ffprobe,
+ * aunque salga con 0, es un fallo.
  */
 export async function sondear(ffprobe: string, archivo: string, { soloMp4 = false } = {}): Promise<InfoMedio> {
-  const previos = soloMp4 ? ["-protocol_whitelist", "file", "-f", "mp4", "-count_packets"] : [];
+  const previos = soloMp4 ? [...argsEntrada(archivo, "mp4"), "-count_packets"] : argsEntrada(archivo);
   const r = await ejecutar(ffprobe, ["-v", "error", ...previos, "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
   if (r.code !== 0 || (soloMp4 && r.stderr.trim())) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
   type Pista = {

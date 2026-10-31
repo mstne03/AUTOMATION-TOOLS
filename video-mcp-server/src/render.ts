@@ -8,7 +8,7 @@ import type { ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
-import { ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
+import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 
@@ -134,7 +134,7 @@ export function segundaPasada(h: Herramientas, intermedio: string, formato: "mov
   return ejecutar(
     h.ffmpeg,
     [
-      "-y", "-v", "error", "-protocol_whitelist", "file", "-f", formato === "mov" ? "mov" : "matroska", "-i", intermedio,
+      "-y", "-v", "error", ...argsEntrada(intermedio, formato === "mov" ? "mov" : "matroska"), "-i", intermedio,
       "-c:v", cod, ...ARGS_CODIFICADOR[cod], "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", salida,
     ],
     { timeoutMs },

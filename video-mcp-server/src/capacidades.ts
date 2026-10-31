@@ -5,7 +5,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import { log } from "./log.js";
-import { ejecutar, ErrorNavegador, type Herramientas } from "./proceso.js";
+import { argsEntrada, ejecutar, ErrorNavegador, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
 
@@ -78,7 +78,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
       const motivo = (r.stderr + r.stdout).replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/).filter((l) => /webgpu|gpu|failed|error/i.test(l)).slice(0, 3).join(" ");
       resultado = { webgpu: false, fecha, detalle: `El render de prueba con --browser-gpu falló. ${motivo}`.trim() };
     } else {
-      const f = await ejecutar(h.ffmpeg, ["-v", "error", "-ss", "0.5", "-i", salida, "-frames:v", "1", "-vf", "scale=1:1,format=gray", "-f", "rawvideo", "pipe:1"], {
+      const f = await ejecutar(h.ffmpeg, ["-v", "error", "-ss", "0.5", ...argsEntrada(salida), "-i", salida, "-frames:v", "1", "-vf", "scale=1:1,format=gray", "-f", "rawvideo", "pipe:1"], {
         timeoutMs: 30000,
       });
       if (f.code !== 0 || !f.stdout.length) {

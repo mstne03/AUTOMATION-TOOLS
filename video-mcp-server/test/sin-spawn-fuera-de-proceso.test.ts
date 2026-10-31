@@ -11,6 +11,7 @@ import { SERVER_ROOT } from "../src/raiz.js";
 const SRC = path.join(SERVER_ROOT, "src");
 // Lista de excepciones vacía: ni siquiera fotograma.ts.
 const EXCEPCIONES: string[] = [];
+const ENTRADA_SEGURA = /(argsEntrada\(.*|-protocol_whitelist.*|"-f", "lavfi", )"-i"/;
 const PROHIBIDO = /child_process|\bspawn(Sync)?\(|\bexecFile(Sync)?\b|(?<![.\w])exec(Sync)?\(/;
 
 function ficheros(dir: string): string[] {
@@ -32,6 +33,23 @@ describe("procesos solo desde proceso.ts", () => {
           .map(({ i }) => `${path.relative(SRC, f)}:${i + 1}`),
       );
     expect(culpables).toEqual([]);
+  });
+
+  it("I15: todo \"-i\" de src/ lleva argsEntrada o -protocol_whitelist antes; la única excepción es -f lavfi", () => {
+    const malas = ficheros(SRC).flatMap((f) =>
+      fs
+        .readFileSync(f, "utf8")
+        .split(/\r?\n/)
+        .flatMap((l, i) => (l.includes('"-i"') && !ENTRADA_SEGURA.test(l) ? [`${path.relative(SRC, f)}:${i + 1}`] : [])),
+    );
+    expect(malas).toEqual([]);
+  });
+
+  it("el patrón de entradas no da por buena una entrada sin protección", () => {
+    expect(ENTRADA_SEGURA.test('["-y", "-i", origen]')).toBe(false);
+    expect(ENTRADA_SEGURA.test('["-i", origen, "-protocol_whitelist", "file"]')).toBe(false);
+    expect(ENTRADA_SEGURA.test('["-f", "lavfi", "-i", "color"]')).toBe(true);
+    expect(ENTRADA_SEGURA.test('[...argsEntrada(a), "-i", a]')).toBe(true);
   });
 
   it("el patrón detecta lo que tiene que detectar (y no RegExp.exec)", () => {

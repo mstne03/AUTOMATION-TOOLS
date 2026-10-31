@@ -15,7 +15,7 @@ import { bloquesConFoto, fondoUsaWebgpu, textoAyuda } from "./formato.js";
 import { capacidades, gpuForzadaApagada, leerPruebaGpu } from "./capacidades.js";
 import { HYPERFRAMES_BIN, listarMusica } from "./musica.js";
 import { montarComposicion, prepararRender } from "./render.js";
-import { ejecutar } from "./proceso.js";
+import { argsEntrada, ejecutar } from "./proceso.js";
 
 export interface Respuesta {
   texto: string;
@@ -532,7 +532,7 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
     const pngs = fs.existsSync(fotos) ? fs.readdirSync(fotos).filter((n) => /^frame-.*\.png$/.test(n)).sort() : [];
     if (!pngs.length) throw new Error(`hyperframes snapshot no sacó fotogramas: ${(r.stderr || r.stdout).replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-400)}`);
     // Hoja de contacto: los fotogramas en fila a 270×480.
-    const entradas = pngs.flatMap((n) => ["-i", path.join(fotos, n)]);
+    const entradas = pngs.flatMap((n) => [...argsEntrada(path.join(fotos, n)), "-i", path.join(fotos, n)]);
     const escalas = pngs.map((_, i) => `[${i}:v]scale=270:480[e${i}]`).join(";");
     const pila = pngs.length > 1 ? `${escalas};${pngs.map((_, i) => `[e${i}]`).join("")}hstack=inputs=${pngs.length}[out]` : `${escalas.replace("[e0]", "[out]")}`;
     const hoja = path.join(fotos, "hoja.png");

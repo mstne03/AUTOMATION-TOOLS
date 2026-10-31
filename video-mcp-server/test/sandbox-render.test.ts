@@ -264,7 +264,7 @@ const CFT = process.env.HYPERFRAMES_BROWSER_PATH;
  */
 const IP_CONTROL = "127.0.0.3";
 /** Los controles sin proxy también llevan reglas de resolución: solo se resuelven estos literales de loopback. */
-const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE [::1]`;
+const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE ::1`;
 /** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
 const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
 
