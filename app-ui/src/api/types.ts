@@ -206,3 +206,22 @@ export interface ToolInfo {
 export interface Texto {
   texto: string;
 }
+
+/** Navegador del render (Chrome for Testing): descarga a petición del usuario (`/video/navegador`). */
+export type FaseNavegador = "ausente" | "descargando" | "verificando" | "extrayendo" | "listo" | "error";
+export interface NavegadorEstado {
+  version: string;
+  tamano: number;
+  estado: FaseNavegador;
+  descargado: number;
+  error: string | null;
+}
+export const FASES_ACTIVAS: readonly FaseNavegador[] = ["descargando", "verificando", "extrayendo"];
+
+/** Solo lo que lee la UI de `GET /video/capacidades`. */
+export interface CapacidadesVideo {
+  chrome?: string;
+  gpu?: { webgpu: boolean; detalle: string };
+  codificadores?: { codificador: string; adaptador: string }[];
+  [k: string]: unknown;
+}
