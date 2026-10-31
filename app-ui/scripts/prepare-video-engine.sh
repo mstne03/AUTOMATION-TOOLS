@@ -4,7 +4,9 @@
 #
 #   video-engine/node/node.exe                Node 22 LTS win-x64 (versión y SHA-256 fijados)
 #   video-engine/app/                         dist/, plantilla/, catalogo/, package.json y
-#                                             node_modules de producción (npm ci --omit=dev)
+#                                             node_modules de producción (npm ci --omit=dev), con
+#                                             el parche de HyperFrames aplicado (I3): --ignore-scripts
+#                                             no ejecuta el postinstall, así que se aplica a mano.
 #   (el navegador del render, Chrome for Testing, no va en el instalador: lo descarga el backend
 #    en el primer uso, SEO-108)
 #   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         build LGPL de la tarea 2 (SHA-256 fijado)
@@ -76,6 +78,14 @@ extraer() {
   echo "$x"
 }
 
+# parchear_hyperframes: el sandbox y el cierre de red viven en el parche; sin él, el motor empaquetado
+# se niega a lanzar la CLI. aplicar-parche.mjs comprueba los SHA-256 y no sube al repo que contiene el
+# bundle. No hay variable ni ruta para saltárselo (I4, I11).
+parchear_hyperframes() {
+  [ "$(node -p "require('./$DEST/app/node_modules/hyperframes/package.json').version")" = "$HYPERFRAMES_VERSION" ]     || falla "el bundle no trae hyperframes $HYPERFRAMES_VERSION"
+  node "$MOTOR/scripts/aplicar-parche.mjs" "$DEST/app"     || falla "el parche de HyperFrames no se aplicó en el bundle (I3)"
+}
+
 echo "== Limpieza"
 rm -rf "$DEST" src-tauri/target/release/video-engine
 mkdir -p "$DEST"/{node,app,ffmpeg,LICENSES}
@@ -97,6 +107,7 @@ git -C "$MOTOR" ls-files -z plantilla catalogo | tar -C "$MOTOR" --null -T - -cf
 # --ignore-scripts: ningún script de instalación de terceros se ejecuta al empaquetar; los binarios
 # nativos (sharp, esbuild, lightningcss…) llegan como paquetes opcionales precompilados.
 (cd "$DEST/app" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+parchear_hyperframes
 rm "$DEST/app/package-lock.json"
 
 echo "== Node $NODE_VERSION"
