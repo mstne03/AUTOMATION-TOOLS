@@ -53,7 +53,7 @@
   function linear(nombre) {
     var f = curva(nombre), clave = nombre === undefined ? "none" : nombre;
     if (cacheLinear[clave]) return cacheLinear[clave];
-    var N = 64, puntos = [];
+    var N = 256, puntos = [];
     for (var i = 0; i <= N; i++) puntos.push(+f(i / N).toFixed(5));
     return (cacheLinear[clave] = "linear(" + puntos.join(", ") + ")");
   }

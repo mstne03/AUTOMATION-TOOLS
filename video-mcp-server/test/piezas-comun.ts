@@ -1,8 +1,10 @@
 // Ayudas comunes de los tests de migración de piezas GSAP → hf-tiempo (SEO-112, oleada 2): pieza ejecutada con un DOM
 // falso (sin motor), guiones de comparación, exclusión mutua entre renders y sonda de estado de la preview.
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { PlanComposicion } from "../src/composicion.js";
+import { compararPngContraReferencia, renderizar } from "../scripts/comparar-fotogramas.mjs";
 import { GUION_TODAS, GUION_TUNEL } from "../scripts/montar.mjs";
 
 const HF_TIEMPO = fs.readFileSync(new URL("../plantilla/vendor/hf-tiempo.js", import.meta.url), "utf8");
@@ -17,7 +19,14 @@ export function piezaHtml(p: PlanComposicion, nombre: string): string {
 }
 
 export type Animacion = { sel: string; kf: object[]; op: { delay: number; duration: number; easing: string; fill: string } };
-export type ElementoFalso = { textContent: string; style: Record<string, string> };
+export type ElementoFalso = {
+  textContent: string;
+  style: Record<string, string>;
+  children: ElementoFalso[];
+  /** Llama a los oyentes registrados con `addEventListener(tipo, …)` (p. ej. `load` de una imagen). */
+  disparar(tipo: string): void;
+  [propiedad: string]: unknown;
+};
 export type EjecucionPieza = {
   animaciones: Animacion[];
   /** Despacha `hf-seek` con `{ detail: { time: t } }` a los oyentes de la pieza. */
@@ -28,6 +37,7 @@ export type EjecucionPieza = {
 type Nodo = ElementoFalso & {
   id: string;
   children: Nodo[];
+  addEventListener(tipo: string, f: () => void): void;
   animate(kf: object[], op: Animacion["op"]): { pause(): void };
   appendChild(n: Nodo): Nodo;
   getAttribute(n: string): string | null;
@@ -52,12 +62,19 @@ export function ejecutarPieza(html: string): EjecucionPieza {
   const raizId = /data-composition-id="([^"]+)"/.exec(html)?.[1];
 
   const cache = new Map<string, Nodo[]>();
+  const alertas = new Map<Nodo, Map<string, (() => void)[]>>();
   const nodo = (clave: string, id = ""): Nodo => {
     const n: Nodo = {
       id,
       textContent: texto.get(id) ?? "",
       style: {},
       children: [],
+      addEventListener(tipo, f) {
+        (alertas.get(n) ?? alertas.set(n, new Map()).get(n)!).set(tipo, [...(alertas.get(n)!.get(tipo) ?? []), f]);
+      },
+      disparar(tipo) {
+        (alertas.get(n)?.get(tipo) ?? []).forEach((f) => f());
+      },
       animate(kf, op) {
         animaciones.push({ sel: clave, kf, op });
         return { pause() {} };
@@ -66,7 +83,8 @@ export function ejecutarPieza(html: string): EjecucionPieza {
         n.children.push(h);
         return h;
       },
-      getAttribute: () => null,
+      // Solo el contenedor tiene atributos útiles: `data-composition-variables` (declaración de variables de la pieza).
+      getAttribute: (a) => (a === "data-composition-variables" && id === raizId ? /data-composition-variables='([^']*)'/.exec(html)?.[1] ?? null : null),
       setAttribute() {},
       querySelector: (sel) => resolver(sel)[0] ?? null,
       querySelectorAll: (sel) => resolver(sel),
@@ -201,6 +219,51 @@ export async function conCandadoDeRender<T>(fn: () => Promise<T>): Promise<T> {
   } finally {
     fs.rmSync(candado, { recursive: true, force: true });
   }
+}
+
+/**
+ * SSIM por fotograma de TUNEL por PNG sin pérdida (x264 recuantiza el grano y baja el SSIM aunque la pieza sea idéntica).
+ * La referencia GSAP se renderiza una vez a PNG (~1 GB, ~7 min) en `W2_SCRATCH` (o junto a W2_REFS, que no se toca) y se
+ * reutiliza; se escribe en un directorio temporal y se renombra, para no dejar una caché a medias. Todo bajo el candado.
+ */
+export async function compararTunelPng(motor: string, refs: string, dirCand: string, salida: string) {
+  const base = process.env.W2_SCRATCH?.trim() || path.join(refs, "..");
+  const pngRef = path.join(base, "png-ref-tunel");
+  const sello = `${pngRef}.sello`;
+  const dirRef = path.join(refs, "TUNEL", "montaje", "proyecto", "video001", "_composicion");
+  return conCandadoDeRender(async () => {
+    // La caché va ligada a la referencia: si ref.mp4 cambia, el PNG guardado ya no la representa.
+    const sha = createHash("sha256").update(fs.readFileSync(path.join(refs, "TUNEL", "ref.mp4"))).digest("hex");
+    const guardado = fs.existsSync(sello) ? fs.readFileSync(sello, "utf8").trim() : null;
+    if (debeRehacerPngRef(fs.existsSync(pngRef), guardado, sha)) {
+      fs.rmSync(pngRef, { recursive: true, force: true });
+      const tmp = `${pngRef}.tmp`;
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await renderizar(motor, dirRef, tmp, path.join(base, "hf-home-png-ref"), { png: true, timeoutMs: 1_800_000 });
+      fs.renameSync(tmp, pngRef);
+      fs.writeFileSync(sello, sha);
+    }
+    const informe = await compararPngContraReferencia(motor, pngRef, dirCand, salida);
+    const aviso = avisoSsimAislado(informe.ssimMin);
+    if (aviso) process.stderr.write(aviso);
+    return informe;
+  });
+}
+
+/** Decisión pura: la caché PNG se reutiliza solo si existe y su sello coincide con el SHA-256 actual de ref.mp4. */
+export function debeRehacerPngRef(existe: boolean, selloGuardado: string | null, shaActual: string): boolean {
+  return !existe || selloGuardado !== shaActual;
+}
+
+/** Umbral blando de TUNEL: el duro es 0,99; entre ambos hay ruido de ejecución que no justifica diagnóstico. */
+export const SSIM_AVISO_TUNEL = 0.9915;
+
+/** Aviso (o `null`) para un `ssimMin` bajo el umbral blando; no falla el test. */
+export function avisoSsimAislado(ssimMin: number): string | null {
+  return ssimMin < SSIM_AVISO_TUNEL
+    ? `[AVISO] TUNEL ssimMin=${ssimMin} < ${SSIM_AVISO_TUNEL}: un rojo aislado debe repetirse antes de diagnosticarlo.
+`
+    : null;
 }
 
 // ---------- Sonda de preview ----------

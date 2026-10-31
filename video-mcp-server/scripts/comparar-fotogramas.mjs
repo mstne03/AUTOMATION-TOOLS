@@ -1,7 +1,8 @@
 // Arnés de SEO-111: renderiza dos composiciones con la CLI de HyperFrames (como el motor: `check` antes) y las
 // compara fotograma a fotograma con el SSIM de ffmpeg. Falla si UN solo fotograma baja del umbral.
-// Uso: node scripts/comparar-fotogramas.mjs <video-engine> <dirRef> <dirCand> <salida> [--umbral 0.99]
+// Uso: node scripts/comparar-fotogramas.mjs <video-engine> <dirRef> <dirCand> <salida> [--umbral 0.99] [--png]
 // Requiere `npm run build`. Solo desarrollo: no se empaqueta (prepare-video-engine.sh copia dist, plantilla y catalogo).
+// Con `--png` (o ssimPng / compararPngContraReferencia) la comparación es por PNG sin pérdida de `--format png-sequence`.
 // Control negativo: que el veredicto detecta un fotograma roto lo cubren los tests de `veredicto` en
 // test/arnes.test.ts (un solo fotograma bajo el umbral basta para fallar; sin fotogramas, falla). No hay control con
 // vídeo real porque cuesta dos renders; si hiciera falta, comparar una composición con una copia a la que se le quita
@@ -79,7 +80,7 @@ export function usaWebgpu(dir) {
  * HYPERFRAMES_BROWSER_PATH y VIDEO_STATE_DIR en el entorno del proceso durante la llamada (el entorno del hijo se
  * construye desde ahí con entornoHijo) y los restaura en `finally`.
  */
-export async function renderizar(motor, dir, mp4, home, { comprobar = true, timeoutMs = 600_000 } = {}) {
+export async function renderizar(motor, dir, mp4, home, { comprobar = true, timeoutMs = 600_000, png = false } = {}) {
   fs.mkdirSync(home, { recursive: true });
   const cerrado = entornoCerrado(motor, home);
   const claves = ["FFMPEG_DIR", "HYPERFRAMES_BROWSER_PATH", "VIDEO_STATE_DIR"];
@@ -95,7 +96,8 @@ export async function renderizar(motor, dir, mp4, home, { comprobar = true, time
       check = await comprobarComposicion(dir, gpu);
       if (check.errores.length) throw new Error(`check en ${dir}: ${check.errores.join(" | ")}`);
     }
-    const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
+    // `png` (SEO-112): `--format png-sequence` escribe `mp4` como DIRECTORIO de PNG sin pérdida (sin x264 por medio).
+    const args = [HYPERFRAMES_BIN, "render", dir, "-o", mp4, "--fps", "30", ...(png ? ["--format", "png-sequence"] : ["--format", "mp4", "--quality", "delivery"])];
     if (gpu) args.push("--browser-gpu");
     const t0 = Date.now();
     // El preflight de HyperFrames da «encoder unavailable» de forma intermitente con la GPU ocupada, antes de abrir la
@@ -141,6 +143,56 @@ export async function compararContraReferencia(motor, mp4Ref, dirCand, salida, u
   return ssimYInforme(motor, salida, umbral, { candidata: { dir: dirCand, segundos: r.segundos, avisosCheck: r.check.avisos } });
 }
 
+/**
+ * SSIM por fotograma entre dos directorios de PNG (`frame_%06d.png`, salida de `renderizar(..., { png: true })`): mide
+ * la composición sin pasar por x264, que recuantiza el grano ante cualquier cambio de píxel (SEO-112). Mismo informe que
+ * `comparar`; exige el mismo número de PNG en los dos lados.
+ */
+export async function ssimPng(motor, pngRef, pngCand, salida, umbral = 0.99) {
+  fs.mkdirSync(salida, { recursive: true });
+  const { ejecutar } = await dist("proceso.js");
+  const cuenta = (d) => fs.readdirSync(d).filter((f) => /^frame_\d+\.png$/.test(f)).length;
+  const [nRef, nCand] = [cuenta(pngRef), cuenta(pngCand)];
+  const log = path.join(salida, "ssim.log");
+  fs.rmSync(log, { force: true });
+  // Rutas absolutas en -i; el stats_file va relativo al cwd (ffmpeg en Windows no admite `C:` dentro de un filtro).
+  const r = await ejecutar(
+    path.join(motor, "ffmpeg", "ffmpeg.exe"),
+    ["-hide_banner", "-v", "error", "-framerate", "30", "-i", path.join(pngRef, "frame_%06d.png"), "-framerate", "30", "-i", path.join(pngCand, "frame_%06d.png"), "-lavfi", "[0:v][1:v]ssim=stats_file=ssim.log", "-f", "null", "-"],
+    { cwd: salida, timeoutMs: 1_800_000 },
+  );
+  if (r.code !== 0) throw new Error(`ssim png: ${r.stderr}`);
+  const v = veredicto(leerSsim(fs.readFileSync(log, "utf8")), umbral);
+  const informe = { umbral, fotogramasReferencia: nRef, fotogramasCandidata: nCand, ...v, ok: v.ok && nRef === nCand };
+  fs.writeFileSync(path.join(salida, "comparacion.json"), JSON.stringify(informe, null, 2));
+  return informe;
+}
+
+/** Renderiza las dos composiciones a PNG y las compara (modo `--png` de la CLI). */
+export async function compararPng(motor, dirRef, dirCand, salida, umbral = 0.99) {
+  const pngRef = path.join(salida, "png-referencia");
+  fs.rmSync(pngRef, { recursive: true, force: true });
+  await renderizar(motor, dirRef, pngRef, path.join(salida, "hf-home"), { png: true });
+  try {
+    return await compararPngContraReferencia(motor, pngRef, dirCand, salida, umbral);
+  } finally {
+    fs.rmSync(pngRef, { recursive: true, force: true });
+  }
+}
+
+/** Renderiza `dirCand` a PNG y lo compara con un directorio de PNG de referencia ya renderizado (`renderizar` con `png`). */
+export async function compararPngContraReferencia(motor, pngRef, dirCand, salida, umbral = 0.99) {
+  fs.mkdirSync(salida, { recursive: true });
+  const pngCand = path.join(salida, "png-candidata");
+  fs.rmSync(pngCand, { recursive: true, force: true });
+  const r = await renderizar(motor, dirCand, pngCand, path.join(salida, "hf-home"), { png: true });
+  try {
+    return { ...(await ssimPng(motor, pngRef, pngCand, salida, umbral)), candidata: { dir: dirCand, segundos: r.segundos, avisosCheck: r.check.avisos } };
+  } finally {
+    fs.rmSync(pngCand, { recursive: true, force: true });
+  }
+}
+
 async function ssimYInforme(motor, salida, umbral, res) {
   const { ejecutar } = await dist("proceso.js");
   const ffdir = path.join(motor, "ffmpeg");
@@ -165,10 +217,11 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   const i = process.argv.indexOf("--umbral");
   const umbral = i > 0 ? Number(process.argv[i + 1]) : 0.99;
   if (!motor || !ref || !cand || !salida || !Number.isFinite(umbral)) {
-    console.error("Uso: node scripts/comparar-fotogramas.mjs <video-engine> <dirRef> <dirCand> <salida> [--umbral 0.99]");
+    console.error("Uso: node scripts/comparar-fotogramas.mjs <video-engine> <dirRef> <dirCand> <salida> [--umbral 0.99] [--png]");
     process.exit(2);
   }
-  const informe = await comparar(path.resolve(motor), path.resolve(ref), path.resolve(cand), path.resolve(salida), umbral);
+  const comparador = process.argv.includes("--png") ? compararPng : comparar;
+  const informe = await comparador(path.resolve(motor), path.resolve(ref), path.resolve(cand), path.resolve(salida), umbral);
   const { referencia, candidata, ...resumen } = informe;
   console.log(JSON.stringify(resumen, null, 2));
   process.exit(informe.ok ? 0 : 1);
