@@ -59,12 +59,11 @@
           var hf = HF.contexto("{{ID}}", {{INICIO}});
           var d = JSON.parse(document.getElementById("capas-datos").textContent);
           var acota = function (v, a, b) { return v < a ? a : v > b ? b : v; };
-          if (!Number.isFinite(d.duracion)) throw new Error("capas: duración no válida");
+          hf.numero(d.duracion, "capas: duración");
 
           // Destellos: sube en el 24 %, baja a 0,4 a mitad y se apaga en el 28 % final.
           d.destellos.forEach(function (e) {
-            if (!/^[a-z][a-z0-9-]*$/.test(e.id)) throw new Error("capas: id de destello no válido " + String(e.id));
-            var s = "#" + e.id, t0 = e.t, D = e.duracion;
+            var s = "#" + hf.id(e.id), t0 = e.t, D = e.duracion;
             hf.tween(s, { opacity: 0 }, { opacity: 0.62 }, t0 + D * 0.06, D * 0.24, "sine.out");
             hf.tween(s, { opacity: 0.62 }, { opacity: 0.4 }, t0 + D * 0.42, D * 0.2, "sine.inOut", { antes: false });
             hf.tween(s, { opacity: 0.4 }, { opacity: 0 }, t0 + D * 0.68, D * 0.28, "sine.in", { antes: false });

@@ -298,6 +298,8 @@ const IP_CONTROL = "127.0.0.3";
 const REGLAS_CONTROL = `${RESOLVER}, EXCLUDE 127.0.0.2, EXCLUDE ${IP_CONTROL}, EXCLUDE ::1`;
 /** La lista de antes de R2-M1: exceptúa cualquier puerto de loopback. Solo como control. */
 const LISTA_ANTIGUA = `${BYPASS};localhost;127.0.0.1`;
+/** Control «sin bloqueo»: también con proxy nulo, solo exceptúa loopback. Llega a los sumideros y a nada más. */
+const CONTROL_ABIERTO = [PROXY_NULO, `${LISTA_ANTIGUA};127.0.0.2;${IP_CONTROL};[::1]`, REGLAS_CONTROL];
 /** Las reglas de antes de MEDIUM-1: localhost se resuelve también a ::1. Solo como control. */
 const RESOLVER_ANTIGUO = "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1";
 
@@ -319,21 +321,19 @@ function limpiar(raiz: string) {
 }
 
 /**
- * Composición mínima (540×960, 2 s, GSAP local) SIN CSP —simula que la CSP falla— con intentos de fuga.
+ * Composición mínima (540×960, 2 s, sin timeline) SIN CSP —simula que la CSP falla— con intentos de fuga.
  * `fugas`: "js" (lo que ejecuta Chrome: <img>, fetch, WebSocket, WebRTC, WebTransport) o "no" (composición
  * limpia, sin red ni WebRTC). Un <img src="http…"> escrito en el HTML ya no llega a Chrome: aborta en Node.
  */
 function componer(dir: string, ip: string, tcp: number, tcp2: number, udp: number, udpWt: number, fugas: "js" | "no") {
-  fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
-  fs.copyFileSync(path.join(SERVER_ROOT, "node_modules", "gsap", "dist", "gsap.min.js"), path.join(dir, "assets", "gsap.min.js"));
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, "index.html"),
-    `<!doctype html><html lang="en"><head><meta charset="UTF-8" /><script src="assets/gsap.min.js"></script>
+    `<!doctype html><html lang="en"><head><meta charset="UTF-8" />
 <style>*{margin:0;padding:0}html,body{width:540px;height:960px;overflow:hidden;background:#123}#root{position:relative;width:540px;height:960px;overflow:hidden}</style></head>
-<body><div id="root" data-composition-id="main" data-start="0" data-duration="2" data-width="540" data-height="960">
+<body><div id="root" data-composition-id="main" data-no-timeline data-start="0" data-duration="2" data-width="540" data-height="960">
 <p style="color:#fff;font:48px sans-serif">fuga</p>
 </div><script>
-window.__timelines=window.__timelines||{};window.__timelines["main"]=gsap.timeline({paused:true});
 ${fugas !== "no" ? FUGAS_JS(ip, tcp, tcp2, udp, udpWt) : ""}
 </script></body></html>`,
   );
@@ -505,7 +505,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
         await new Promise((r) => setTimeout(r, 8000));
         await matarYAsentar(c);
         expect(seis.conexiones()).toBe(0);
-        c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
+        c = lanzar(CONTROL_ABIERTO);
         expect(await hasta(() => seis.conexiones() > 0, 15000), "control positivo: sin flags [::1] debería alcanzarse").toBe(true);
         await matarYAsentar(c);
       } finally {
@@ -605,10 +605,10 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
           hijos.push(c);
           return c;
         };
-        // 1. Sin nada (se anula el proxy del sistema): llegan TCP, STUN y WebTransport (QUIC).
+        // 1. Loopback exceptuado y sin el resto de flags: llegan TCP, STUN y WebTransport (QUIC).
         // Medido: --disable-quic NO frena a WebTransport (solo con esa bandera llegan paquetes); lo frenan
         // el proxy nulo y las reglas de resolución. La bandera queda por HTTP/3, sin control propio aquí.
-        let c = lanzar(["--no-proxy-server", REGLAS_CONTROL]);
+        let c = lanzar(CONTROL_ABIERTO);
         expect(
           await hasta(() => tcp.conexiones() > 0 && udp.paquetes() > 0 && udpWt.paquetes() > 0, 15000),
           `tcp=${tcp.conexiones()} udp=${udp.paquetes()} webtransport=${udpWt.paquetes()}`,

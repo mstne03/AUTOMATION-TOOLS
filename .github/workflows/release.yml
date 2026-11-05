@@ -13,7 +13,7 @@
 #                 no va en el instalador: el backend lo descarga en el primer uso, SEO-108). Sin
 #                 ella (lo normal) el instalador lleva video-engine/ con solo un marcador y el backend
 #                 responde 503 «módulo de vídeo no instalado». Se queda apagada hasta resolver los
-#                 bloqueantes de video-mcp-server/LICENCIAS.md (Chrome for Testing, GSAP, ffmpeg LGPL).
+#                 pendientes de video-mcp-server/LICENCIAS.md (Chrome for Testing, ffmpeg LGPL).
 # Despues, en el VPS: bash deploy/publish-app.sh vX.Y.Z (kb-seo/deploy) para servir
 # latest.json y el instalador en https://kb.mstne.dev/app/.
 #

@@ -9,6 +9,9 @@ type Ctx = {
   tween: (sel: string, desde: object, hasta: object, t: number, d: number, curva: string, op?: { antes?: boolean }) => void;
   reloj: (fn: (t: number) => void) => void;
   envoltura: (e: unknown) => void;
+  numero: (v: unknown, que: string) => number;
+  positivo: (v: unknown, que: string) => number;
+  id: (v: unknown) => string;
 };
 type Hf = { contexto: (id: string, inicio: number) => Ctx };
 
@@ -163,6 +166,17 @@ describe("hf-tiempo.js", () => {
     const { HF, llamadas } = entorno();
     HF.contexto("b1", 0).envoltura({ fundido: 0, punch: false, golpes: [] });
     expect(llamadas).toHaveLength(0);
+  });
+
+  it("guards de las piezas: numero, positivo e id lanzan con hf-tiempo en el mensaje y devuelven el valor bueno", () => {
+    const { HF } = entorno();
+    const c = HF.contexto("b1", 0);
+    for (const v of [NaN, "3", Infinity, null, undefined]) expect(() => c.numero(v, "dato"), String(v)).toThrow(/hf-tiempo: dato/);
+    for (const v of [0, -1, NaN, "3"]) expect(() => c.positivo(v, "dato"), String(v)).toThrow(/hf-tiempo: dato/);
+    for (const v of ["a b", "__proto__", "A", "1x", 'a"]', 3, null]) expect(() => c.id(v), String(v)).toThrow(/hf-tiempo: id no válido/);
+    expect(c.numero(-2.5, "dato")).toBe(-2.5);
+    expect(c.positivo(0.1, "dato")).toBe(0.1);
+    expect(c.id("sub-g1w2")).toBe("sub-g1w2");
   });
 
   it("envoltura con datos no válidos lanza (M1)", () => {

@@ -145,7 +145,7 @@ instalación antigua puede conservar `video-engine/browser/` tras actualizar: ya
 («módulo de vídeo no instalado») y la verificación final exige que el bundle **no** lleve `node/`. Con
 ella, el smoke test descarga de verdad el navegador (`--cft-descargar`) y la verificación exige que el
 bundle no lleve `browser/`. Se queda apagada hasta resolver los bloqueantes de
-`video-mcp-server/LICENCIAS.md` (licencia de GSAP, obligaciones LGPL de ffmpeg), hasta que haya UI y
+`video-mcp-server/LICENCIAS.md` (obligaciones LGPL de ffmpeg), hasta que haya UI y
 hasta que el parche de HyperFrames de W1.3 vaya en el bundle (W2.8) y la comprobación del manifiesto
 del motor (W1.6) esté integrada.
 

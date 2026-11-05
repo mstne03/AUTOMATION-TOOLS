@@ -29,6 +29,7 @@ import {
   MARCADOR,
   PARCHE,
   PROXY_NULO,
+  QUIC,
   RENDER_ESPIADO,
   RESOLVER,
   sumidero,
@@ -481,6 +482,15 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       const a = marcador(["--headless"]);
       expect(a).not.toContain(GPU_SIN_SANDBOX);
       for (const f of FLAGS_RED) expect(a).toContain(f);
+    });
+
+    it("la sonda de preview lleva los flags de red del parche; en modo csp, proxy nulo y reglas igual (C4)", async () => {
+      const { flagsDeRed } = await import("../scripts/sondear-preview.mjs");
+      const a = marcador(["--proxy-bypass-list=<-loopback>;127.0.0.1:4321"]);
+      for (const f of flagsDeRed("parche", 4321)) expect(a).toContain(f);
+      expect(flagsDeRed("parche", 4321)).toEqual(expect.arrayContaining([PROXY_NULO, RESOLVER, "--proxy-bypass-list=<-loopback>;127.0.0.1:4321", WEBRTC, QUIC]));
+      expect(flagsDeRed("csp", 4321)).toEqual(expect.arrayContaining([PROXY_NULO, RESOLVER]));
+      expect(() => flagsDeRed("otra", 4321)).toThrow(/desconocidas/);
     });
 
     it("es idempotente (doble paso por el marcador)", () => {

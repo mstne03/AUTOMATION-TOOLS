@@ -105,14 +105,31 @@ const REGISTRO = `(() => {
   document.addEventListener("securitypolicyviolation", (e) => window.__violaciones.push({ directiva: e.effectiveDirective, bloqueada: e.blockedURI, origen: e.sourceFile || "" }));
 })();`;
 
+const PROXY_NULO = "--proxy-server=0.0.0.0:1";
+const RESOLVER = "--host-resolver-rules=MAP localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1";
+
+/**
+ * Flags de red de la sonda. Nunca sale de loopback ni resuelve DNS, y siempre hay proxy nulo.
+ * - "parche": los del render, con el bypass solo al puerto de `servirComposicion` (piezas, T6). Un test los fija contra
+ *   el parche. Con ellos el proxy tapa a la CSP: un 0 en un sumidero no prueba nada sobre ella.
+ * - "csp": mismo proxy nulo, con todo loopback exceptuado, para medir la CSP sola (I2 son dos capas independientes): los
+ *   sumideros están en otros puertos y sin la CSP tienen que recibir. WebRTC va sin restringir por lo mismo.
+ */
+export function flagsDeRed(reglas, puerto) {
+  if (reglas === "parche") {
+    return [PROXY_NULO, `--proxy-bypass-list=<-loopback>;127.0.0.1:${puerto}`, RESOLVER, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--disable-quic"];
+  }
+  if (reglas === "csp") return [PROXY_NULO, "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1", RESOLVER];
+  throw new Error(`Reglas de red desconocidas: ${reglas}`);
+}
+
 /** Abre el marco, espera al runtime en el iframe y evalúa `sonda` (expresión JS, puede ser una promesa) en el iframe. */
 /** `argsExtra`: argumentos de Chrome adicionales (p. ej. `--log-net-log=<ruta>` para la sonda de dns-prefetch). */
-export async function sondearPreview({ navegador, dir, sonda, sinCsp = false, marcoSinCsp = false, reescribirMeta = false, sinDnsPrefetchOff = false, esperarPlayer = true, argsExtra = [] }) {
+export async function sondearPreview({ navegador, dir, sonda, sinCsp = false, marcoSinCsp = false, reescribirMeta = false, sinDnsPrefetchOff = false, esperarPlayer = true, argsExtra = [], reglas = "parche" }) {
   if (!navegador || !fs.existsSync(navegador)) throw new Error(`Falta el navegador (executablePath obligatorio): ${navegador}`);
   const s = await servirComposicion({ dir, sinCsp, marcoSinCsp, reescribirMeta, sinDnsPrefetchOff });
   // Entorno mínimo para Chrome (L4): nada del entorno del desarrollador.
-  // Sin DNS ni salida (R2-L6): las reglas también cubren literales IP (medido en CfT 152 y 156) y sin proxy del sistema.
-  const args = ["--autoplay-policy=no-user-gesture-required", "--no-proxy-server", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1", ...argsExtra];
+  const args = ["--autoplay-policy=no-user-gesture-required", ...flagsDeRed(reglas, s.puerto), ...argsExtra];
   const browser = await puppeteer.launch({ executablePath: navegador, headless: true, pipe: true, env: entornoMinimo(), args });
   const erroresPagina = [];
   try {

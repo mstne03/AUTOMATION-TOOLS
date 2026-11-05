@@ -35,7 +35,7 @@
           var d = JSON.parse(document.getElementById(id + "-datos").textContent);
           var hf = HF.contexto("{{ID}}", {{INICIO}});
           hf.envoltura({{ENVOLTURA_DATOS}});
-          if (typeof d.duracion !== "number" || !isFinite(d.duracion) || d.duracion < 0) throw new Error("titulo3d: duración no válida " + String(d.duracion));
+          hf.positivo(d.duracion, "titulo3d: duración");
           var host = { datos: d, render: null, t: 0 };
           window["__titulo3d_" + id] = host;
           window.__hf = window.__hf || {};

@@ -1,7 +1,9 @@
 // Composición v2: raíz + subcomposiciones en _composicion\ (plan v2, §3). Todo el texto del guion se escapa;
 // los datos de animación van como JSON en <script type="application/json">.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { SERVER_ROOT } from "./raiz.js";
 import type { Guion } from "./guion.js";
 import { COLA_FINAL, type ResultadoAlineacion } from "./alineacion.js";
@@ -21,9 +23,8 @@ import type { ImagenEncontrada } from "./paths.js";
 export const PLANTILLA_DIR = path.join(SERVER_ROOT, "plantilla");
 export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
 export const NODE_MODULES = path.join(SERVER_ROOT, "node_modules");
-export const GSAP_JS = path.join(NODE_MODULES, "gsap", "dist", "gsap.min.js");
 export const SHADERS_JS = path.join(PLANTILLA_DIR, "vendor", "shaders.iife.js");
-/** Motor de tiempo WAAPI de las piezas (SEO-111). Convive con gsap.min.js hasta que W3.1 quite GSAP. */
+/** Motor de tiempo WAAPI de las piezas (SEO-111). */
 export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
 /** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
 const DURACION_MAXIMA = 180;
@@ -45,20 +46,41 @@ const DIRECCIONES: [number, number][] = [
 // "nebula" usa FractalNoise: el shader Nebula del catálogo es un efecto de forma (una esfera de cristal), no un fondo.
 const SHADERS: Record<string, string> = { aurora: "Aurora", plasma: "Plasma", nebula: "FractalNoise", mesh: "MeshGradient" };
 
-export interface Tema {
-  nombre?: string;
-  colores: { fondo: string; texto: string; acento: string; contorno?: string; secundario?: string };
-  fuentes: Record<"titulos" | "subtitulos", { familia: string; archivo: string; peso: number }> & {
-    mono?: { familia: string; archivo: string; peso: number };
-  };
-  tamanos: { gancho: number; ganchoMinimo: number; subtitulo: number; subtituloMinimo: number };
-  subtitulos?: { mayusculas?: boolean };
-  degradado?: { opacidad?: number };
-  paletaTunel?: string[];
+const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const Color = z.string().regex(COLOR_RE);
+// Lista cerrada: una familia solo existe con la cara que trae plantilla/fuentes/.
+const cara = <F extends string, A extends string, P extends number>(familia: F, archivo: A, peso: P) =>
+  z.strictObject({ familia: z.literal(familia), archivo: z.literal(archivo), peso: z.literal(peso) });
+const Fuente = z.union([
+  cara("Anton", "anton-latin-400-normal.woff2", 400),
+  cara("Inter Tight", "inter-tight-latin-800-normal.woff2", 800),
+  cara("JetBrains Mono", "jetbrains-mono-latin-700-normal.woff2", 700),
+]);
+const Tamano = z.number().int().min(8).max(400);
+const TEMA = z.strictObject({
+  nombre: z.string().max(200).optional(),
+  colores: z.strictObject({ fondo: Color, texto: Color, acento: Color, contorno: Color.optional(), secundario: Color.optional() }),
+  fuentes: z.strictObject({ titulos: Fuente, subtitulos: Fuente, mono: Fuente.optional() }),
+  tamanos: z
+    .strictObject({ gancho: Tamano, ganchoMinimo: Tamano, subtitulo: Tamano, subtituloMinimo: Tamano })
+    .refine((t) => t.ganchoMinimo <= t.gancho, { path: ["ganchoMinimo"] })
+    .refine((t) => t.subtituloMinimo <= t.subtitulo, { path: ["subtituloMinimo"] }),
+  subtitulos: z.strictObject({ mayusculas: z.boolean().optional() }).optional(),
+  degradado: z.strictObject({ opacidad: z.number().min(0).max(1).optional() }).optional(),
+  paletaTunel: z.array(Color).min(1).max(64).optional(),
+});
+
+export type Tema = z.infer<typeof TEMA>;
+
+/** I1: el tema se rechaza entero al cargar. El mensaje solo lleva las claves: un valor malo puede ser cualquier cosa. */
+export function validarTema(v: unknown): Tema {
+  const r = TEMA.safeParse(v);
+  if (!r.success) throw new Error(`Tema no válido: ${[...new Set(r.error.issues.map((i) => i.path.join(".") || "(raíz)"))].join(", ")}`);
+  return r.data;
 }
 
 export function cargarTema(dir = PLANTILLA_DIR): Tema {
-  return JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")) as Tema;
+  return validarTema(JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")));
 }
 
 export function escaparHtml(s: string): string {
@@ -79,19 +101,6 @@ export function jsonParaScript(v: unknown): string {
     .replace(/&/g, "\\u0026")
     .replace(new RegExp(" ", "g"), "\\u2028")
     .replace(new RegExp(" ", "g"), "\\u2029");
-}
-
-const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
-function color(v: string | undefined, porDefecto: string): string {
-  return v && COLOR_RE.test(v) ? v : porDefecto;
-}
-function familiaCss(f: string): string {
-  return f.replace(/[^\p{L}\p{N} _-]/gu, "");
-}
-function archivoFuente(f: string): string {
-  const base = path.basename(f);
-  if (!/^[\w.-]+\.(woff2?|ttf|otf)$/i.test(base)) throw new Error(`Nombre de fuente no válido en tema.json: ${f}`);
-  return base;
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -169,19 +178,9 @@ function pieza(nombre: string, valores: Record<string, string | number>): string
   return plantilla.replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) => (k in valores ? String(valores[k]) : m));
 }
 
-function envolturaJs(id: string, e: { fundido: number; punch: boolean; golpes: number[] }): string {
-  return `(function (tl, id, e) {
-            if (e.fundido > 0) tl.fromTo("#" + id + "-fundido", { opacity: 0 }, { opacity: 1, duration: e.fundido, ease: "none" }, 0);
-            if (e.punch) tl.fromTo("#" + id + "-punch", { scale: 1.07 }, { scale: 1, duration: 0.45, ease: "expo.out" }, 0);
-            var f = 1 / 30, p = [[0, 0], [22, -14], [-16, 10], [8, -4], [0, 0]];
-            e.golpes.forEach(function (t) {
-              for (var i = 0; i < 4; i++) tl.fromTo("#" + id + "-golpe", { x: p[i][0], y: p[i][1] }, { x: p[i + 1][0], y: p[i + 1][1], duration: f, ease: "none", immediateRender: false }, t + i * f);
-            });
-          })(tl, ${JSON.stringify(id)}, ${jsonParaScript(e)});`;
-}
-
 export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
-  const { guion, palabras: al, tema } = e;
+  const { guion, palabras: al } = e;
+  const tema = validarTema(e.tema); // cubre también o.tema; el valor devuelto, nunca e.tema.
   const o = guion.opciones;
   const avisos: string[] = [];
   const D = r3(al.duracionAudio + COLA_FINAL);
@@ -189,25 +188,19 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   if (D > DURACION_MAXIMA + COLA_FINAL) throw new Error(`La voz dura ${al.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
   const archivos: Record<string, string> = {};
   const copias: PlanComposicion["copias"] = [];
-  const colores = {
-    fondo: color(tema.colores.fondo, "#0B0F0C"),
-    texto: color(tema.colores.texto, "#F4F1E8"),
-    acento: color(tema.colores.acento, "#E8B931"),
-    contorno: color(tema.colores.contorno, "#000000"),
-    secundario: color(tema.colores.secundario, "#1F7A3A"),
-  };
+  const colores = { ...tema.colores, contorno: tema.colores.contorno ?? "#000000", secundario: tema.colores.secundario ?? "#1F7A3A" };
   const f = tema.fuentes;
   const fuentesCss = (["titulos", "subtitulos", "mono"] as const)
     .filter((k) => f[k])
     .map(
       (k) =>
-        `@font-face { font-family: "${familiaCss(f[k]!.familia)}"; src: url("assets/fonts/${archivoFuente(f[k]!.archivo)}") format("woff2"); font-weight: ${Number(f[k]!.peso) || 400}; font-style: normal; font-display: block; }`,
+        `@font-face { font-family: "${f[k]!.familia}"; src: url("assets/fonts/${f[k]!.archivo}") format("woff2"); font-weight: ${f[k]!.peso}; font-style: normal; font-display: block; }`,
     )
     .join("\n        ");
   for (const k of ["titulos", "subtitulos", "mono"] as const) {
-    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", archivoFuente(f[k]!.archivo)), destino: `assets/fonts/${archivoFuente(f[k]!.archivo)}` });
+    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", f[k]!.archivo), destino: `assets/fonts/${f[k]!.archivo}` });
   }
-  copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" }, { origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
+  copias.push({ origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
 
   // ---- Ventanas de cada bloque ----
   const desde = al.segmentos.map((s, k) => (e.cortes?.[k] !== undefined ? e.cortes[k] : s.mostrarDesde));
@@ -314,8 +307,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       const [dx, dy] = DIRECCIONES[k % DIRECCIONES.length];
       p = ["bloque-foto.html", { IMG: escaparHtml(archivo), DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }) }];
     } else {
-      // ENVOLTURA (código GSAP) para las piezas de hoy; ENVOLTURA_DATOS (datos para hf.envoltura) para las migradas.
-      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA: envolturaJs(id, env), ENVOLTURA_DATOS: jsonParaScript(env) };
+      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA_DATOS: jsonParaScript(env) };
       switch (esc.tipo) {
         case "cifra":
           p = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
@@ -342,7 +334,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
             .map((img, i) => (img ? `assets/img${i + 1}${img.extension}` : undefined))
             .filter((x): x is string => !!x);
           e.imagenes.forEach((img, i) => img && copias.push({ origen: img.ruta, destino: `assets/img${i + 1}${img.extension}` }));
-          const paleta = (tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto]).filter((c) => COLOR_RE.test(c));
+          const paleta = tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto];
           p = ["escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento }];
           break;
         }
@@ -561,12 +553,12 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     `--texto: ${colores.texto};`,
     `--acento: ${colores.acento};`,
     `--contorno: ${colores.contorno};`,
-    `--fuente-titulos: "${familiaCss(f.titulos.familia)}", sans-serif;`,
-    `--peso-titulos: ${Number(f.titulos.peso) || 400};`,
-    `--fuente-subtitulos: "${familiaCss(f.subtitulos.familia)}", sans-serif;`,
-    `--peso-subtitulos: ${Number(f.subtitulos.peso) || 800};`,
+    `--fuente-titulos: "${f.titulos.familia}", sans-serif;`,
+    `--peso-titulos: ${f.titulos.peso};`,
+    `--fuente-subtitulos: "${f.subtitulos.familia}", sans-serif;`,
+    `--peso-subtitulos: ${f.subtitulos.peso};`,
     `--mayusculas: ${tema.subtitulos?.mayusculas === false ? "none" : "uppercase"};`,
-    `--degradado: ${Math.min(1, Math.max(0, tema.degradado?.opacidad ?? 0.78))};`,
+    `--degradado: ${tema.degradado?.opacidad ?? 0.78};`,
   ].join("\n        ");
   const importmap = usa3d
     ? `    <script type="importmap">{"imports":{"three":"./assets/vendor/three184/three.module.js","three/addons/":"./assets/vendor/three184/addons/"}}</script>`
@@ -582,7 +574,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
 
 // ---------- Piezas de escena ----------
 
-type Comun = { ID: string; FUENTES: string; ENVOLTURA: string; ENVOLTURA_DATOS: string };
+type Comun = { ID: string; FUENTES: string; ENVOLTURA_DATOS: string };
 /** Plantilla de la pieza y sus valores; ID, INICIO y DURACION los pone anadirPieza. */
 type PiezaPlan = [string, Record<string, string | number>];
 type Ventana = { duracion: number; visible: number };
@@ -702,19 +694,90 @@ export function escribirPlan(destino: string, plan: PlanComposicion): void {
   }
 }
 
-/** Busca URLs de red en la composición generada (no debe quedar ninguna). */
+/**
+ * Vendor copiado tal cual (ruta relativa → SHA-256): traen URLs de documentación. Si cambia un byte, se escanea entero.
+ * Al subir three, HyperFrames o las fuentes, el test de urls-de-red.test.ts avisa de que hay que recalcularlo.
+ */
+export const VENDOR_FIJADO: Record<string, string> = {
+  "assets/vendor/shaders.iife.js": "012b904bcf2621aa8dd99e1959ba71ddc1de86b9958d5ac9f48a40ff94cef776",
+  "assets/vendor/three184/three.module.js": "61134198639a10885daf893fb29669ca26386e2a4cde76e8399f51e329f741f2",
+  "assets/vendor/three184/three.core.js": "368dc78835287709a48939e8eb9a7a61d0732098bdf916e56840d458aae9ccf3",
+  "assets/vendor/three184/addons/loaders/FontLoader.js": "a8d78ab85e596ef6c274023ee165520000f010011553dbfafe5c966387aca3d8",
+  "assets/vendor/three184/addons/geometries/TextGeometry.js": "edf69c1cd6087c84d020156d1adbb29b40b098e4cbe8da4c0c36bbadc58dceac",
+  "assets/vendor/three147.min.js": "f34446bf875b5fb0dcd93819ffe1d9e182d46634ee855f5d904c6c4ac7cdbc95",
+  "assets/fonts/Geist-Bold.typeface.json": "e42c3305dcef66919fb1f2cf96101173c593abbd78eaed155025071b3fe6f621",
+};
+const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xlink"]);
+const ENTIDADES: Record<string, string> = {
+  colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
+};
+const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/]*\.)/gi;
+const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
+// Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
+const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
+// En JS y JSON `//` abre también un comentario: solo cuenta dentro de una cadena o justo tras `(`.
+const HOST_JS_RE = /(?<=["'`(])[\\/]{2,}[^\s"'<>)\\/]/gi;
+
+function caracter(n: number): string {
+  return n > 0 && n <= 0x10ffff && (n < 0xd800 || n > 0xdfff) ? String.fromCodePoint(n) : "�";
+}
+
+/** Una sola pasada, como el navegador: `&amp;#104;` queda en `&#104;`. */
+function sinEntidades(t: string): string {
+  return t.replace(/&#[xX]([0-9a-fA-F]+);?|&#([0-9]+);?|&([a-zA-Z]+);|&amp/g, (m, hex?: string, dec?: string, nombre?: string) => {
+    if (hex) return caracter(parseInt(hex, 16));
+    if (dec) return caracter(parseInt(dec, 10));
+    return nombre ? (ENTIDADES[nombre] ?? m) : "&";
+  });
+}
+
+function sinEscapesCss(t: string): string {
+  return t.replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([^\r\n\f]))/gi, (_, hex?: string, c?: string) => (hex ? caracter(parseInt(hex, 16)) : c!));
+}
+
+function hallazgosDeRed(texto: string, nombre: string): string[] {
+  const hallados = new Set<string>();
+  const anotar = (t: string, re: RegExp) => {
+    for (const m of t.matchAll(re)) {
+      const ficha = /[^\s"'<>)]*/y;
+      ficha.lastIndex = m.index;
+      const url = ficha.exec(t)![0];
+      if (!W3_PERMITIDAS.has(url.toLowerCase())) hallados.add(url.slice(0, 200));
+    }
+  };
+  const marcado = /\.(html|svg)$/i.test(nombre);
+  const base = marcado ? sinEntidades(texto) : texto;
+  const variantes = marcado || /\.css$/i.test(nombre) ? [base, sinEscapesCss(base)] : [base];
+  for (const v of variantes) {
+    // El navegador quita tabuladores y saltos de la URL; borrarlos sin más pegaría palabras, así que se miran las dos.
+    const pegada = v.replace(/[\t\n\r]/g, "");
+    for (const t of [v, pegada]) {
+      anotar(t, ESQUEMA_RE);
+      anotar(t, FILE_RE);
+      if (/speculationrules/i.test(t)) hallados.add("speculationrules");
+    }
+    if (marcado || /\.css$/i.test(nombre)) for (const t of [v, pegada]) anotar(t, HOST_MARCADO_RE);
+    else anotar(v, HOST_JS_RE); // pegada no: une un comentario `//x` con la línea anterior.
+  }
+  return [...hallados];
+}
+
+/**
+ * Busca URLs de red en la composición generada (no debe quedar ninguna, I2 c).
+ * ponytail: aviso temprano, no barrera. No ve concatenación ni escapes en JS (ver urls-de-red.test.ts); eso lo imponen
+ * I2 (a) y (b). Un fichero de texto con otra extensión o en UTF-16 tampoco se lee: las copias las decide este motor.
+ */
 export function urlsDeRed(destino: string): string[] {
   const encontradas: string[] = [];
   const recorrer = (dir: string) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const ruta = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (e.name !== "vendor" && !e.name.startsWith(".")) recorrer(ruta);
-      } else if (/\.(html|css)$/i.test(e.name)) {
-        const t = fs.readFileSync(ruta, "utf8");
-        for (const m of t.matchAll(/https?:\/\/[^\s"'<>)]+/g)) {
-          if (!m[0].startsWith("http://www.w3.org/")) encontradas.push(`${path.relative(destino, ruta)}: ${m[0]}`);
-        }
+      if (e.isDirectory()) recorrer(ruta);
+      else if (/\.(html|css|js|mjs|json|svg)$/i.test(e.name)) {
+        const rel = path.relative(destino, ruta).split(path.sep).join("/");
+        const bytes = fs.readFileSync(ruta);
+        if (VENDOR_FIJADO[rel] === crypto.createHash("sha256").update(bytes).digest("hex")) continue;
+        for (const h of hallazgosDeRed(bytes.toString("utf8"), e.name)) encontradas.push(`${rel}: ${h}`);
       }
     }
   };

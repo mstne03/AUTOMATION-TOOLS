@@ -41,7 +41,8 @@
           var d = JSON.parse(document.getElementById(id + "-datos").textContent);
           var hf = HF.contexto("{{ID}}", {{INICIO}});
           // I11: un dato no válido se ve; no se anima con basura.
-          if (!Number.isFinite(d.valor) || !Number.isFinite(d.cuenta) || !(d.cuenta > 0)) throw new Error("escena-cifra: valor o cuenta no válidos");
+          hf.numero(d.valor, "escena-cifra: valor");
+          hf.positivo(d.cuenta, "escena-cifra: cuenta");
           hf.envoltura({{ENVOLTURA_DATOS}});
           var num = document.getElementById(id + "-num");
           var fmt = function (v) {

@@ -18,7 +18,7 @@
           var hf = HF.contexto("{{ID}}", {{INICIO}});
           d.destellos.forEach(function (e) {
             // hf-tiempo solo comprueba los números; una opacidad que no lo sea se descartaría en silencio (I11).
-            if (typeof e.opacidad !== "number") throw new Error("flash: opacidad no válida");
+            hf.numero(e.opacidad, "flash: opacidad");
             hf.tween("#flash-luz", { opacity: 0 }, { opacity: e.opacidad }, e.t, e.sube, "none", { antes: false });
             hf.tween("#flash-luz", { opacity: e.opacidad }, { opacity: 0 }, e.t + e.sube, e.baja, "power2.out", { antes: false });
           });

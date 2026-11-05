@@ -9,7 +9,6 @@ import { parsearGuion } from "../src/guion.js";
 import { procesarAlineacion, type AlineacionCaracteres, type ResultadoAlineacion } from "../src/alineacion.js";
 import { encolarRender, esperarJob, ultimasLineasUtiles } from "../src/render.js";
 import { ejecutar, herramientasFfmpeg, sondear } from "../src/proceso.js";
-import { urlsDeRed } from "../src/composicion.js";
 import { leerPruebaGpu } from "../src/capacidades.js";
 import { config } from "../src/config.js";
 
@@ -192,6 +191,8 @@ async function renderizar(id: string, palabras: ResultadoAlineacion, conMusica: 
   const job = await encolarRender(id, { raiz: RAIZ, musica: conMusica, musicaVolumen: 0.12, ffmpegDir: config.ffmpegDir });
   const fin = await esperarJob(job.job_id, 1000);
   if (fin.estado !== "terminado") throw new Error(`${id}: render fallido: ${fin.error}\n${ultimasLineasUtiles(fin).join("\n")}`);
+  // urlsDeRed ya corrió dentro de encolarRender, antes de `check`. Aquí no se repite: `check` deja en
+  // .hyperframes/artifacts/checks/*.json informes con URL que no son de la composición (C9), y excluirlos sería un hueco.
   const mp4 = path.join(RAIZ, `${id}.mp4`);
   const info = await sondear(h.ffprobe, mp4);
   expect(info.ancho).toBe(1080);
@@ -199,7 +200,6 @@ async function renderizar(id: string, palabras: ResultadoAlineacion, conMusica: 
   expect(info.codecVideo).toBe("h264");
   expect(info.tieneAudio).toBe(true);
   expect(Math.abs((info.duracion ?? 0) - palabras.duracionTotal)).toBeLessThanOrEqual(0.5);
-  expect(urlsDeRed(path.join(RAIZ, id, "_composicion"))).toEqual([]);
   // Un fotograma en el medio de cada bloque, otro en el 0,5 s y otro en el golpe.
   const tiempos = [0.5, ...palabras.segmentos.map((s) => (s.mostrarDesde + s.mostrarHasta) / 2)];
   const golpe = palabras.palabras.findIndex((p) => p.texto === "kicks");
