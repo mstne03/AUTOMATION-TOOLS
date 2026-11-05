@@ -4,10 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { log } from "./log.js";
 import { parsearGuion, type Guion } from "./guion.js";
-import type { ResultadoAlineacion } from "./alineacion.js";
+import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
-import { archivosVideo, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
+import { archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
@@ -281,12 +281,10 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
   if (!fs.existsSync(rutas.voz) || !fs.existsSync(rutas.palabras)) {
     throw new ErrorVideo(`Falta voz.mp3 o palabras.json en ${rutas.dir}. Genera la voz con video_generar_voz.`);
   }
-  let palabras: ResultadoAlineacion;
-  try {
-    palabras = JSON.parse(fs.readFileSync(rutas.palabras, "utf8")) as ResultadoAlineacion;
-  } catch {
-    throw new ErrorVideo(`palabras.json está dañado. Regenera la voz con video_generar_voz(forzar=true).`);
-  }
+  comprobarRecurso(rutas.voz);
+  comprobarRecurso(rutas.palabras);
+  // I1: entrada no confiable; se usa el valor validado, no el JSON crudo.
+  const palabras = cargarPalabras(rutas.palabras);
   if (palabras.hashNarracion !== guion.hash) {
     throw new ErrorVideo(
       "El guion ha cambiado desde que se generó la voz (el hash de la narración no coincide). Regenera la voz con video_generar_voz(forzar=true).",
@@ -307,6 +305,7 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
     if (!fs.existsSync(ruta)) {
       throw new ErrorVideo(`No encuentro la música ${ruta}. Cópiala ahí, corrige \`musica\` en el guion o renderiza con musica=false.`);
     }
+    comprobarRecurso(ruta);
     const desde = guion.opciones.musicaDesde;
     if (desde > 0) {
       const dur = (await sondear(herramientas.ffprobe, ruta)).duracion;

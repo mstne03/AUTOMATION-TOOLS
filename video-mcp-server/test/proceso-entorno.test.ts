@@ -108,7 +108,7 @@ describe("entorno de los hijos (I5)", () => {
   });
 
   it.runIf(process.platform === "win32")("R0 L4: un `env` pasado por JS no llega al hijo (el spread va antes de entornoHijo)", async () => {
-    const opciones = { env: { SECRETA_DE_JS: "x", PATH: "C:\\plantado" } } as object;
+    const opciones = { env: { SECRETA_DE_JS: "x", PATH: "C:\\plantado" }, timeoutMs: 60_000 } as object;
     const r = await ejecutar(path.join(process.env.SYSTEMROOT!, "System32", "cmd.exe"), ["/c", "set"], opciones);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/^HOME=/m);
@@ -124,7 +124,7 @@ describe("entorno de los hijos (I5)", () => {
 
 describe("modo cerrado de la CLI (I13)", () => {
   it("toda invocación de la CLI lleva el modo cerrado aunque el llamador pase otro entorno", async () => {
-    const r = await ejecutar(process.execPath, [F.script, "check", F.dir], {
+    const r = await ejecutar(process.execPath, [F.script, "check", F.dir], { timeoutMs: 120_000,
       env: { ...process.env, CI: "0", HYPERFRAMES_NO_TELEMETRY: "0", HOME: "C:\\otro", NODE_OPTIONS: "--require x" },
     });
     expect(r.code).toBe(0);
@@ -144,7 +144,7 @@ describe("modo cerrado de la CLI (I13)", () => {
     const proyecto = path.join(F.dir, "proyecto");
     fs.mkdirSync(proyecto, { recursive: true });
     fs.writeFileSync(path.join(proyecto, ".env"), "PRODUCER_X=1\n");
-    await ejecutar(process.execPath, [F.script, "render", proyecto], { cwd: proyecto });
+    await ejecutar(process.execPath, [F.script, "render", proyecto], { timeoutMs: 120_000, cwd: proyecto });
     const [l] = leer();
     expect(mismaRuta(l.cwd, hfHome())).toBe(true);
   });
@@ -156,45 +156,45 @@ describe("modo cerrado de la CLI (I13)", () => {
 
   it("sin HYPERFRAMES_BROWSER_PATH ninguna CLI se lanza, pero ffmpeg sigue funcionando", async () => {
     delete process.env.HYPERFRAMES_BROWSER_PATH;
-    await expect(ejecutar(process.execPath, [F.script, "render", F.dir])).rejects.toThrow(/descárgalo en Ajustes/);
-    await expect(ejecutar(process.execPath, [F.script, "audio", "x.mp3"])).rejects.toThrow(/descárgalo en Ajustes/);
+    await expect(ejecutar(process.execPath, [F.script, "render", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(/descárgalo en Ajustes/);
+    await expect(ejecutar(process.execPath, [F.script, "audio", "x.mp3"], { timeoutMs: 120_000 })).rejects.toThrow(/descárgalo en Ajustes/);
     expect(leer()).toHaveLength(0);
     if (h) expect((await ejecutar(h.ffprobe, ["-version"], { timeoutMs: 30000 })).code).toBe(0);
   });
 
   it("con HYPERFRAMES_BROWSER_PATH a un fichero que no existe, tampoco", async () => {
     process.env.HYPERFRAMES_BROWSER_PATH = path.join(F.dir, "no-existe.exe");
-    await expect(ejecutar(process.execPath, [F.script, "check", F.dir])).rejects.toThrow(/descárgalo en Ajustes/);
+    await expect(ejecutar(process.execPath, [F.script, "check", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(/descárgalo en Ajustes/);
     expect(leer()).toHaveLength(0);
   });
 
   it("un Node distinto del del motor no puede lanzar la CLI", async () => {
-    await expect(ejecutar("node", [F.script, "render", F.dir])).rejects.toThrow(/Node del motor/);
+    await expect(ejecutar("node", [F.script, "render", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(/Node del motor/);
     expect(leer()).toHaveLength(0);
   });
 
   it("el Node del motor con otros argumentos, o el script con otra escritura de la ruta, también son la CLI", async () => {
     delete process.env.HYPERFRAMES_BROWSER_PATH;
-    await expect(ejecutar(process.execPath, ["-e", "1"])).rejects.toThrow(/descárgalo en Ajustes/);
+    await expect(ejecutar(process.execPath, ["-e", "1"], { timeoutMs: 120_000 })).rejects.toThrow(/descárgalo en Ajustes/);
     // Una copia de Node con otro nombre sigue siendo la CLI si args[0] es el script, aunque cambie la grafía.
-    await expect(ejecutar("C:\\otro\\runtime.exe", [F.script.toUpperCase().replace(/\//g, "\\"), "render"])).rejects.toThrow(/Node del motor/);
+    await expect(ejecutar("C:\\otro\\runtime.exe", [F.script.toUpperCase().replace(/\//g, "\\"), "render"], { timeoutMs: 120_000 })).rejects.toThrow(/Node del motor/);
     expect(leer()).toHaveLength(0);
   });
 
   it("un .env plantado en hf-home bloquea la CLI", async () => {
     fs.writeFileSync(path.join(hfHome(), ".env"), "PRODUCER_X=1\n");
-    await expect(ejecutar(process.execPath, [F.script, "check", F.dir])).rejects.toThrow(/hf-home/);
+    await expect(ejecutar(process.execPath, [F.script, "check", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(/hf-home/);
     expect(leer()).toHaveLength(0);
   });
 
   it("un ejecutable plantado en hf-home bloquea la CLI", async () => {
     fs.writeFileSync(path.join(hfHome(), "ffmpeg.exe"), "x");
-    await expect(ejecutar(process.execPath, [F.script, "check", F.dir])).rejects.toThrow(/hf-home/);
+    await expect(ejecutar(process.execPath, [F.script, "check", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(/hf-home/);
     expect(leer()).toHaveLength(0);
   });
 
   it("dos invocaciones de la CLI concurrentes van en serie", async () => {
-    await Promise.all([ejecutar(process.execPath, [F.script, "lento"]), ejecutar(process.execPath, [F.script, "lento"])]);
+    await Promise.all([ejecutar(process.execPath, [F.script, "lento"], { timeoutMs: 120_000 }), ejecutar(process.execPath, [F.script, "lento"], { timeoutMs: 120_000 })]);
     const [a, b] = leer().sort((x, y) => x.inicio - y.inicio);
     expect(b.inicio).toBeGreaterThanOrEqual(a.fin);
   });

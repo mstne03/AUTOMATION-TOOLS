@@ -63,7 +63,7 @@ describe("verificarDist", () => {
 
   it("control: pasa con la copia íntegra y la CLI se lanza", async () => {
     await expect(verificarDist()).resolves.toBeUndefined();
-    const r = await ejecutar(process.execPath, [F.cli, "check", F.dir]);
+    const r = await ejecutar(process.execPath, [F.cli, "check", F.dir], { timeoutMs: 120_000 });
     expect(r.code).toBe(0);
     expect(fs.existsSync(F.testigo)).toBe(true);
   });
@@ -129,7 +129,7 @@ describe("verificarDist", () => {
 describe("ejecutar comprueba el dist antes de cada CLI", () => {
   it("con dist malo rechaza sin lanzar nada", async () => {
     fs.appendFileSync(hf("dist/cli.js"), "x");
-    await expect(ejecutar(process.execPath, [F.cli, "check", F.dir])).rejects.toBeInstanceOf(ErrorNavegador);
+    await expect(ejecutar(process.execPath, [F.cli, "check", F.dir], { timeoutMs: 120_000 })).rejects.toBeInstanceOf(ErrorNavegador);
     expect(fs.existsSync(F.testigo)).toBe(false);
   });
 
@@ -137,7 +137,7 @@ describe("ejecutar comprueba el dist antes de cada CLI", () => {
     fs.appendFileSync(hf("dist/cli.js"), "x");
     vi.stubEnv("HYPERFRAMES_BROWSER_PATH", "");
     try {
-      await expect(ejecutar(process.execPath, [F.cli, "check", F.dir])).rejects.toThrow(FALLO);
+      await expect(ejecutar(process.execPath, [F.cli, "check", F.dir], { timeoutMs: 120_000 })).rejects.toThrow(FALLO);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -152,7 +152,7 @@ describe("ejecutar comprueba el dist antes de cada CLI", () => {
 
   it("ffmpeg no pasa por esta comprobación: no es la CLI", async () => {
     fs.appendFileSync(hf("dist/cli.js"), "x");
-    const r = await ejecutar(path.join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "cmd.exe"), ["/c", "exit", "0"]);
+    const r = await ejecutar(path.join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "cmd.exe"), ["/c", "exit", "0"], { timeoutMs: 120_000 });
     expect(r.code).toBe(0);
   });
 });

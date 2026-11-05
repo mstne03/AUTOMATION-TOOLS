@@ -131,6 +131,28 @@ class _Sesion:
         return self.proceso is None or self.proceso.returncode is None
 
 
+async def _esperar_parada_o_muerte(s: _Sesion) -> None:
+    """Espera `parar` o la muerte del motor, lo que llegue antes.
+
+    Sin esto el Job Object (la salida del `async with`) no se cerraba hasta la siguiente llamada, aunque el
+    motor ya hubiera muerto. Si murió solo (nadie pidió parar), se avisa una sola vez y se marca la sesión como
+    parada: la siguiente llamada relanza. Un cierre normal (`parar` ya puesto) no avisa.
+    """
+    esperas = {asyncio.ensure_future(s.parar.wait())}
+    if s.proceso is not None:
+        esperas.add(asyncio.ensure_future(s.proceso.wait()))
+    try:
+        await asyncio.wait(esperas, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for e in esperas:
+            e.cancel()
+        await asyncio.gather(*esperas, return_exceptions=True)
+    if not s.parar.is_set():
+        codigo = s.proceso.returncode if s.proceso is not None else None
+        log.warning("El motor de vídeo terminó por su cuenta (código %s); se relanzará en la siguiente llamada.", codigo)
+        s.parar.set()
+
+
 class MotorVideo:
     def __init__(
         self,
@@ -265,7 +287,7 @@ class MotorVideo:
                     await sesion.initialize()
                 log.info("Motor de vídeo arrancado (pid %s).", s.proceso.pid if s.proceso else "?")
                 s.listo.set_result(sesion)
-                await s.parar.wait()
+                await _esperar_parada_o_muerte(s)
         except BaseException as e:
             if not s.listo.done():
                 s.listo.set_exception(e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO))

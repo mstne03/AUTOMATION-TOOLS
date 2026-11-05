@@ -85,7 +85,7 @@ describe("verificarNavegador", () => {
     Object.assign(process.env, integrado());
     try {
       fs.rmSync(F.registro, { force: true });
-      await expect(ejecutar(process.execPath, [F.script, "render", F.base])).rejects.toBeInstanceOf(ErrorNavegador);
+      await expect(ejecutar(process.execPath, [F.script, "render", F.base], { timeoutMs: 120_000 })).rejects.toBeInstanceOf(ErrorNavegador);
       expect(fs.existsSync(F.registro)).toBe(false);
     } finally {
       for (const k of ["VIDEO_ENGINE_EMBEDDED", "HYPERFRAMES_BROWSER_PATH", "VIDEO_NAVEGADOR_MANIFIESTO"]) {

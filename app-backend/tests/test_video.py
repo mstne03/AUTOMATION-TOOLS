@@ -26,6 +26,7 @@ from app_backend.video import (
 TOKEN = "token-de-prueba"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 MOTOR_FALSO = Path(__file__).with_name("motor_falso.py")
+MOTOR_QUE_SALE = Path(__file__).with_name("motor_que_sale.py")
 CLAVE = "xi-clave-secreta-de-prueba"
 
 _DIST_REAL = Path(__file__).resolve().parents[2] / "video-mcp-server" / "dist" / "index.js"
@@ -109,6 +110,38 @@ async def test_motor_muere_y_se_relanza(motor):
         await motor.llamar("morir")
     assert (await motor.llamar("pid")).texto != antes
     assert not psutil_pid_vivo(int(antes))
+
+
+async def test_motor_muerto_cierra_la_sesion_sin_otra_llamada(tmp_path, monkeypatch, caplog):
+    """El Job Object se cierra al morir el motor, sin esperar a la siguiente llamada; y se avisa una sola vez."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    salir = tmp_path / "salir"
+    m = MotorVideo(
+        [sys.executable, str(MOTOR_QUE_SALE), str(salir)], MOTOR_QUE_SALE.parent, lambda: entorno_motor(StoreFalso())
+    )
+    try:
+        antes = (await m.llamar("pid")).texto
+        s = m._sesion
+        assert s is not None and s.tarea is not None
+        with caplog.at_level(logging.WARNING, logger="app_backend.video"):
+            salir.write_text("x")
+            # Ninguna llamada más: la propia tarea tiene que darse cuenta y cerrar la sesión.
+            await asyncio.wait_for(asyncio.shield(s.tarea), 2)
+        assert s.tarea.done() and s.parar.is_set()
+        avisos = [r for r in caplog.records if "terminó" in r.getMessage()]
+        assert len(avisos) == 1, [r.getMessage() for r in caplog.records]
+        # La siguiente llamada relanza un motor nuevo (el falso vuelve a esperar el fichero: se quita antes).
+        salir.unlink()
+        assert (await m.llamar("pid")).texto != antes
+    finally:
+        await m.cerrar()
+
+
+async def test_cierre_normal_no_registra_aviso(motor, caplog):
+    await motor.llamar("pid")
+    with caplog.at_level(logging.WARNING, logger="app_backend.video"):
+        await motor.cerrar()
+    assert [r.getMessage() for r in caplog.records if "terminó" in r.getMessage()] == []
 
 
 async def test_timeout_de_llamada(motor):

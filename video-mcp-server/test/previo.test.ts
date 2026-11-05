@@ -70,7 +70,7 @@ describe("validación con archivos", () => {
     const h = herramientasFfmpeg();
     expect(h).toBeTruthy();
     fs.mkdirSync(path.join(RAIZ, "_musica"), { recursive: true });
-    await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=3", path.join(RAIZ, "_musica", "corta.mp3")]);
+    await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=3", path.join(RAIZ, "_musica", "corta.mp3")], { timeoutMs: 120_000 });
     video("video005", "musica: _musica/corta.mp3\nmusica_desde: 5", [1, 2, 3, 4, 5, 6]);
     await expect(prepararRender("video005", OPC)).rejects.toThrow(/musica_desde: 5` es mayor que la duración de la pista \(3\.0 s\)/);
     // Sin música en el render, la pista no se comprueba.

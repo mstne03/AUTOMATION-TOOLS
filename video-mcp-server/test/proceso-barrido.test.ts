@@ -41,7 +41,7 @@ a.on("close", () => {
 });
 
 import { spawn } from "node:child_process";
-import { barrerProcesos, carpetasDelBundle, ejecutar, filtrarProcesos, herramientasFfmpeg, matarProcesos, procesosBajo, seleccionarBarrido } from "../src/proceso.js";
+import { barrerProcesos, carpetasDelBundle, descendientes, ejecutar, filtrarProcesos, herramientasFfmpeg, matarProcesos, procesosBajo, seleccionarBarrido } from "../src/proceso.js";
 
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function vivo(pid: number): boolean {
@@ -90,7 +90,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
     const pidFile = path.join(F.dir, "huerfano2.pid");
     let pid = 0;
     try {
-      const r = await ejecutar(process.execPath, [F.script, "falla", pidFile], {});
+      const r = await ejecutar(process.execPath, [F.script, "falla", pidFile], { timeoutMs: 120_000 });
       expect(r.code).toBe(1);
       pid = Number(fs.readFileSync(pidFile, "utf8"));
       expect(await muere(pid)).toBe(true);
@@ -108,7 +108,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
       const t0 = Date.now();
       // Escribe «fin» al terminar por sí mismo: un proceso matado no lo escribe (el código de salida de
       // un TerminateProcess no es fiable para distinguirlo).
-      const otra = ejecutar(F.exe, ["-e", "setTimeout(()=>{ process.stdout.write('fin') },30000)"]).then((r) => ({ ...r, ms: Date.now() - t0 }));
+      const otra = ejecutar(F.exe, ["-e", "setTimeout(()=>{ process.stdout.write('fin') },30000)"], { timeoutMs: 120_000 }).then((r) => ({ ...r, ms: Date.now() - t0 }));
       const r = await ejecutar(process.execPath, [F.script, "render", pidFile], { timeoutMs: 3000 });
       expect(r.timeout).toBe(true);
       pid = Number(fs.readFileSync(pidFile, "utf8"));
@@ -167,7 +167,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
         matarSiVive(c.motor);
         await esperar(500);
         expect(vivo(c.chrome)).toBe(true);
-        const r = await ejecutar(process.execPath, [F.script, "falla", path.join(F.dir, "propio2.pid")], {});
+        const r = await ejecutar(process.execPath, [F.script, "falla", path.join(F.dir, "propio2.pid")], { timeoutMs: 120_000 });
         expect(r.code).toBe(1);
         expect(await muere(c.chrome)).toBe(true);
       } finally {
@@ -189,7 +189,7 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
       .spawn(process.argv[2], ["-e", "setTimeout(()=>{},1e4)"], { detached: true, stdio: ["ignore", 1, 2] }).unref();
       fs.writeFileSync(process.argv[1], String(process.pid)); process.exit(0);`;
     let cerrado = false;
-    const trabajo = ejecutar(F.exe, ["-e", codigo, pidFile, process.execPath]).finally(() => {
+    const trabajo = ejecutar(F.exe, ["-e", codigo, pidFile, process.execPath], { timeoutMs: 120_000 }).finally(() => {
       cerrado = true;
     });
     await vi.waitFor(() => expect(fs.existsSync(pidFile) && fs.statSync(pidFile).size > 0).toBe(true), { timeout: 15000 });
@@ -223,7 +223,8 @@ describe.runIf(process.platform === "win32")("barrido real (Windows)", () => {
   }, 120000);
 });
 
-describe("barrerProcesos", () => {
+// Rutas C:/ de Windows: en otro SO path.resolve las convierte en relativas y nada coincide.
+describe.runIf(process.platform === "win32")("barrerProcesos", () => {
   const objetivo = { arboles: ["C:\\nav"], exactos: [] };
 
   it("si no se puede matar, pide reiniciar el motor una vez", async () => {
@@ -343,7 +344,8 @@ describe("barrerProcesos", () => {
   });
 });
 
-describe("seleccionarBarrido: hijos en vuelo (MEDIUM-A)", () => {
+// Rutas C:/ de Windows: en otro SO path.resolve las convierte en relativas y nada coincide.
+describe.runIf(process.platform === "win32")("seleccionarBarrido: hijos en vuelo (MEDIUM-A)", () => {
   const o = { arboles: ["C:\\nav"], exactos: ["C:\\ff\\ffmpeg.exe"] };
   const T = 1_000_000;
   const lista = [
@@ -368,7 +370,8 @@ describe("seleccionarBarrido: hijos en vuelo (MEDIUM-A)", () => {
   });
 });
 
-describe("seleccionarBarrido: entre instancias (W1.6b T9, R0 M4)", () => {
+// Rutas C:/ de Windows: en otro SO path.resolve las convierte en relativas y nada coincide.
+describe.runIf(process.platform === "win32")("seleccionarBarrido: entre instancias (W1.6b T9, R0 M4)", () => {
   const NODE = "C:\\motor\\node.exe";
   const CHROME = "C:\\nav\\chrome-headless-shell.exe";
   const o = { arboles: ["C:\\nav"], exactos: [] };
@@ -472,4 +475,58 @@ describe("carpetasDelBundle", () => {
     expect(o.arboles).toHaveLength(1);
     expect(path.resolve(o.arboles[0]).toLowerCase()).toBe(path.resolve(F.nav).toLowerCase());
   });
+});
+
+describe("descendientes", () => {
+  it("recorre un árbol de tres niveles y no incluye al propio pid", () => {
+    const tabla = [
+      { pid: 1 },
+      { pid: 10, padre: 1 },
+      { pid: 20, padre: 10 },
+      { pid: 21, padre: 10 },
+      { pid: 30, padre: 20 },
+      { pid: 99, padre: 98 },
+    ];
+    expect(descendientes(10, tabla).sort((a, b) => a - b)).toEqual([20, 21, 30]);
+    expect(descendientes(30, tabla)).toEqual([]);
+  });
+  it("tolera ciclos (pid reutilizado) y un pid desconocido", () => {
+    const tabla = [
+      { pid: 10, padre: 30 },
+      { pid: 20, padre: 10 },
+      { pid: 30, padre: 20 },
+    ];
+    expect(descendientes(10, tabla).sort((a, b) => a - b)).toEqual([20, 30]);
+    expect(descendientes(777, tabla)).toEqual([]);
+  });
+});
+
+describe("timeoutMs obligatorio (I7)", () => {
+  it("ejecutar rechaza una llamada sin plazo, con 0 o con un valor no finito", async () => {
+    // @ts-expect-error timeoutMs es obligatorio en el tipo
+    await expect(ejecutar("x", [])).rejects.toThrow(/timeoutMs/);
+    for (const timeoutMs of [0, -1, NaN, Infinity]) {
+      await expect(ejecutar("x", [], { timeoutMs })).rejects.toThrow(/timeoutMs/);
+    }
+  });
+});
+
+describe.runIf(process.platform === "linux")("árbol de procesos en POSIX", () => {
+  it("un nieto en su propio grupo muere al vencer el timeout", async () => {
+    const pidFile = path.join(F.dir, "nieto-posix.pid");
+    // El padre (copia de Node del motor, así el barrido por imagen no ve al nieto) lanza un nieto desligado en otro grupo.
+    const codigo = `const { spawn } = require('node:child_process'); const fs = require('node:fs');
+      const n = spawn(${JSON.stringify(process.execPath)}, ['-e', 'setInterval(()=>{},1e3)'], { detached: true, stdio: 'ignore' });
+      n.unref(); fs.writeFileSync(process.argv[1], String(n.pid)); setInterval(()=>{},1e3);`;
+    let nieto = 0;
+    try {
+      const r = await ejecutar(F.exe, ["-e", codigo, pidFile], { timeoutMs: 2000 });
+      expect(r.timeout).toBe(true);
+      nieto = Number(fs.readFileSync(pidFile, "utf8"));
+      expect(nieto).toBeGreaterThan(0);
+      expect(await muere(nieto)).toBe(true);
+    } finally {
+      matarSiVive(nieto);
+    }
+  }, 30000);
 });
