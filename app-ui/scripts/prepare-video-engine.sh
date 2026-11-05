@@ -109,6 +109,17 @@ git -C "$MOTOR" ls-files -z plantilla catalogo | tar -C "$MOTOR" --null -T - -cf
 (cd "$DEST/app" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
 parchear_hyperframes
 rm "$DEST/app/package-lock.json"
+# I12 (SEO-113): hyperframes trae copias de GSAP que solo usa Studio. dist/vendor/npm y dist/studio no están en el
+# manifiesto de SHA-256 y el render no los carga. Se busca la cabecera de licencia, no la palabra GreenSock: un chunk
+# que no se puede borrar (chunk-2MLMO25E.js) la nombra en detectores de código. Control positivo: la misma búsqueda
+# tiene que ver la copia de muestra antes de borrarla; si no la ve, la puerta no mide nada.
+LICENCIA_GSAP='Copyright [0-9-]+, GreenSock|gsap\.com/standard-license'
+HF_APP="$DEST/app/node_modules/hyperframes/dist"
+grep -IqE "$LICENCIA_GSAP" "$HF_APP/vendor/npm/gsap@3.15.0/dist/gsap.min.js" || falla "la búsqueda de la licencia de GSAP no ve la copia de muestra (I12)"
+rm -rf "$HF_APP/vendor/npm" "$HF_APP/studio"
+rc=0
+grep -rIlE "$LICENCIA_GSAP" "$DEST/app" || rc=$?
+[ "$rc" -eq 1 ] || falla "el bundle lleva GSAP, o la búsqueda falló (I12)"
 
 echo "== Node $NODE_VERSION"
 zip=$(descargar "node-$NODE_VERSION" "$NODE_URL" "$NODE_ZIP" "$NODE_SHA256")
@@ -137,11 +148,6 @@ M="$DEST/app/node_modules"
   echo
   cat "$LICENCIAS/hyperframes-$HYPERFRAMES_VERSION-LICENSE.txt"
 } > "$DEST/LICENSES/hyperframes-LICENSE.txt"
-{
-  echo "gsap $(node -p "require('./$M/gsap/package.json').version") — GreenSock"
-  echo "Licencia: $(node -p "require('./$M/gsap/package.json').license")"
-  echo "El paquete de npm no incluye fichero de licencia; texto completo en https://gsap.com/standard-license"
-} > "$DEST/LICENSES/gsap-LICENSE.txt"
 cp "$M/three/LICENSE" "$DEST/LICENSES/three-LICENSE.txt"
 cp "$M/three147/LICENSE" "$DEST/LICENSES/three-0.147-LICENSE.txt"
 for fuente in anton inter-tight jetbrains-mono; do
