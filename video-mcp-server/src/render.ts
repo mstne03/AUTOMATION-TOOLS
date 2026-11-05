@@ -483,7 +483,8 @@ export interface ResultadoCheck {
 
 /** `hyperframes check --json`: los errores paran el render; los avisos se agrupan por regla. */
 export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: (l: string) => void): Promise<ResultadoCheck> {
-  const args = [HYPERFRAMES_BIN, "check", dir, "--json", "--no-contrast"];
+  // R2-L1: `--no-proxy` cierra `?hf-proxy`, que lanzaría ffprobe/ffmpeg fuera de `ejecutar()` sobre un `video/*`.
+  const args = [HYPERFRAMES_BIN, "check", dir, "--json", "--no-contrast", "--no-proxy"];
   if (gpu) args.push("--browser-gpu");
   // `ejecutar` fija CI=1 (sin él `check` deja un proceso "caliente" 5 minutos con la carpeta abierta) y
   // el cwd en hf-home, fuera de la composición.

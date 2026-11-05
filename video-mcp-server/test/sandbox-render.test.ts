@@ -651,13 +651,14 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     const r = await cli(["render", comp, "-o", salida, "--fps", "30", "--format", "webm", "--quality", "delivery", ...extra], { cwd: comp, env: entorno, timeoutMs: 300000 });
     const ms = await v.parar();
     const log = `${resumen(ms)}\n--- salida ---\n${(r.stdout + r.stderr).slice(-3000)}`;
+    // 4. Ninguna salida: ni TCP fuera de loopback, ni a 127.0.0.2, ni UDP (STUN, QUIC). R2-M1: va primero,
+    // para que un render fallido o un socket inesperado no dejen sin medir si algo salió.
+    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()], log).toEqual([0, 0, 0, 0]);
     // 1. Render correcto.
     expect(r.code, log).toBe(0);
     const info = await sondear(h.ffprobe, salida);
     expect([info.ancho, info.alto]).toEqual([540, 960]);
     comprobarProcesos(ms, log, fugas !== "no");
-    // 4. Ninguna salida: ni TCP fuera de loopback, ni a 127.0.0.2, ni UDP (STUN, QUIC).
-    expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()], log).toEqual([0, 0, 0, 0]);
     // 7. Medición (riesgo residual, sin aserción): el proceso de GPU escribe debug.log junto al exe del
     // CfT (errores de media\gpu\windows\mf_video_encoder_util). --disable-logging, --log-level=3,
     // --log-file=NUL, --enable-logging=stderr y --enable-logging --log-file=NUL no lo evitan en CfT 156
@@ -756,11 +757,13 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
     const comp = path.join(RAIZ, "comp-check");
     componer(comp, ip, tcp.puerto, tcp2.puerto, udp.puerto, udpWt.puerto, "js");
     const log0 = estadoDebugLog();
-    for (const args of [["check", comp, "--json", "--no-contrast"], ["snapshot", comp, "--frames", "1", "--no-end"]]) {
+    for (const args of [["check", comp, "--json", "--no-contrast", "--no-proxy"], ["snapshot", comp, "--frames", "1", "--no-end"]]) {
       const v = await vigilar(CFT!, comp);
       const r = await cli(args, { cwd: comp, env: entorno, timeoutMs: 180000 });
       const ms = await v.parar();
       const log = `${args[0]}\n${resumen(ms)}\n--- salida ---\n${(r.stdout + r.stderr).slice(-2000)}`;
+      // R2-M1: los sumideros, lo primero (ver la aserción 4 del render).
+      expect([tcp.conexiones(), tcp2.conexiones(), udp.paquetes(), udpWt.paquetes()], `${log}\n${tcp.peticiones().join("\n")}`).toEqual([0, 0, 0, 0]);
       expect(r.timeout, log).toBeFalsy();
       expect(ms.some((m) => m.escucha.length > 0), `servidor no observado\n${log}`).toBe(true);
       comprobarProcesos(ms, log, true);
@@ -792,7 +795,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       return comp;
     };
     const argsRender = (comp: string) => ["render", comp, "-o", path.join(comp, "salida.webm"), "--fps", "30", "--format", "webm", "--quality", "delivery"];
-    const argsCheck = (comp: string) => ["check", comp, "--json", "--no-contrast"];
+    const argsCheck = (comp: string) => ["check", comp, "--json", "--no-contrast", "--no-proxy"];
     const argsSnapshot = (comp: string) => ["snapshot", comp, "--frames", "1", "--no-end"];
     const render = (comp: string) => cli(argsRender(comp), { cwd: comp, env: entorno, timeoutMs: 180000 });
     const check = (comp: string) => cli(argsCheck(comp), { cwd: comp, env: entorno, timeoutMs: 180000 });
@@ -858,7 +861,7 @@ describe.runIf(process.platform === "win32")("I3 e I2b durante un render real", 
       expect(r.code, r.stdout + r.stderr).not.toBe(0);
       expect(r.stdout + r.stderr).toContain("(I14)");
       expect(accesos(log)).toEqual([]);
-      const c = await cli(["check", comp, "--json", "--no-contrast"], { cwd: comp, env, timeoutMs: 180000 });
+      const c = await cli(["check", comp, "--json", "--no-contrast", "--no-proxy"], { cwd: comp, env, timeoutMs: 180000 });
       expect(c.timeout).toBe(false);
       expect(accesos(log), c.stdout + c.stderr).toEqual([]);
       const s = await cli(["snapshot", comp, "--frames", "1", "--no-end"], { cwd: comp, env, timeoutMs: 180000 });

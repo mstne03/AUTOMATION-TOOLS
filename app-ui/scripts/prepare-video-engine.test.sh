@@ -90,5 +90,40 @@ else
   mal "orden: npm ci=$ci llamada=$llamada borrado=$borrado"
 fi
 
+echo "== Retirada de GSAP (I12, R2-L2)"
+# El bloque real del script, entre LICENCIA_GSAP= y su comprobación, sobre un árbol simulado.
+BLOQUE_GSAP=$(sed -n '/^LICENCIA_GSAP=/,/^\[ "\$rc" -eq 1 \]/p' "$SCRIPT")
+grep -q 'rm -rf "\$HF_APP/vendor/npm" "\$HF_APP/studio"' <<<"$BLOQUE_GSAP" || mal "no pude extraer el bloque de GSAP"
+CABECERA='/*! GSAP 3.15.0 https://gsap.com | Copyright 2008-2025, GreenSock. Subject to https://gsap.com/standard-license */'
+arbol_gsap() {
+  rm -rf "$DEST"
+  mkdir -p "$HF/dist/vendor/npm/gsap@3.15.0/dist" "$HF/dist/studio/assets"
+  printf '%s\n' "$CABECERA" >"$HF/dist/vendor/npm/gsap@3.15.0/dist/gsap.min.js"
+  printf '%s\n' "$CABECERA" >"$HF/dist/studio/assets/index.js"
+  # Como chunk-2MLMO25E.js: nombra GreenSock sin llevar la cabecera de licencia; no debe hacer saltar la puerta.
+  printf 'const detector = /GreenSock|gsap/;\n' >"$HF/dist/chunk-detector.js"
+}
+# probar_gsap "descripción" CÓDIGO_ESPERADO TEXTO_ESPERADO: en un subproceso, porque `falla` hace exit.
+probar_gsap() {
+  local salida codigo=0
+  salida=$( (eval "$BLOQUE_GSAP") 2>&1) || codigo=$?
+  if [ "$codigo" = "$2" ] && grep -q "$3" <<<"$salida"; then ok "$1"; else mal "$1 (código $codigo): $salida"; fi
+}
+arbol_gsap
+probar_gsap "retira vendor/npm y studio y la puerta pasa" 0 ""
+if [ -e "$HF/dist/vendor/npm" ] || [ -e "$HF/dist/studio" ] || [ ! -f "$HF/dist/chunk-detector.js" ]; then
+  mal "el árbol no quedó como debe tras la retirada"
+else ok "solo se borra lo de Studio; el chunk que nombra GreenSock se queda"; fi
+arbol_gsap
+mkdir -p "$HF/dist/otro" && printf '%s\n' "$CABECERA" >"$HF/dist/otro/gsap.js"
+probar_gsap "una copia de GSAP fuera de vendor/studio aborta" 1 "el bundle lleva GSAP"
+arbol_gsap
+rm "$HF/dist/vendor/npm/gsap@3.15.0/dist/gsap.min.js"
+probar_gsap "sin la copia de muestra el control positivo aborta" 1 "no ve la copia de muestra"
+gsap=$(grep -n -m1 '^LICENCIA_GSAP=' "$SCRIPT" | cut -d: -f1 || true)
+if [ -n "$gsap" ] && [ -n "$llamada" ] && [ "$llamada" -lt "$gsap" ]; then ok "se retira tras aplicar el parche"; else
+  mal "orden: parche=$llamada gsap=$gsap"
+fi
+
 if [ "$FALLOS" -gt 0 ]; then echo "$FALLOS fallo(s)"; exit 1; fi
 echo "Todos los tests pasan."

@@ -15,7 +15,7 @@ const F = vi.hoisted(() => {
   const cli = nodePath.join(dir, "hyperframes-falso.mjs");
   nodeFs.writeFileSync(
     cli,
-    `import fs from "node:fs"; const s = JSON.parse(fs.readFileSync(${JSON.stringify(salida)}, "utf8")); console.log(s.texto); process.exit(s.codigo);`,
+    `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(salida + ".argv")}, JSON.stringify(process.argv.slice(2))); const s = JSON.parse(fs.readFileSync(${JSON.stringify(salida)}, "utf8")); console.log(s.texto); process.exit(s.codigo);`,
   );
   const navegador = nodePath.join(dir, "chrome-headless-shell.exe");
   nodeFs.writeFileSync(navegador, "exe");
@@ -42,6 +42,11 @@ describe("comprobarComposicion", () => {
 
   it("{ok:true} y código 0: sin errores", async () => {
     expect((await check(`{"ok":true}`, 0)).errores).toEqual([]);
+  });
+
+  it("R2-L1: pasa --no-proxy (sin él, ?hf-proxy lanza ffprobe/ffmpeg fuera de ejecutar)", async () => {
+    await check(`{"ok":true}`, 0);
+    expect(JSON.parse(fs.readFileSync(F.salida + ".argv", "utf8"))).toContain("--no-proxy");
   });
 
   it.each<[string, string, number, RegExp]>([
