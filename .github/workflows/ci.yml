@@ -180,12 +180,18 @@ jobs:
           echo "FFMPEG_DIR=$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
-      # En un runner recién creado la primera consulta a WMI tarda más de 30 s (TIMEOUT_LISTAR_MS del
-      # barrido) y el motor se reinicia por no poder listar procesos, como debe. Se calienta antes; en
-      # un equipo de usuario WMI ya está en marcha (en local, ~1,5 s).
-      - name: Calentar WMI
-        shell: pwsh
-        run: Measure-Command { Get-CimInstance Win32_Process | Out-Null } | Select-Object -ExpandProperty TotalSeconds
+      # En un runner recién creado, el primer listado del barrido supera TIMEOUT_LISTAR_MS (30 s) y el
+      # motor se reinicia por no poder listar procesos, como debe. WMI no es la causa (con pwsh 7 tarda
+      # 0,1 s): el barrido usa Windows PowerShell 5.1, cuyo primer arranque es lento en estos runners.
+      # Se calienta ese mismo ejecutable con la misma consulta y se imprime lo que tarda cada vez.
+      - name: Calentar Windows PowerShell 5.1
+        shell: bash
+        run: |
+          ps51="$SYSTEMROOT/System32/WindowsPowerShell/v1.0/powershell.exe"
+          for i in 1 2; do
+            "$ps51" -NoProfile -NonInteractive -Command \
+              "(Measure-Command { Get-CimInstance Win32_Process | ConvertTo-Json -Compress | Out-Null }).TotalSeconds"
+          done
       - run: npm test
 
   # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
