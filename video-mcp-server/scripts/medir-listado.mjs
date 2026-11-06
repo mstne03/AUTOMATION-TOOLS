@@ -33,18 +33,21 @@ function medir(nombre, extraEnv, prefijo = "") {
 }
 
 const de = (...ks) => () => Object.fromEntries(ks.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
-const IDENTIDAD = ["COMPUTERNAME", "USERNAME", "USERDOMAIN"];
-const SISTEMA = ["windir", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ALLUSERSPROFILE", "PUBLIC"];
-const PERFIL = ["APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
-const CPU = ["PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PATHEXT", "ComSpec"];
-// Ronda 2: el entorno mínimo más un grupo de variables cada vez; el entorno completo, de control.
+// Ronda 3: PATH y PSModulePath por separado, y bisección de todas las variables que el entorno mínimo quita.
+const minimo = entornoHijo();
+const faltan = Object.keys(process.env).filter((k) => !(k in minimo) && !["PATH", "Path", "PSModulePath"].includes(k)).sort();
+const mitad = Math.ceil(faltan.length / 2);
 const VARIANTES = [
   ["A referencia (hoy)", () => ({}), ""],
-  ["G + identidad", de(...IDENTIDAD), ""],
-  ["H + sistema", de(...SISTEMA), ""],
-  ["I + perfil real", de(...PERFIL), ""],
-  ["J + CPU y ComSpec", de(...CPU), ""],
+  ["P1 + PATH completo", () => ({ PATH: process.env.PATH }), ""],
+  ["P2 + PSModulePath", de("PSModulePath"), ""],
+  ["P3 + PATH y PSModulePath", () => ({ PATH: process.env.PATH, ...de("PSModulePath")() }), ""],
+  [`M1 + 1.ª mitad (${faltan[0]}..${faltan[mitad - 1]})`, de(...faltan.slice(0, mitad)), ""],
+  [`M2 + 2.ª mitad (${faltan[mitad]}..${faltan.at(-1)})`, de(...faltan.slice(mitad)), ""],
+  // Por si hace falta una combinación con el perfil real (HOME/USERPROFILE están en el mínimo y ninguna mitad los repone).
+  [`M1 + perfil real`, () => ({ ...de(...faltan.slice(0, mitad))(), ...de("USERPROFILE", "HOME")() }), ""],
+  [`M2 + perfil real`, () => ({ ...de(...faltan.slice(mitad))(), ...de("USERPROFILE", "HOME")() }), ""],
   ["K entorno completo (control)", () => ({ ...process.env }), ""],
 ];
 for (const [nombre, extra, prefijo] of VARIANTES) await medir(nombre, extra, prefijo);
-console.log("Variables que el entorno mínimo quita:", Object.keys(process.env).filter((k) => !(k in entornoHijo())).sort().join(" "));
+console.log("PATH del entorno mínimo:", minimo.PATH);
