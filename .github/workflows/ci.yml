@@ -180,6 +180,12 @@ jobs:
           echo "FFMPEG_DIR=$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
+      # En un runner recién creado la primera consulta a WMI tarda más de 30 s (TIMEOUT_LISTAR_MS del
+      # barrido) y el motor se reinicia por no poder listar procesos, como debe. Se calienta antes; en
+      # un equipo de usuario WMI ya está en marcha (en local, ~1,5 s).
+      - name: Calentar WMI
+        shell: pwsh
+        run: Measure-Command { Get-CimInstance Win32_Process | Out-Null } | Select-Object -ExpandProperty TotalSeconds
       - run: npm test
 
   # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
