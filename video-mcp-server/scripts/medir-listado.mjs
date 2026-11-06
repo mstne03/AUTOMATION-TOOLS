@@ -32,11 +32,19 @@ function medir(nombre, extraEnv, prefijo = "") {
   });
 }
 
+const de = (...ks) => () => Object.fromEntries(ks.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
+const IDENTIDAD = ["COMPUTERNAME", "USERNAME", "USERDOMAIN"];
+const SISTEMA = ["windir", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ALLUSERSPROFILE", "PUBLIC"];
+const PERFIL = ["APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
+const CPU = ["PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS", "PATHEXT", "ComSpec"];
+// Ronda 2: el entorno mínimo más un grupo de variables cada vez; el entorno completo, de control.
 const VARIANTES = [
-  ["B Import-Module CimCmdlets", () => ({}), "Import-Module CimCmdlets\n"],
-  ["C PSModulePath = módulos del sistema", () => ({ PSModulePath: MODULOS }), ""],
-  ["D LOCALAPPDATA en su carpeta", (d) => ({ LOCALAPPDATA: path.join(d, "LocalAppData") }), ""],
-  ["F C + D", (d) => ({ PSModulePath: MODULOS, LOCALAPPDATA: path.join(d, "LocalAppData") }), ""],
   ["A referencia (hoy)", () => ({}), ""],
+  ["G + identidad", de(...IDENTIDAD), ""],
+  ["H + sistema", de(...SISTEMA), ""],
+  ["I + perfil real", de(...PERFIL), ""],
+  ["J + CPU y ComSpec", de(...CPU), ""],
+  ["K entorno completo (control)", () => ({ ...process.env }), ""],
 ];
-for (const [nombre, extra, prefijo] of VARIANTES) for (const vez of [1, 2]) await medir(`${nombre} #${vez}`, extra, prefijo);
+for (const [nombre, extra, prefijo] of VARIANTES) await medir(nombre, extra, prefijo);
+console.log("Variables que el entorno mínimo quita:", Object.keys(process.env).filter((k) => !(k in entornoHijo())).sort().join(" "));
