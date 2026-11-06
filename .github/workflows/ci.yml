@@ -187,6 +187,8 @@ jobs:
       - name: Medir el listado de procesos del barrido
         run: |
           npm run build
+          # Diagnóstico temporal: variantes del entorno de PowerShell, con el runner aún frío.
+          VIDEO_STATE_DIR="$RUNNER_TEMP/medir-variantes/estado" node scripts/medir-listado.mjs
           VIDEO_STATE_DIR="$RUNNER_TEMP/medir-listado/estado" node --input-type=module -e '
             const { listarProcesos } = await import("./dist/proceso.js");
             for (const vez of [1, 2, 3]) {
