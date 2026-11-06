@@ -432,6 +432,7 @@ def test_motor_y_backend_toleran_la_misma_ruta():
     assert f'const LOG_CHROME = "{config.NAVEGADOR_LOG}";' in fuente
 
 
+@solo_windows
 def test_verificar_rechaza_junction_dentro(cft_falso, tmp_path):
     _instalar_en(tmp_path / "v")
     (tmp_path / "centinela").mkdir()

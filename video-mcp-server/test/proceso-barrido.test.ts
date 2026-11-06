@@ -466,14 +466,18 @@ describe("carpetasDelBundle", () => {
   });
   it.skipIf(!h)("en desarrollo sin FFMPEG_DIR no barre ffmpeg (el de PATH o winget puede ser de otro programa)", () => {
     const o = carpetasDelBundle(h, { HYPERFRAMES_BROWSER_PATH: F.exe });
-    expect(o.exactos.map((p) => path.basename(p).toLowerCase())).toEqual(["chrome-headless-shell.exe"]);
+    // Uno o dos (ruta tal cual y realpath, si difieren por 8.3), pero solo el navegador.
+    expect([...new Set(o.exactos.map((p) => path.basename(p).toLowerCase()))]).toEqual(["chrome-headless-shell.exe"]);
     expect(carpetasDelBundle(h, { VIDEO_ENGINE_EMBEDDED: "1" }).exactos.length).toBeGreaterThan(0);
   });
   it.skipIf(!h)("con manifiesto, la carpeta entera de la versión", () => {
     const man = path.join(F.nav, "MANIFIESTO-SHA256.json");
     const o = carpetasDelBundle(h, { HYPERFRAMES_BROWSER_PATH: F.exe, VIDEO_NAVEGADOR_MANIFIESTO: man });
-    expect(o.arboles).toHaveLength(1);
-    expect(path.resolve(o.arboles[0]).toLowerCase()).toBe(path.resolve(F.nav).toLowerCase());
+    // La ruta tal cual y su realpath (iguales salvo con nombres 8.3, como en el runner de CI).
+    const comoVienen = o.arboles.map((a) => a.toLowerCase());
+    expect(comoVienen).toContain(path.resolve(F.nav).toLowerCase());
+    expect(comoVienen).toContain(fs.realpathSync.native(F.nav).toLowerCase());
+    expect(o.arboles.length).toBeLessThanOrEqual(2);
   });
 });
 

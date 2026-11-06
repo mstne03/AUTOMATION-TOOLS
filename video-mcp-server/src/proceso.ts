@@ -56,6 +56,20 @@ export const CLAVES_PERMITIDAS: ReadonlySet<string> = new Set([
 
 const normalizarRuta = (p: string): string => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
 const mismaRuta = (a: string, b: string): boolean => normalizarRuta(a) === normalizarRuta(b);
+
+/**
+ * ¿Algún tramo de la ruta (ella o un padre) es un enlace o una junction? Se mira cada tramo con lstat en
+ * vez de comparar con realpath: realpath devuelve el nombre largo y una ruta 8.3 (`C:\Users\RUNNER~1\…`,
+ * habitual en %TEMP%) parecería un enlace sin serlo. En Windows lstat marca las junctions como enlace.
+ */
+export function pasaPorEnlace(ruta: string): boolean {
+  for (let d = path.resolve(sinPrefijoLargo(ruta)); ; ) {
+    if (fs.lstatSync(d).isSymbolicLink()) return true;
+    const padre = path.dirname(d);
+    if (padre === d) return false;
+    d = padre;
+  }
+}
 const dentroDe = (p: string, base?: string): boolean =>
   !!base?.trim() && (mismaRuta(p, base) || normalizarRuta(p).startsWith(normalizarRuta(base).replace(/[\\/]+$/, "") + path.sep));
 
@@ -84,7 +98,7 @@ export function system32(env: NodeJS.ProcessEnv = process.env): string {
 export function hfHome(env: NodeJS.ProcessEnv = process.env): string {
   const dir = esIntegrado(env) ? path.resolve(STATE_DIR, "..", "hf-home") : path.join(STATE_DIR, "hf-home");
   fs.mkdirSync(dir, { recursive: true });
-  if (fs.lstatSync(dir).isSymbolicLink() || !mismaRuta(fs.realpathSync.native(dir), dir)) {
+  if (pasaPorEnlace(dir)) {
     throw new Error(`La carpeta hf-home del motor (${dir}) es un enlace: no la uso.`);
   }
   const sobra = fs.readdirSync(dir).find((n) => n.toLowerCase() === ".env" || /\.(exe|com|bat|cmd)$/i.test(n));
@@ -203,13 +217,13 @@ export async function verificarNavegador(env: NodeJS.ProcessEnv = process.env): 
   // Ruta fija: sin enlaces en el camino, en <estado>/video/navegador/<versión> (integrado) y con el
   // exe exactamente en su sitio.
   const raiz = path.dirname(path.resolve(manifiesto));
-  let real: string;
+  let enlace: boolean;
   try {
-    real = sinPrefijoLargo(fs.realpathSync.native(raiz));
+    enlace = pasaPorEnlace(raiz);
   } catch {
     throw fallo("no puedo resolver la carpeta del navegador");
   }
-  if (!mismaRuta(real, raiz)) throw fallo("la carpeta del navegador pasa por un enlace");
+  if (enlace) throw fallo("la carpeta del navegador pasa por un enlace");
   if (esIntegrado(env) && !mismaRuta(path.dirname(raiz), path.resolve(STATE_DIR, "..", "navegador"))) {
     throw fallo("la carpeta del navegador no está donde la instala SEO Studio");
   }
@@ -553,12 +567,15 @@ function realOResuelta(p: string): string {
 export function carpetasDelBundle(h: Herramientas | null, env: NodeJS.ProcessEnv = process.env): ObjetivoBarrido {
   const conFfmpeg = h && (esIntegrado(env) || !!env.FFMPEG_DIR?.trim());
   const exactos = conFfmpeg ? [...new Set([h.ffmpeg, h.ffprobe, realOResuelta(h.ffmpeg), realOResuelta(h.ffprobe)])] : [];
+  // Las dos formas de cada ruta: Win32_Process da la imagen tal como se lanzó, que puede ser la 8.3
+  // (C:\Users\RUNNER~1\…), y realpath da la larga. Con una sola, el barrido no reconocería a los suyos.
+  const ambas = (p: string) => [...new Set([path.resolve(p), realOResuelta(p)])];
   const arboles: string[] = [];
   const manifiesto = env.VIDEO_NAVEGADOR_MANIFIESTO?.trim();
   const navegador = env.HYPERFRAMES_BROWSER_PATH?.trim();
-  if (manifiesto) arboles.push(realOResuelta(path.dirname(path.resolve(manifiesto))));
-  else if (navegador) exactos.push(realOResuelta(navegador));
-  return { arboles, exactos };
+  if (manifiesto) arboles.push(...ambas(path.dirname(path.resolve(manifiesto))));
+  else if (navegador) exactos.push(...ambas(navegador));
+  return { arboles, exactos: [...new Set(exactos)] };
 }
 
 /** Filtra una lista de procesos por ruta de imagen (sin distinguir mayúsculas en Windows y sin `\\?\`). */
