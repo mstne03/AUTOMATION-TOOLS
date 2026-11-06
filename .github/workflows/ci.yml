@@ -188,7 +188,8 @@ jobs:
         shell: bash
         run: |
           ps51="$SYSTEMROOT/System32/WindowsPowerShell/v1.0/powershell.exe"
-          for i in 1 2; do
+          for vez in primera segunda; do
+            echo -n "$vez: "
             "$ps51" -NoProfile -NonInteractive -Command \
               "(Measure-Command { Get-CimInstance Win32_Process | ConvertTo-Json -Compress | Out-Null }).TotalSeconds"
           done
