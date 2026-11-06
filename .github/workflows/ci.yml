@@ -191,8 +191,8 @@ jobs:
             const { listarProcesos } = await import("./dist/proceso.js");
             for (const vez of [1, 2, 3]) {
               const t = Date.now();
-              try { const l = await listarProcesos(); console.log(`vez ${vez}: ${Date.now() - t} ms, ${l.length} procesos`); }
-              catch (e) { console.log(`vez ${vez}: ${Date.now() - t} ms, error: ${e.message}`); }
+              try { const l = await listarProcesos(); console.log("vez " + vez + ": " + (Date.now() - t) + " ms, " + l.length + " procesos"); }
+              catch (e) { console.log("vez " + vez + ": " + (Date.now() - t) + " ms, error: " + e.message); }
             }'
       - run: npm test
 
