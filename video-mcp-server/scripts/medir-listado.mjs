@@ -36,18 +36,15 @@ const de = (...ks) => () => Object.fromEntries(ks.filter((k) => process.env[k] !
 // Ronda 3: PATH y PSModulePath por separado, y bisección de todas las variables que el entorno mínimo quita.
 const minimo = entornoHijo();
 const faltan = Object.keys(process.env).filter((k) => !(k in minimo) && !["PATH", "Path", "PSModulePath"].includes(k)).sort();
-const mitad = Math.ceil(faltan.length / 2);
+// Ronda 4: la variable está en la 2.ª mitad (ronda 3: 0,36 s frente a 13 s). SystemDrive sola y cuartos de esa mitad.
+const segunda = faltan.slice(Math.ceil(faltan.length / 2));
+const q = Math.ceil(segunda.length / 4);
+const cuartos = [0, 1, 2, 3].map((n) => segunda.slice(n * q, (n + 1) * q));
 const VARIANTES = [
   ["A referencia (hoy)", () => ({}), ""],
-  ["P1 + PATH completo", () => ({ PATH: process.env.PATH }), ""],
-  ["P2 + PSModulePath", de("PSModulePath"), ""],
-  ["P3 + PATH y PSModulePath", () => ({ PATH: process.env.PATH, ...de("PSModulePath")() }), ""],
-  [`M1 + 1.ª mitad (${faltan[0]}..${faltan[mitad - 1]})`, de(...faltan.slice(0, mitad)), ""],
-  [`M2 + 2.ª mitad (${faltan[mitad]}..${faltan.at(-1)})`, de(...faltan.slice(mitad)), ""],
-  // Por si hace falta una combinación con el perfil real (HOME/USERPROFILE están en el mínimo y ninguna mitad los repone).
-  [`M1 + perfil real`, () => ({ ...de(...faltan.slice(0, mitad))(), ...de("USERPROFILE", "HOME")() }), ""],
-  [`M2 + perfil real`, () => ({ ...de(...faltan.slice(mitad))(), ...de("USERPROFILE", "HOME")() }), ""],
+  ["S + SystemDrive", de("SystemDrive"), ""],
+  ...cuartos.map((c, n) => [`Q${n + 1} + ${c.length} vars (${c[0]}..${c.at(-1)})`, de(...c), ""]),
   ["K entorno completo (control)", () => ({ ...process.env }), ""],
 ];
 for (const [nombre, extra, prefijo] of VARIANTES) await medir(nombre, extra, prefijo);
-console.log("PATH del entorno mínimo:", minimo.PATH);
+cuartos.forEach((c, n) => console.log(`Q${n + 1}:`, c.join(" ")));
