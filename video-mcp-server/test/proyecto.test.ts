@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { descripcionEsquema } from "../src/esquema.js";
-import { archivosVideo } from "../src/paths.js";
+import { archivosVideo, escribirAtomico } from "../src/paths.js";
 import type { Config } from "../src/config.js";
 import {
   ErrorAlmacen,
@@ -20,7 +20,7 @@ import {
   proyectoLeer,
   proyectoListar,
 } from "../src/proyecto.js";
-import { guionEsquemaTool, proyectoGuardarTool, proyectoLeerTool, resultadoDeError } from "../src/herramientas-proyecto.js";
+import { ID_GUION, ID_PROYECTO, guionEsquemaTool, proyectoGuardarTool, proyectoLeerTool, resultadoDeError } from "../src/herramientas-proyecto.js";
 
 const BASE = fs.mkdtempSync(path.join(os.tmpdir(), "video proyecto "));
 afterAll(() => fs.rmSync(BASE, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }));
@@ -352,6 +352,176 @@ describe.runIf(process.platform === "win32")("junctions (I6)", () => {
     junction(carpetaGuiones(RAIZ), fuera);
     expect(() => guionGuardar(RAIZ, { guion: clon(GUION) })).toThrow();
     expect(fs.readdirSync(fuera)).toEqual([]);
+  });
+});
+
+describe("cierre de la revisión de seguridad de T4", () => {
+  const symlinkOk = (destino: string, enlace: string): boolean => {
+    try {
+      fs.symlinkSync(destino, enlace, "dir");
+      return true;
+    } catch {
+      return false; // sin privilegio para crear enlaces simbólicos
+    }
+  };
+
+  it("M1: escribirAtomico hace fsync del temporal antes del rename", () => {
+    const ruta = path.join(RAIZ, "dato.json");
+    const orden: string[] = [];
+    const fsync = fs.fsyncSync;
+    const rename = fs.renameSync;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      orden.push("fsync");
+      return fsync(fd);
+    });
+    vi.spyOn(fs, "renameSync").mockImplementation((a, b) => {
+      orden.push("rename");
+      return rename(a, b);
+    });
+    escribirAtomico(ruta, "{}");
+    expect(orden.indexOf("fsync")).toBeGreaterThanOrEqual(0);
+    expect(orden.indexOf("fsync")).toBeLessThan(orden.indexOf("rename"));
+    expect(fs.readFileSync(ruta, "utf8")).toBe("{}");
+  });
+
+  it("M1: si falla el fsync no se publica nada y el temporal se borra", () => {
+    const ruta = path.join(RAIZ, "dato.json");
+    fs.writeFileSync(ruta, "antes");
+    vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      throw Object.assign(new Error("EIO"), { code: "EIO" });
+    });
+    expect(() => escribirAtomico(ruta, "despues")).toThrow(/EIO/);
+    vi.restoreAllMocks();
+    expect(fs.readFileSync(ruta, "utf8")).toBe("antes");
+    expect(fs.readdirSync(RAIZ).filter((f) => f.includes(".tmp-"))).toEqual([]);
+  });
+
+  it("L8: el rename se reintenta ante un bloqueo breve (EBUSY)", () => {
+    const ruta = path.join(RAIZ, "dato.json");
+    const rename = fs.renameSync;
+    let fallos = 0;
+    vi.spyOn(fs, "renameSync").mockImplementation((a, b) => {
+      if (fallos++ < 2) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      return rename(a, b);
+    });
+    escribirAtomico(ruta, "{}");
+    expect(fs.readFileSync(ruta, "utf8")).toBe("{}");
+    expect(fallos).toBe(3);
+  });
+
+  it("M2: la limpieza de proyecto_crear no usa rmSync recursivo y no toca el destino de un enlace", () => {
+    const { id: guionId } = guionGuardar(RAIZ, { guion: clon(GUION) });
+    const centinela = path.join(BASE, `centinela${n}`);
+    fs.mkdirSync(centinela);
+    fs.writeFileSync(path.join(centinela, "intacto.txt"), "x");
+    const mkdir = fs.mkdirSync;
+    vi.spyOn(fs, "mkdirSync").mockImplementation(((p: fs.PathLike, o?: any) => {
+      if (String(p).endsWith(`${path.sep}recursos`)) {
+        // Un proceso ajeno se adelanta y deja un enlace donde iba la carpeta.
+        if (!symlinkOk(centinela, String(p))) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+      return mkdir(p, o);
+    }) as typeof fs.mkdirSync);
+    const rmSync = vi.spyOn(fs, "rmSync");
+    expect(() => proyectoCrear(RAIZ, { guionId, perfilId: "defecto" })).toThrow();
+    expect(rmSync.mock.calls.filter(([, o]) => (o as { recursive?: boolean } | undefined)?.recursive)).toEqual([]);
+    expect(fs.readFileSync(path.join(centinela, "intacto.txt"), "utf8")).toBe("x");
+    expect(fs.readdirSync(RAIZ)).toEqual([]);
+  });
+
+  it("M3: leerJson abre una vez y lee del descriptor, sin readFileSync ni statSync por ruta", () => {
+    const { id } = nuevoProyecto();
+    const lee = vi.spyOn(fs, "readFileSync");
+    const stat = vi.spyOn(fs, "statSync");
+    expect(proyectoLeer(RAIZ, id).proyecto.id).toBe(id);
+    const sobreProyecto = (c: unknown[]) => String(c[0]).endsWith("proyecto.json");
+    expect(lee.mock.calls.filter(sobreProyecto)).toEqual([]);
+    expect(stat.mock.calls.filter(sobreProyecto)).toEqual([]);
+  });
+
+  it("M3: un fichero que crece mientras se lee no se cuela (tope MAX+1 sobre el descriptor)", () => {
+    const { id, ruta } = nuevoProyecto();
+    const relleno = Buffer.alloc(3 * 1024 * 1024, " ");
+    fs.appendFileSync(ruta, relleno);
+    const fstat = fs.fstatSync;
+    vi.spyOn(fs, "fstatSync").mockImplementation(((fd: number, o?: any) => {
+      const st = fstat(fd, o) as any;
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { size: typeof st.size === "bigint" ? 10n : 10 });
+    }) as typeof fs.fstatSync);
+    expect(codigoDe(() => proyectoLeer(RAIZ, id)).problemas).toEqual([{ ruta: "", codigo: "demasiado_grande" }]);
+  });
+
+  it("L1: los errores del almacén no llevan rutas absolutas", () => {
+    const { id } = nuevoProyecto();
+    const fuera = path.join(BASE, `fuera-l1-${n}`);
+    fs.mkdirSync(fuera);
+    fs.renameSync(path.join(RAIZ, id), path.join(fuera, id));
+    if (!symlinkOk(path.join(fuera, id), path.join(RAIZ, id))) return;
+    try {
+      proyectoLeer(RAIZ, id);
+      throw new Error("se esperaba un error");
+    } catch (e) {
+      expect((e as Error).message).not.toContain(BASE);
+    }
+  });
+
+  it("L1: un error crudo de fs sale sin ruta y con su código", () => {
+    const e = Object.assign(new Error(`ENOSPC: no space left, rename '${BASE}/a' -> '${BASE}/b'`), { code: "ENOSPC", path: `${BASE}/a` });
+    const r = resultadoDeError("video_proyecto_guardar", e);
+    const texto = (r.content[0] as { text: string }).text;
+    expect(texto).toContain("ENOSPC");
+    expect(texto).not.toContain(BASE);
+    expect(r.content).toHaveLength(1);
+  });
+
+  it("L1: una colisión de id al crear es un conflicto tipado, sin EEXIST crudo", () => {
+    const { id: guionId } = guionGuardar(RAIZ, { guion: clon(GUION) });
+    const mkdir = fs.mkdirSync;
+    vi.spyOn(fs, "mkdirSync").mockImplementation(((p: fs.PathLike, o?: any) => {
+      if (String(p).endsWith(`${path.sep}video001`)) throw Object.assign(new Error(`EEXIST: file already exists, mkdir '${p}'`), { code: "EEXIST" });
+      return mkdir(p, o);
+    }) as typeof fs.mkdirSync);
+    const r = codigoDe(() => proyectoCrear(RAIZ, { guionId, perfilId: "defecto" }));
+    expect(r.codigo).toBe("conflicto");
+  });
+
+  it("L4: un id enorme no se repite entero en el mensaje y las tools lo limitan a 40", () => {
+    const largo = "x".repeat(100000);
+    for (const f of [() => proyectoLeer(RAIZ, largo), () => guionLeer(RAIZ, largo)]) {
+      try {
+        f();
+        throw new Error("se esperaba un error");
+      } catch (e) {
+        expect((e as Error).message.length).toBeLessThan(300);
+      }
+    }
+    for (const z of [ID_GUION, ID_PROYECTO]) {
+      expect(z.safeParse("x".repeat(40)).success).toBe(true);
+      expect(z.safeParse("x".repeat(41)).success).toBe(false);
+    }
+  });
+});
+
+describe.runIf(process.platform === "win32")("cierre T4 en Windows (junctions)", () => {
+  const junction = (enlace: string, destino: string) => execFileSync("cmd.exe", ["/d", "/c", "mklink", "/J", enlace, destino], { windowsVerbatimArguments: true });
+
+  it("M2: si falla la creación, la limpieza no entra en una junction y deja intacta la centinela", () => {
+    const { id: guionId } = guionGuardar(RAIZ, { guion: clon(GUION) });
+    const centinela = path.join(BASE, `centinela-j${n}`);
+    fs.mkdirSync(centinela);
+    fs.writeFileSync(path.join(centinela, "intacto.txt"), "x");
+    const mkdir = fs.mkdirSync;
+    vi.spyOn(fs, "mkdirSync").mockImplementation(((p: fs.PathLike, o?: any) => {
+      if (String(p).endsWith(`${path.sep}recursos`)) {
+        junction(String(p), centinela);
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+      return mkdir(p, o);
+    }) as typeof fs.mkdirSync);
+    expect(() => proyectoCrear(RAIZ, { guionId, perfilId: "defecto" })).toThrow();
+    expect(fs.readFileSync(path.join(centinela, "intacto.txt"), "utf8")).toBe("x");
+    expect(fs.readdirSync(RAIZ)).toEqual([]);
   });
 });
 

@@ -8,9 +8,15 @@ export const EXTENSIONES_IMAGEN = [".jpg", ".jpeg", ".png", ".webp"];
 
 export class ErrorVideo extends Error {}
 
+/** Valor del atacante para un mensaje: recortado, para que un id de varios MB no se repita en el error ni en el log. */
+export function valorCorto(v: unknown, max = 40): string {
+  if (typeof v !== "string") return typeof v;
+  return JSON.stringify(v.length > max ? `${v.slice(0, max)}…` : v);
+}
+
 export function validarId(id: unknown): string {
   if (typeof id !== "string" || !ID_RE.test(id)) {
-    throw new ErrorVideo(`Id no válido: ${JSON.stringify(id)}. Tiene que ser "video" más tres cifras, por ejemplo video001.`);
+    throw new ErrorVideo(`Id no válido: ${valorCorto(id)}. Tiene que ser "video" más tres cifras, por ejemplo video001.`);
   }
   return id;
 }
@@ -25,12 +31,12 @@ export function estaDentro(raiz: string, destino: string): boolean {
 export function resolverDentro(raiz: string, ...segmentos: string[]): string {
   const destino = path.resolve(raiz, ...segmentos);
   if (!estaDentro(raiz, destino)) {
-    throw new ErrorVideo(`La ruta ${destino} está fuera de VIDEO_ROOT (${raiz}).`);
+    throw new ErrorVideo(`La ruta «${nombreDe(destino)}» está fuera de VIDEO_ROOT.`);
   }
   try {
     const real = fs.realpathSync.native(destino);
     const raizReal = fs.realpathSync.native(raiz);
-    if (!estaDentro(raizReal, real)) throw new ErrorVideo(`La ruta ${destino} apunta fuera de VIDEO_ROOT (${raiz}).`);
+    if (!estaDentro(raizReal, real)) throw new ErrorVideo(`La ruta «${nombreDe(destino)}» apunta fuera de VIDEO_ROOT.`);
   } catch (e) {
     if (e instanceof ErrorVideo) throw e;
     // No existe todavía: basta con la comprobación léxica.
@@ -293,15 +299,56 @@ export function imagenesValidadas(dir: string): ReturnType<typeof buscarImagenes
   return r;
 }
 
+const RENAME_REINTENTABLE = new Set(["EBUSY", "EPERM", "EACCES"]);
+/** `rename` con reintentos breves: en Windows el antivirus o el indexador pueden tener el destino abierto un instante. */
+function renombrar(origen: string, destino: string): void {
+  for (let intento = 0; ; intento++) {
+    try {
+      return fs.renameSync(origen, destino);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? "";
+      if (!RENAME_REINTENTABLE.has(code) || intento >= 5) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  }
+}
+
+/** fsync de la carpeta tras el rename (POSIX). En Windows no se puede abrir una carpeta: EPERM/EISDIR/EINVAL se ignoran. */
+function sincronizarCarpeta(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(dir, "r");
+    fs.fsyncSync(fd);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? "";
+    if (!["EPERM", "EISDIR", "EINVAL", "EACCES", "ENOTSUP", "EBADF"].includes(code)) throw e;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* nada que cerrar */
+      }
+    }
+  }
+}
+
 /**
- * Escritura atómica: temporal único en la misma carpeta y renombrado. Si algo falla a mitad, el fichero anterior
- * queda intacto y el temporal se borra.
+ * Escritura atómica y durable: temporal único en la misma carpeta (`wx`), `fsync` del temporal y renombrado. Sin el
+ * fsync, un corte de luz puede dejar el rename en disco y el contenido sin escribir (fichero vacío). Si algo falla a
+ * mitad, el fichero anterior queda intacto y el temporal se borra.
  */
 export function escribirAtomico(ruta: string, datos: string | Buffer): void {
   const tmp = `${ruta}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   try {
-    fs.writeFileSync(tmp, datos, { flag: "wx" });
-    fs.renameSync(tmp, ruta);
+    const fd = fs.openSync(tmp, "wx");
+    try {
+      fs.writeFileSync(fd, datos);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    renombrar(tmp, ruta);
   } catch (e) {
     try {
       fs.unlinkSync(tmp);
@@ -310,4 +357,5 @@ export function escribirAtomico(ruta: string, datos: string | Buffer): void {
     }
     throw e;
   }
+  sincronizarCarpeta(path.dirname(ruta));
 }

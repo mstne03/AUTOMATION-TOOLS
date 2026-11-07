@@ -21,11 +21,12 @@ import {
   ErrorVideo,
   carpetaVideo,
   comprobarCarpeta,
-  comprobarRecurso,
   escribirAtomico,
   listarIds,
   siguienteId,
   validarId,
+  valorCorto,
+  borrarArbol,
 } from "./paths.js";
 
 export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado";
@@ -62,17 +63,41 @@ function validando<T>(f: () => T): T {
   }
 }
 
-/** Fichero JSON del almacén: normal, sin enlaces ni hardlinks (I6), con tope de tamaño; luego se valida. */
+/**
+ * Fichero JSON del almacén (I6): se abre una sola vez y todo se comprueba sobre el descriptor. `lstat` con bigint
+ * (ni enlace ni otra cosa que un fichero), `fstat` del descriptor (fichero normal, un solo enlace, mismo dev/ino) y
+ * lectura del descriptor hasta MAX+1 bytes: un fichero que crece o cambia de nombre no se cuela. Luego se valida.
+ */
 function leerJson(ruta: string): unknown {
+  const nombre = path.basename(ruta);
+  const enlace = () => esquema(`${nombre} no es un fichero normal sin enlaces.`, "enlace_no_permitido");
+  let antes: fs.BigIntStats;
   try {
-    comprobarRecurso(ruta);
-  } catch (e) {
-    if (e instanceof ErrorVideo) throw esquema(e.message, "enlace_no_permitido");
-    throw e;
+    antes = fs.lstatSync(ruta, { bigint: true });
+  } catch {
+    throw esquema(`No puedo leer ${nombre}.`, "enlace_no_permitido");
   }
-  if (fs.statSync(ruta).size > MAX_JSON_BYTES) throw esquema("El documento es demasiado grande.", "demasiado_grande");
+  if (antes.isSymbolicLink() || !antes.isFile()) throw enlace();
+  const fd = fs.openSync(ruta, "r");
+  let texto: string;
   try {
-    return JSON.parse(fs.readFileSync(ruta, "utf8"));
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile() || st.nlink !== 1n || st.dev !== antes.dev || st.ino !== antes.ino) throw enlace();
+    if (st.size > BigInt(MAX_JSON_BYTES)) throw esquema("El documento es demasiado grande.", "demasiado_grande");
+    const buf = Buffer.allocUnsafe(MAX_JSON_BYTES + 1);
+    let leidos = 0;
+    while (leidos < buf.length) {
+      const k = fs.readSync(fd, buf, leidos, buf.length - leidos, leidos);
+      if (k === 0) break;
+      leidos += k;
+    }
+    if (leidos > MAX_JSON_BYTES) throw esquema("El documento es demasiado grande.", "demasiado_grande");
+    texto = buf.toString("utf8", 0, leidos);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    return JSON.parse(texto);
   } catch {
     throw esquema("El documento no es JSON válido.", "json_invalido");
   }
@@ -101,7 +126,7 @@ export function carpetaGuiones(raiz: string): string {
 }
 
 function validarGuionId(id: unknown): string {
-  if (typeof id !== "string" || !GUION_ID_RE.test(id)) throw esquema(`Id de guion no válido: ${JSON.stringify(id)}.`, "id_invalido", "id");
+  if (typeof id !== "string" || !GUION_ID_RE.test(id)) throw esquema(`Id de guion no válido: ${valorCorto(id)}.`, "id_invalido", "id");
   return id;
 }
 
@@ -199,14 +224,14 @@ function dirProyecto(raiz: string, id: unknown): string {
     if (e instanceof ErrorVideo) throw esquema(e.message, "enlace_no_permitido");
     throw e;
   }
-  if (!existe(dir)) throw new ErrorAlmacen("no_encontrado", `No existe el proyecto ${id}.`);
+  if (!existe(dir)) throw new ErrorAlmacen("no_encontrado", `No existe el proyecto ${valorCorto(id)}.`);
   return dir;
 }
 
 function cargarProyecto(raiz: string, id: unknown): Proyecto {
   const dir = dirProyecto(raiz, id);
   const ruta = path.join(dir, "proyecto.json");
-  if (!existe(ruta)) throw new ErrorAlmacen("no_encontrado", `El proyecto ${id} no tiene proyecto.json.`);
+  if (!existe(ruta)) throw new ErrorAlmacen("no_encontrado", `El proyecto ${valorCorto(id)} no tiene proyecto.json.`);
   const doc = validando(() => validarProyecto(leerJson(ruta)));
   if (doc.id !== id) throw esquema("El id del documento no coincide con su carpeta.", "id_distinto", "id");
   return doc;
@@ -248,13 +273,18 @@ export function proyectoCrear(raiz: string, args: { guionId: string; perfilId: s
     }),
   );
   const dir = path.join(raiz, id);
-  fs.mkdirSync(dir); // sin recursive: si otro proceso se adelantó con el id, falla en vez de mezclarse
+  try {
+    fs.mkdirSync(dir); // sin recursive: si otro proceso se adelantó con el id, falla en vez de mezclarse
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new ErrorAlmacen("conflicto", "Otro proceso creó el proyecto a la vez. Vuelve a intentarlo.");
+    throw e;
+  }
   try {
     fs.mkdirSync(path.join(dir, "voz"));
     fs.mkdirSync(path.join(dir, "recursos"));
     escribirJson(path.join(dir, "proyecto.json"), proyecto);
   } catch (e) {
-    fs.rmSync(dir, { recursive: true, force: true });
+    borrarArbol(dir); // sin atravesar junctions: rmSync recursivo borraría su destino
     throw e;
   }
   return { id };

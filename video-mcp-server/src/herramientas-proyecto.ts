@@ -64,7 +64,10 @@ export function proyectoGuardarTool(cfg: Config, a: { id: string; revision: numb
 
 /** Error tipado → `isError` con el bloque `{ codigo, problemas }` al final; cualquier otro, solo el mensaje. */
 export function resultadoDeError(nombre: string, e: unknown): CallToolResult {
-  const mensaje = (e as Error)?.message ?? String(e);
+  // Un error crudo de fs lleva rutas absolutas en el mensaje: al cliente solo el código; la ruta queda en el log.
+  const code = (e as NodeJS.ErrnoException)?.code;
+  const crudoDeFs = !(e instanceof ErrorAlmacen) && typeof code === "string" && /^E[A-Z0-9]+$/.test(code);
+  const mensaje = crudoDeFs ? `Error del sistema de ficheros (${code}).` : ((e as Error)?.message ?? String(e));
   const content: CallToolResult["content"] = [{ type: "text", text: `Error en ${nombre}: ${mensaje}` }];
   if (e instanceof ErrorAlmacen) content.push({ type: "text", text: JSON.stringify({ codigo: e.codigo, problemas: e.problemas }) });
   return { isError: true, content };
@@ -72,8 +75,8 @@ export function resultadoDeError(nombre: string, e: unknown): CallToolResult {
 
 type Envolver = (nombre: string, fn: () => Respuesta | Promise<Respuesta>) => Promise<CallToolResult>;
 
-const ID_GUION = z.string().describe('Id del guion, "g-" más 16 hexadecimales.');
-const ID_PROYECTO = z.string().describe('Id del proyecto, "video" más tres cifras (video001).');
+export const ID_GUION = z.string().max(40).describe('Id del guion, "g-" más 16 hexadecimales.');
+export const ID_PROYECTO = z.string().max(40).describe('Id del proyecto, "video" más tres cifras (video001).');
 
 export function registrarHerramientasProyecto(server: McpServer, cfg: Config, envolver: Envolver): void {
   server.registerTool(

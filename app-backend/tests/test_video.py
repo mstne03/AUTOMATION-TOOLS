@@ -534,8 +534,16 @@ async def test_motor_real_lista_las_11_tools(motor_real):
     assert caps.datos["hyperframes"] == "0.8.206"
     assert caps.texto
     nombres = await motor_real.herramientas()
-    # Integrado (VIDEO_ENGINE_EMBEDDED=1) no registra video_catalogo (SEO-110): 11 de las 12 herramientas.
-    assert len(nombres) == 11 and "video_catalogo" not in nombres and all(n.startswith("video_") for n in nombres)
+    # Integrado (VIDEO_ENGINE_EMBEDDED=1): T4 quita las 5 tools del formato anterior (guion.md, voz suelta, estado,
+    # listado por carpeta y música por ruta) y el catálogo (SEO-110), y añade las 9 del almacén de guiones y
+    # proyectos. Quedan 15; se compara el conjunto exacto y no la cuenta, para que una tool sustituida no pase.
+    esperadas = {
+        "video_guion_esquema", "video_guion_guardar", "video_guion_listar", "video_guion_leer", "video_guion_borrar",
+        "video_proyecto_crear", "video_proyecto_listar", "video_proyecto_leer", "video_proyecto_guardar",
+        "video_renderizar", "video_estado_render", "video_fotograma", "video_vista_previa", "video_ayuda",
+        "video_capacidades",
+    }  # fmt: skip
+    assert set(nombres) == esperadas and len(nombres) == 15
 
 
 async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):
