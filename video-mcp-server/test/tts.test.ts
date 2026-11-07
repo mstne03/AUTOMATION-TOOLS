@@ -1,6 +1,6 @@
 // D7 (SPEC-video.md): la respuesta de ElevenLabs es entrada no confiable. Sin red: fetch simulado.
 import { describe, expect, it, vi } from "vitest";
-import { ErrorElevenLabs, MAX_AUDIO_TTS, MAX_RESPUESTA_TTS, sintetizarConTimestamps } from "../src/tts.js";
+import { ErrorElevenLabs, MAX_AUDIO_TTS, MAX_RESPUESTA_TTS, URL_BASE_ELEVENLABS, baseElevenLabs, sintetizarConTimestamps } from "../src/tts.js";
 
 const CLAVE = "sk-secreta-de-prueba";
 const TEXTO = "Hola mundo.";
@@ -140,5 +140,74 @@ describe("sintetizarConTimestamps: respuesta hostil o rota (D7)", () => {
     const e = await llamar(g).catch((x: Error) => x);
     expect(e).toBeInstanceOf(ErrorElevenLabs);
     expect((e as Error).message).not.toContain(CLAVE);
+  });
+});
+
+describe("baseElevenLabs: VIDEO_PRUEBAS_TTS_URL no abre una salida de red nueva (I14)", () => {
+  const MOCK = "http://127.0.0.1:5599";
+
+  it("sin la variable, siempre api.elevenlabs.io", () => {
+    expect(baseElevenLabs({})).toBe(URL_BASE_ELEVENLABS);
+    expect(baseElevenLabs({ VIDEO_ENGINE_EMBEDDED: "1" })).toBe(URL_BASE_ELEVENLABS);
+    expect(baseElevenLabs({ VIDEO_E2E: "1", VIDEO_PRUEBAS_TTS_URL: "" })).toBe(URL_BASE_ELEVENLABS);
+  });
+
+  it("la acepta con VIDEO_E2E=1, también integrado, y en desarrollo (no integrado)", () => {
+    expect(baseElevenLabs({ VIDEO_ENGINE_EMBEDDED: "1", VIDEO_E2E: "1", VIDEO_PRUEBAS_TTS_URL: MOCK })).toBe(MOCK);
+    expect(baseElevenLabs({ VIDEO_PRUEBAS_TTS_URL: MOCK })).toBe(MOCK);
+    expect(baseElevenLabs({ VIDEO_PRUEBAS_TTS_URL: `${MOCK}/` })).toBe(MOCK);
+  });
+
+  it("integrado sin VIDEO_E2E=1 la rechaza (producto congelado)", () => {
+    for (const e2e of [undefined, "0", "true", ""]) {
+      expect(() => baseElevenLabs({ VIDEO_ENGINE_EMBEDDED: "1", VIDEO_E2E: e2e, VIDEO_PRUEBAS_TTS_URL: MOCK })).toThrow(ErrorElevenLabs);
+    }
+  });
+
+  it("rechaza cualquier otro host, puerto, esquema o ruta", () => {
+    const malas = [
+      "https://api.elevenlabs.io",
+      "http://api.elevenlabs.io:80",
+      "http://localhost:5599",
+      "http://127.0.0.1",
+      "http://127.0.0.1:",
+      "http://127.0.0.1:0",
+      "http://127.0.0.1:99999",
+      "https://127.0.0.1:5599",
+      "http://127.0.0.2:5599",
+      "http://127.0.0.1.evil.com:5599",
+      "http://127.0.0.1:5599.evil.com",
+      "http://127.0.0.1@evil.com:5599",
+      "http://evil.com@127.0.0.1:5599",
+      "http://user:pass@127.0.0.1:5599",
+      "http://[::1]:5599",
+      "http://0.0.0.0:5599",
+      "http://127.0.0.1:5599/v1",
+      "http://127.0.0.1:5599?x=1",
+      "http://127.0.0.1:5599#x",
+      "http://127.0.0.1:5599 http://evil.com",
+      "  http://127.0.0.1:5599",
+      "http://127.0.0.1:5599\\@evil.com",
+      "//127.0.0.1:5599",
+      "ftp://127.0.0.1:5599",
+      "no es una url",
+    ];
+    for (const u of malas) {
+      for (const base of [{ VIDEO_E2E: "1" }, {}]) {
+        expect(() => baseElevenLabs({ ...base, VIDEO_PRUEBAS_TTS_URL: u }), u).toThrow(ErrorElevenLabs);
+      }
+    }
+  });
+
+  it("sintetizarConTimestamps llama al mock y a ningún otro host; con una URL mala no llama", async () => {
+    const urls: string[] = [];
+    const f = async (u: string | URL | Request) => (urls.push(String(u)), respuesta(cuerpo()));
+    await sintetizarConTimestamps({ texto: TEXTO, apiKey: CLAVE, voiceId: "voz", modelId: "m", fetchImpl: f as unknown as typeof fetch, env: { VIDEO_PRUEBAS_TTS_URL: MOCK } });
+    expect(urls).toEqual([`${MOCK}/v1/text-to-speech/voz/with-timestamps?output_format=mp3_44100_128`]);
+    urls.length = 0;
+    await expect(
+      sintetizarConTimestamps({ texto: TEXTO, apiKey: CLAVE, voiceId: "voz", modelId: "m", fetchImpl: f as unknown as typeof fetch, env: { VIDEO_PRUEBAS_TTS_URL: "http://evil.example:5599" } }),
+    ).rejects.toThrow(ErrorElevenLabs);
+    expect(urls).toEqual([]);
   });
 });
