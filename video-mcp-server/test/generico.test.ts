@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cargarConfig, cargarDotenv } from "../src/config.js";
+import { descripcionEsquema } from "../src/esquema.js";
+import { registrarHerramientasProyecto } from "../src/herramientas-proyecto.js";
+import { PERFIL_DEFECTO } from "../src/perfil.js";
 
 const RAIZ = path.resolve(import.meta.dirname, "..");
 
@@ -46,6 +49,14 @@ describe("motor genérico (G1)", () => {
     expect(ficheros.length).toBeGreaterThan(10);
     const hallazgos = ficheros.flatMap((f) => lineas(f).filter((l) => PROHIBIDO.test(l.texto)).map((l) => `${f}:${l.n}`));
     expect(hallazgos).toEqual([]);
+  });
+
+  it("sin_futbol: prompts (descripciones de las tools), descripción del esquema y perfil por defecto", () => {
+    const descripciones: string[] = [];
+    const falso = { registerTool: (nombre: string, def: { title?: string; description?: string }) => descripciones.push(nombre, def.title ?? "", def.description ?? "") };
+    registrarHerramientasProyecto(falso as never, {} as never, (async () => ({})) as never);
+    expect(descripciones.join("\n")).toContain("video_perfil_duplicar");
+    for (const texto of [...descripciones, descripcionEsquema(), JSON.stringify(PERFIL_DEFECTO)]) expect(PROHIBIDO.test(texto)).toBe(false);
   });
 
   it("con VIDEO_ENGINE_EMBEDDED=1 no lee .env; sin ella, sí", () => {
