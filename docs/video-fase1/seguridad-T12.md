@@ -19,7 +19,7 @@ característica `Win32_Security`, sin cambios en `Cargo.lock`).
 
 - Python (`app-backend/tests/test_preview.py`): `frame_src_sin_comodin`, `puertos_coinciden_con_frame_src`
   (se quitó el `skip`), `connect_src_y_frame_src_solo_loopback`, `capacidades_sin_cambios`,
-  `webrtc_cerrado_en_la_ventana`. El lector de CSP rechaza directivas repetidas (Chromium aplica la primera).
+  `webrtc_sin_fuga_ip_local` (solo comprueba la configuración, no el comportamiento de WebView2). El lector de CSP rechaza directivas repetidas (Chromium aplica la primera).
 - Rust: `segundo_adquirir_falla` (y se puede volver a adquirir al soltar), `nombre_local_y_sin_separadores`.
 - Pendiente manual de Marc: WebRTC en WebView2 (Playwright no aplica estos argumentos) y la sonda de
   navegación a un quinto puerto con la app real.
@@ -35,7 +35,7 @@ característica `Win32_Security`, sin cambios en `Cargo.lock`).
 | Low | Directivas CSP repetidas: el test se quedaba con la última. | Corregido (el test falla con duplicados) |
 | Low | La aserción sobre `default-src` solo rechazaba `*`. | Corregido (solo `'self'` y `localhost:1420`) |
 | Low | Todo fallo del mutex se mostraba como «ya abierto». | Corregido: ACCESS_DENIED/otros dan mensaje propio |
-| Low | `unsafe` sin `SAFETY`. | Corregido |
+| Info | `unsafe` sin comentario `SAFETY`. | Añadidos |
 | Low | Posible carrera con el updater (el instalador relanza antes de que el proceso viejo suelte el mutex). | Abierto: comprobar en la próxima prueba manual de actualización |
 | Info | `arrancar_con_instancia_unica` sin test. | Aceptado: la rama de la segunda instancia necesita UI |
 

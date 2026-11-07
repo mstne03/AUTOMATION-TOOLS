@@ -229,7 +229,7 @@ def _directivas(clave: str) -> dict[str, list[str]]:
     conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
     csp = conf["app"]["security"][clave]
     partes = [d.split() for d in (x.strip() for x in csp.split(";")) if d]
-    nombres = [d[0] for d in partes]
+    nombres = [d[0].lower() for d in partes]
     # Chromium aplica la PRIMERA directiva repetida: un duplicado podría esconder un comodín.
     assert len(nombres) == len(set(nombres)), f"{clave}: directivas repetidas: {nombres}"
     return {d[0]: d[1:] for d in partes}
@@ -269,7 +269,7 @@ def test_capacidades_sin_cambios():
     assert cap["permissions"] == ["core:default"]
 
 
-def test_webrtc_cerrado_en_la_ventana():
+def test_webrtc_sin_fuga_ip_local():
     conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
     args = conf["app"]["windows"][0]["additionalBrowserArgs"].split()
     assert "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection" in args  # valores por defecto de Tauri
