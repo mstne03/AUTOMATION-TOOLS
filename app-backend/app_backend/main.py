@@ -13,7 +13,7 @@ import secrets
 import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 from anthropic import (
@@ -24,16 +24,20 @@ from anthropic import (
     PermissionDeniedError,
 )
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Path as RutaPath
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
+from starlette.responses import JSONResponse
 from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, navegador, registry, video
+from app_backend import config, navegador, registry, video, video_rest
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -154,7 +158,10 @@ def create_app(
                 log.warning("KB: %s", e)
         await asyncio.to_thread(_calentar_kb)
 
-    app = FastAPI(title="app-backend", lifespan=lifespan)
+    # Sin /docs, /redoc ni /openapi.json: son documentos HTML servidos desde el puerto de la API.
+    app = FastAPI(title="app-backend", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # Orden (de dentro a fuera): tope de cuerpo, CORS, CSP. El 413 lleva CORS y todo lleva CSP.
+    app.add_middleware(video_rest.LimiteCuerpo)
     # El WebView de Tauri tiene origen propio (tauri.localhost; localhost:1420 en desarrollo),
     # asi que el navegador exige CORS. Solo esos origenes; el token sigue siendo obligatorio.
     app.add_middleware(
@@ -163,12 +170,25 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+    app.add_middleware(video_rest.CabeceraCSP)
+
+    @app.exception_handler(RequestValidationError)
+    async def validacion(request: Request, exc: RequestValidationError):
+        # Un id de ruta con forma mala es "no encontrado", no un error de formulario.
+        if all(e["loc"][:1] == ("path",) for e in exc.errors()):
+            return JSONResponse({"detail": "No encontrado."}, status_code=404)
+        if request.url.path.startswith("/video/"):  # sin `input`: es texto del cliente o del modelo
+            return JSONResponse(
+                {"detail": [{"loc": list(e["loc"]), "type": e["type"]} for e in exc.errors()]}, status_code=422
+            )
+        return await request_validation_exception_handler(request, exc)
 
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:  # noqa: B008
         if creds is None or not secrets.compare_digest(creds.credentials, token):
             raise HTTPException(status_code=401, detail="Token invalido o ausente.")
 
     protegido = [Depends(require_token)]
+    app.include_router(video_rest.crear_router(app.state, protegido))
 
     # ------------------------------------------------------------------- chat
 
@@ -219,14 +239,14 @@ def create_app(
         return await asyncio.to_thread(app.state.agent.listar)
 
     @app.get("/conversations/{conversation_id}", dependencies=protegido)
-    async def get_conversation(conversation_id: str):
+    async def get_conversation(conversation_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         datos = await asyncio.to_thread(app.state.agent.detalle, conversation_id)
         if datos is None:
             raise HTTPException(status_code=404, detail="Conversación no encontrada.")
         return datos
 
     @app.delete("/conversations/{conversation_id}", dependencies=protegido)
-    async def delete_conversation(conversation_id: str):
+    async def delete_conversation(conversation_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         try:
             borrada = app.state.agent.borrar(conversation_id)
         except ConversacionOcupada:
@@ -246,7 +266,7 @@ def create_app(
         return [a.to_dict() for a in approvals.pending()]
 
     @app.post("/approvals/{approval_id}", dependencies=protegido)
-    async def resolve_approval(approval_id: str, body: ApprovalIn):
+    async def resolve_approval(approval_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)], body: ApprovalIn):
         try:
             return approvals.resolve(approval_id, body.decision, body.confirm_id).to_dict()
         except KeyError:
@@ -272,7 +292,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/jobs/{job_id}", dependencies=protegido)
-    async def get_job(job_id: str):
+    async def get_job(job_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         try:
             return app.state.jobs.get(job_id)
         except KeyError:

@@ -108,6 +108,7 @@ NAVEGADOR_MAX_FICHEROS = 320
 # (`navegador.serializar_manifiesto`), calculado una vez con el zip de arriba: un manifiesto
 # regenerado a mano tras añadir una .dll no casa con él.
 NAVEGADOR_MANIFIESTO_SHA256 = "51085c8fa3f8c022a832617bab007a5099bb9c1b519c88893c73a28276011ccb"
+VIDEO_ROOT = STATE_DIR / "video" / "proyectos"  # una carpeta videoNNN por proyecto (la borra el backend)
 NAVEGADOR_DIR = STATE_DIR / "video" / "navegador"  # fuera de video/proyectos y de la preview
 NAVEGADOR_EXE = "chrome-headless-shell-win64/chrome-headless-shell.exe"
 NAVEGADOR_MANIFIESTO = "MANIFIESTO-SHA256.json"

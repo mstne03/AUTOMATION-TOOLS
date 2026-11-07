@@ -1354,7 +1354,7 @@ def test_el_detector_de_usos_ve_alias_e_imports_relativos(fuente):
 
 
 def test_quien_puede_usar_el_navegador():
-    """I10: solo main.py descarga; video.py solo consulta; nada más (registry, tools) lo importa."""
+    """I10: solo main.py descarga; video.py solo consulta; video_rest.py solo borra; nada más (registry, tools) lo importa."""
     carpeta = Path(navegador.__file__).parent
     usos = {
         p.name: _referencias_a_navegador(p.read_text(encoding="utf-8"))
@@ -1363,4 +1363,6 @@ def test_quien_puede_usar_el_navegador():
     }
     assert usos.pop("main.py") - {"<módulo>"} <= {"Descargador", "limpiar_restos"}
     assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "comprobar_ancestros", "NavegadorError"}
+    # video_rest.py borra la carpeta de un proyecto sin seguir enlaces con los mismos ayudantes (T9).
+    assert usos.pop("video_rest.py") - {"<módulo>"} <= {"es_enlace", "_borrar"}
     assert {m: u for m, u in usos.items() if u} == {}

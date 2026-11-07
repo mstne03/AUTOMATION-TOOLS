@@ -59,11 +59,25 @@ MENSAJE_NO_INSTALADO = (
 
 
 class MotorError(Exception):
-    """Error legible para la UI. Nunca lleva la clave de ElevenLabs."""
+    """Error legible para la UI. Nunca lleva la clave de ElevenLabs.
+
+    `codigo` y `problemas` salen del bloque JSON de los errores tipados del motor (T4):
+    `esquema`, `conflicto`, `no_encontrado`, `coste_cambiado`. `problemas` solo lleva
+    `{ruta, codigo}`, nunca valores. Un error sin tipar tiene `codigo=None`.
+    """
+
+    def __init__(self, mensaje: str = "", codigo: str | None = None, problemas: list | None = None) -> None:
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.problemas = list(problemas or [])
 
 
 class MotorNoDisponible(MotorError):
     """El motor no arranca o ha muerto."""
+
+
+class MotorTimeout(MotorError):
+    """Una llamada venció su timeout; el motor se ha reiniciado."""
 
 
 @dataclass(frozen=True)
@@ -95,6 +109,23 @@ if _spawn_original is not None:
     _stdio._create_platform_compatible_process = _spawn_anotado
 else:  # pragma: no cover - depende de la versión del SDK
     log.warning("mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None.")
+
+
+def _error_tipado(textos: list[str], clave: str | None) -> tuple[str | None, list]:
+    """`(codigo, problemas)` del bloque JSON `{codigo, problemas}` de un error tipado, si lo hay."""
+    for t in reversed(textos):
+        try:
+            v = json.loads(_ocultar(t, clave))
+        except ValueError:
+            continue
+        if isinstance(v, dict) and isinstance(v.get("codigo"), str):
+            problemas = [
+                {"ruta": str(p.get("ruta", ""))[:80], "codigo": str(p.get("codigo", ""))[:60]}
+                for p in (v.get("problemas") or [])[:50]
+                if isinstance(p, dict)
+            ]
+            return v["codigo"], problemas
+    return None, []
 
 
 def _ocultar(texto: str, clave: str | None) -> str:
@@ -198,7 +229,7 @@ class MotorVideo:
         except TimeoutError:
             # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero.
             await self._descartar(s)
-            raise MotorError(f"El motor de vídeo no respondió en {limite:g} s.") from None
+            raise MotorTimeout(f"El motor de vídeo no respondió en {limite:g} s.") from None
         except MCPError as e:
             if e.error.code == CONNECTION_CLOSED or not s.viva():
                 await self._descartar(s)
@@ -213,7 +244,8 @@ class MotorVideo:
         textos = [c.text for c in r.content if isinstance(c, TextContent)]
         texto = _ocultar(textos[0], clave) if textos else ""
         if r.is_error:
-            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.")
+            codigo, problemas = _error_tipado(textos, clave)
+            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.", codigo, problemas)
         datos = None
         if len(textos) > 1:
             try:
@@ -364,7 +396,7 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
     estado = config.STATE_DIR / "video"
     env = {
         "VIDEO_ENGINE_EMBEDDED": "1",
-        "VIDEO_ROOT": str(estado / "proyectos"),
+        "VIDEO_ROOT": str(config.VIDEO_ROOT),
         "VIDEO_STATE_DIR": str(estado / "estado"),
         "HYPERFRAMES_NO_TELEMETRY": "1",
         "DO_NOT_TRACK": "1",
