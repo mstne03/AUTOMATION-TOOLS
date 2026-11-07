@@ -12,3 +12,9 @@
   atributos y la sección de Ajustes cambió en T20).
 - Los E2E de Playwright no se han ejecutado en esta sesión.
 - H6 (confirmar el borrado de la clave) queda abierto por decisión de producto.
+
+## Códigos de bloqueo del render (unificados con T11)
+
+El backend de T11 (`video_rest.py`) da `voz_pendiente` cuando faltan frases por generar y `sin_voz`
+cuando el perfil no tiene una voz válida. `RenderDialogo` trata los dos como bloqueo, no como error
+genérico. Se descarta la propuesta `frases_sin_voz` porque el motor ya emite `voz_pendiente`.

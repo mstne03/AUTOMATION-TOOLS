@@ -123,6 +123,13 @@ describe("render_bloqueado_sin_voz", () => {
     expect((await screen.findByTestId("render-bloqueo")).textContent).toContain("Faltan frases por generar.");
     expect(t("render-error")).toBeNull();
   });
+  it("si el servidor rechaza con el código voz_pendiente (frases sin voz), también es un bloqueo y no un error genérico", async () => {
+    montar({ videoRender: vi.fn(async () => { throw new ApiError(409, "Faltan frases por generar.", "voz_pendiente"); }) as never });
+    await abrir();
+    await lanzar();
+    expect((await screen.findByTestId("render-bloqueo")).textContent).toContain("Faltan frases por generar.");
+    expect(t("render-error")).toBeNull();
+  });
 
   it("con el proyecto sin guardar o en conflicto tampoco se lanza", async () => {
     useEditor.setState({ guardado: "pendiente" });

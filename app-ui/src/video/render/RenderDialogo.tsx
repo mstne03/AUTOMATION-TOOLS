@@ -17,8 +17,9 @@ import s from "./Render.module.css";
 import { aResultadoRender, segundos } from "./resultado";
 import { sinRutas } from "./sinRutas";
 
-/** Código con el que el backend rechaza renderizar un proyecto con frases sin voz (Task 11). */
-const SIN_VOZ = "sin_voz";
+/** Códigos con los que el backend (T11) rechaza renderizar: `voz_pendiente` (faltan frases por generar)
+ *  y `sin_voz` (el perfil no tiene una voz válida). Los dos son un bloqueo, no un error genérico. */
+const BLOQUEOS_VOZ: ReadonlySet<string> = new Set(["voz_pendiente", "sin_voz"]);
 
 const DESCRIPCION = {
   auto: "Modo Automático: dos pasadas; funciona en cualquier equipo.",
@@ -102,7 +103,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
       seguirJob(client, await client.videoRender(id, efectivo));
       void qc.invalidateQueries({ queryKey: ["video", "proyectos"] });
     } catch (e) {
-      if (e instanceof ApiError && e.codigo === SIN_VOZ) setSinVoz(sinRutas(e.detail));
+      if (e instanceof ApiError && e.codigo !== undefined && BLOQUEOS_VOZ.has(e.codigo)) setSinVoz(sinRutas(e.detail));
       else setError(mensaje(e));
     } finally {
       setLanzando(false);
