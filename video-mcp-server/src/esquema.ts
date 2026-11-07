@@ -40,6 +40,10 @@ const FECHA_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 //  Cc controles (C0, DEL, C1, también \n y \t), Cf formato (bidi LRM/RLM/ALM y 202A–202E/2066–2069, ZWSP/ZWNJ/ZWJ,
 //  WJ, SHY, BOM, anotaciones FFF9–FFFB, etiquetas E0000–E007F), Cs sustitutos, Co uso privado, Zl/Zp (U+2028/2029)
 //  y no-caracteres (FDD0–FDEF, xFFFE/xFFFF). Los selectores de variación (VS16) son Mn y no entran.
+// Además, los invisibles que no son Cf: selectores de variación (FE00–FE0E, E0100–E01EF; U+FE0F solo se admite tras
+// una base emoji, ver `VS16_DE_EMOJI_RE`), U+034F, rellenos hangul (115F, 1160, 3164, FFA0) y el braille en blanco (2800).
+const INVISIBLES_RE = /[\uFE00-\uFE0E\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800]/u;
+const VS16_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic}|\p{Emoji})\uFE0F/gu;
 const PROHIBIDOS_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Noncharacter_Code_Point}]/u;
 
 // Decisión (M2, Review Focus 1): U+200D es Cf, pero sin él se rompen 👨‍👩‍👧 o 🏳️‍🌈. Se admite SOLO entre dos
@@ -48,9 +52,9 @@ const PROHIBIDOS_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Noncharacter_Code
 const ZWJ_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]?)\u200D(?=\p{Extended_Pictographic})/gu;
 
 // Esquemas que la R0-8 manda rechazar (L2). Cualquier `esquema://` cae (con o sin barras de más), y los esquemas sin
-// `//` que ejecutan o incrustan, solo si lo siguiente no es un espacio: «Data: cinco filas», «Nota: …» y «10:30» pasan;
+// `//` que ejecutan o incrustan, solo si lo siguiente es una letra o `/`: «Data: cinco filas», «Big data:2024», «FTP:21», «Nota: …» y «10:30» pasan;
 // «data:text/html,x» y «javascript:alert(1)» no. Los demás esquemas sin `//` (mailto:, tel:) son texto inofensivo.
-const ESQUEMA_GENERICO_RE = /\b[a-z][a-z0-9+.-]{0,31}:[\\/]{2}|\b(?:javascript|vbscript|data|blob|ftps?|sftp|about):(?=\S)/i;
+const ESQUEMA_GENERICO_RE = /\b[a-z][a-z0-9+.-]{0,31}:[\\/]{2}|\b(?:javascript|vbscript|data|blob|ftps?|sftp|about):(?=[a-z\\/])/i;
 
 /** Lo que `urlsDeRed` marcaría de este texto tal como llega a la composición: en el HTML, escapado, y en el script, como JSON. */
 function contieneUrl(s: string): boolean {
@@ -75,7 +79,8 @@ function textoSeguro(max: number, min = 0) {
     .superRefine((s, ctx) => {
       // El tope se mide tras NFC, que puede alargar el texto (L1).
       if (s.length > max) ctx.addIssue({ code: "too_big", origin: "string", maximum: max, inclusive: true, input: s });
-      if (PROHIBIDOS_RE.test(s.replace(ZWJ_DE_EMOJI_RE, ""))) {
+      const sinEmoji = s.replace(ZWJ_DE_EMOJI_RE, "").replace(VS16_DE_EMOJI_RE, "");
+      if (PROHIBIDOS_RE.test(sinEmoji) || INVISIBLES_RE.test(sinEmoji) || sinEmoji.includes("\uFE0F")) {
         ctx.addIssue({ code: "custom", message: "texto_inseguro", params: { codigo: "texto_inseguro" } });
       } else if (contieneUrl(s)) {
         // Mismos patrones que la barrera de la composición, sobre el texto crudo y sobre cómo se inserta: lo que ella marcaría, no entra.
@@ -107,6 +112,12 @@ const EscenaMapa = z.strictObject({
   });
 });
 
+/** La composición une prefijo + «0» + sufijo (cifra inicial) y prefijo + valor + sufijo: la unión también debe estar limpia. */
+function unionConUrl(prefijo: unknown, sufijo: unknown, ctx: z.RefinementCtx): void {
+  if (typeof prefijo !== "string" || typeof sufijo !== "string") return;
+  if ([prefijo + "0" + sufijo, prefijo + "1" + sufijo, prefijo + sufijo].some(contieneUrl)) issue(ctx, "url_en_texto", ["sufijo"]);
+}
+
 const EscenaBarras = z.strictObject({
   tipo: z.literal("barras"),
   titulo: textoSeguro(48, 1),
@@ -117,6 +128,7 @@ const EscenaBarras = z.strictObject({
   fuente: textoSeguro(60).optional(),
 }).superRefine((e, ctx) => {
   if (!Array.isArray(e.series) || !Array.isArray(e.periodos)) return;
+  unionConUrl(e.prefijo, e.sufijo, ctx);
   e.series.forEach((s, i) => {
     if (Array.isArray(s?.valores) && s.valores.length !== e.periodos.length) issue(ctx, "serie_longitud", ["series", i, "valores"]);
   });
@@ -131,6 +143,7 @@ const EscenaCifra = z.strictObject({
   decimales: entero(0, 3).default(0),
 }).superRefine((e, ctx) => {
   if (typeof e.prefijo === "string" && typeof e.sufijo === "string" && e.prefijo.length + e.sufijo.length > 12) issue(ctx, "prefijo_sufijo_largos", ["sufijo"]);
+  else unionConUrl(e.prefijo, e.sufijo, ctx);
 });
 
 const EscenaTitulo3d = z.strictObject({

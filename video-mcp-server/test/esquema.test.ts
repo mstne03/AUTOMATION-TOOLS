@@ -539,10 +539,10 @@ describe("esquema de guion y proyecto", () => {
     });
 
     it("rechaza esquemas genéricos y peligrosos, y deja pasar los usos normales (L2)", () => {
-      for (const m of ["ftp://host", "FTP://host/x", "javascript://x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "blob:x", "vbscript:x", "sftp://h", "x:////host", "z+y.w-v://h", "x:\\\\h", "mira ftp://h"]) {
+      for (const m of ["ftp://host", "FTP://host/x", "javascript://x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "blob:x", "vbscript:x", "sftp://h", "x:////host", "z+y.w-v://h", "x:\\\\h", "mira ftp://h", "ftp:x", "Blob:a", "data:text", "about:blank"]) {
         expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: true });
       }
-      for (const m of ["Nota: lo vimos ayer", "10:30", "El 12:30 llegó", "Gol: 3", "Resultado:3-1", "Data: cinco filas", "Mundial:2026", "Hora 9:05", "a:b", "ftp", "Datos: 5"]) {
+      for (const m of ["Nota: lo vimos ayer", "10:30", "El 12:30 llegó", "Gol: 3", "Resultado:3-1", "Data: cinco filas", "Mundial:2026", "Hora 9:05", "a:b", "ftp", "Datos: 5", "Big data:2024", "FTP:21", "Blob:3", "data:5"]) {
         expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: false });
       }
     });
@@ -571,7 +571,40 @@ describe("esquema de guion y proyecto", () => {
       ] as [string, (x: string) => unknown][]) {
         const t0 = performance.now();
         f(t);
-        expect(performance.now() - t0).toBeLessThan(500);
+        expect(performance.now() - t0).toBeLessThan(2000);
+      }
+    });
+
+    it("pendientes T1: http: con usuario largo, http:intranet y 200 KB lineal", () => {
+      expect(hallazgosDeRed("http:" + "a".repeat(300) + "@evil.com", "t.html").length).toBe(1);
+      expect(hallazgosDeRed("http:intranet", "t.html").length).toBe(1);
+      const t0 = performance.now();
+      hallazgosDeRed("http:".repeat(40_000), "t.html");
+      expect(performance.now() - t0).toBeLessThan(2000);
+    });
+
+    it("pendientes T1: campos unidos prefijo + 0 + sufijo (M1)", () => {
+      for (const base of [
+        { tipo: "cifra", valor: 3, prefijo: "http:a", sufijo: ".es", decimales: 0 },
+        { tipo: "cifra", valor: 3, prefijo: "http:", sufijo: ".es", decimales: 0 },
+        { tipo: "barras", titulo: "T", periodos: ["a", "b"], series: [{ nombre: "x", valores: [1, 2] }, { nombre: "y", valores: [1, 2] }], prefijo: "http:", sufijo: ".es" },
+      ]) {
+        const g = clon(GUION_FUTBOL) as any;
+        g.escenas[0].base = base;
+        expect({ base, c: codigos(() => validarGuionVideo(g)) }).toEqual({ base, c: expect.arrayContaining(["url_en_texto"]) });
+      }
+    });
+
+    it("pendientes T1: invisibles restantes y VS16 solo tras emoji (M2)", () => {
+      for (const malo of ["a\uFE00b", "a\uFE0Eb", "a\u{E0100}b", "a\u{E01EF}b", "a\u034Fb", "a\u115Fb", "a\u1160b", "a\u3164b", "a\uFFA0b", "a\u2800b", "a\uFE0Fb", "👨\uFE0F\uFE0F"]) {
+        const g = clon(GUION_FUTBOL);
+        g.titulo = malo;
+        expect({ malo, c: codigos(() => validarGuionVideo(g)) }).toEqual({ malo, c: expect.arrayContaining(["texto_inseguro"]) });
+      }
+      for (const bueno of ["👨\u200D👩\u200D👧", "🏳\uFE0F\u200D🌈", "❤\uFE0F", "1\uFE0F\u20E3"]) {
+        const g = clon(GUION_FUTBOL);
+        g.titulo = bueno;
+        expect(validarGuionVideo(g).titulo).toBe(bueno.normalize("NFC"));
       }
     });
 

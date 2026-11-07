@@ -711,9 +711,10 @@ const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/
 const ENTIDADES: Record<string, string> = {
   colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
 };
-// El host (rama `.`) excluye el punto y se acota a 253 caracteres, el máximo de un nombre DNS: así `http:http:http:…` no
-// recorre el resto de la cadena en cada `http:` (coste cuadrático).
-const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/.]{0,253}\.)/gi;
+// Esquema de red seguido de cualquier carácter que no corte la URL: cubre `http://x`, `http:\\x`, `http:intranet` y
+// `http:` + usuario largo + `@evil.com`. Sin cuantificadores anidados ni tope de host: lineal en la entrada.
+// Solo dígitos tras `:` (`http:2`, `ws:80`) es un puerto o una razón, no una URL: hace falta algo más detrás.
+const ESQUEMA_RE = /\b(?:https?|wss?):(?=\d*[^\s"'<>)\d])/gi;
 const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
 // Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
 const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
@@ -741,7 +742,7 @@ export function hallazgosDeRed(texto: string, nombre: string): string[] {
   const hallados = new Set<string>();
   const anotar = (t: string, re: RegExp) => {
     for (const m of t.matchAll(re)) {
-      const ficha = /[^\s"'<>)]*/y;
+      const ficha = /[^\s"'<>)]{0,201}/y; // tope: solo se guardan 200 y así `http:http:…` no es cuadrático.
       ficha.lastIndex = m.index;
       const url = ficha.exec(t)![0];
       if (!W3_PERMITIDAS.has(url.toLowerCase())) hallados.add(url.slice(0, 200));
