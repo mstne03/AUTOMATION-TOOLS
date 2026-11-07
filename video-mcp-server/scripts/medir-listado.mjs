@@ -12,8 +12,8 @@ const CONSULTA =
   "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = [int]$_.ProcessId; r = [string]$_.ExecutablePath } } | ConvertTo-Json -Compress";
 const MODULOS = path.join(system32(), "WindowsPowerShell", "v1.0", "Modules");
 
-function medir(nombre, extraEnv, prefijo = "") {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "medir "));
+function medir(nombre, extraEnv, prefijo = "", dirFijo) {
+  const dir = dirFijo ?? fs.mkdtempSync(path.join(os.tmpdir(), "medir "));
   const env = { ...entornoHijo(), HOME: dir, USERPROFILE: dir, ...extraEnv(dir) };
   const script = `[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${prefijo}${CONSULTA}`;
   const cod = Buffer.from(script, "utf16le").toString("base64");
@@ -36,15 +36,25 @@ const de = (...ks) => () => Object.fromEntries(ks.filter((k) => process.env[k] !
 // Ronda 3: PATH y PSModulePath por separado, y bisección de todas las variables que el entorno mínimo quita.
 const minimo = entornoHijo();
 const faltan = Object.keys(process.env).filter((k) => !(k in minimo) && !["PATH", "Path", "PSModulePath"].includes(k)).sort();
-// Ronda 4: la variable está en la 2.ª mitad (ronda 3: 0,36 s frente a 13 s). SystemDrive sola y cuartos de esa mitad.
-const segunda = faltan.slice(Math.ceil(faltan.length / 2));
-const q = Math.ceil(segunda.length / 4);
-const cuartos = [0, 1, 2, 3].map((n) => segunda.slice(n * q, (n + 1) * q));
-const VARIANTES = [
-  ["A referencia (hoy)", () => ({}), ""],
-  ["S + SystemDrive", de("SystemDrive"), ""],
-  ...cuartos.map((c, n) => [`Q${n + 1} + ${c.length} vars (${c[0]}..${c.at(-1)})`, de(...c), ""]),
-  ["K entorno completo (control)", () => ({ ...process.env }), ""],
+// Ronda 5: en la ronda 4 el cuarto con PSModuleAnalysisCachePath bajó a 0,38 s. Se confirma y se prueban
+// arreglos: caché propia en una carpeta estable (dos llamadas, la 2.ª debería reutilizarla) y no depender
+// del análisis de módulos (autocarga desactivada e Import-Module por ruta completa).
+const CIM = path.join(MODULOS, "CimCmdlets", "CimCmdlets.psd1");
+const UTIL = path.join(MODULOS, "Microsoft.PowerShell.Utility", "Microsoft.PowerShell.Utility.psd1");
+const sinAutocarga =`$PSModuleAutoloadingPreference = 'None'\nImport-Module '${CIM}'\nImport-Module '${UTIL}'\n`;
+const estable = fs.mkdtempSync(path.join(os.tmpdir(), "medir estable "));
+const cacheEstable = (d) => ({ PSModuleAnalysisCachePath: path.join(d, "ModuleAnalysisCache") });
+const estable2 = fs.mkdtempSync(path.join(os.tmpdir(), "medir estable2 "));
+const RONDA = [
+  ["A referencia (hoy)", () => ({}), "", undefined],
+  ["R1 + PSModuleAnalysisCachePath del runner", de("PSModuleAnalysisCachePath"), "", undefined],
+  ["R2 caché propia estable #1", cacheEstable, "", estable],
+  ["R2 caché propia estable #2", cacheEstable, "", estable],
+  ["R2 caché propia estable #3", cacheEstable, "", estable],
+  ["R3 sin autocarga + Import por ruta #1", () => ({}), sinAutocarga, undefined],
+  ["R3 sin autocarga + Import por ruta #2", () => ({}), sinAutocarga, undefined],
+  ["R4 = R2 + R3 #1", cacheEstable, sinAutocarga, estable2],
+  ["R4 = R2 + R3 #2", cacheEstable, sinAutocarga, estable2],
+  ["K entorno completo (control)", () => ({ ...process.env }), "", undefined],
 ];
-for (const [nombre, extra, prefijo] of VARIANTES) await medir(nombre, extra, prefijo);
-cuartos.forEach((c, n) => console.log(`Q${n + 1}:`, c.join(" ")));
+for (const [nombre, extra, prefijo, dir] of RONDA) await medir(nombre, extra, prefijo, dir);
