@@ -1,0 +1,80 @@
+/* Layout B. /video no es «a sangre» en el marco: el contenedor resta el relleno vertical de <main>
+   (var(--space-20) arriba y abajo) para que el editor quepa en 900×600 sin scroll. */
+.editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) var(--editor-timeline);
+  height: calc(100vh - 2 * var(--space-20));
+  min-width: 0;
+  min-height: 0;
+  --editor-cabecera: 48px;
+  --editor-panel: 320px;
+  --editor-timeline: 240px;
+}
+.superior {
+  min-width: 0;
+}
+.cabecera {
+  height: var(--editor-cabecera);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+.volver {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text);
+}
+.titulo {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-16);
+  line-height: var(--text-16-lh);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.guardado {
+  color: var(--color-muted);
+  font-size: var(--text-13);
+  white-space: nowrap;
+}
+.conflicto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-risk-write-border);
+  background: var(--color-risk-write-bg);
+  color: var(--color-risk-write-fg);
+  font-size: var(--text-13);
+}
+.cuerpo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--editor-panel);
+  min-height: 0;
+}
+.zonaPreview {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.zonaPanel {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--color-divider);
+}
+.zonaTimeline {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--color-divider);
+}
