@@ -1,6 +1,6 @@
 /** Preview aislada del editor (T17, I2, I8). Sidecar y motor reales para el seek y el cambio sin
- *  render; composiciones de fixture (servidas con la misma CSP que el backend) para las pruebas de
- *  aislamiento, porque ahí hace falta contenido hostil. */
+ *  render; composiciones de fixture (con una CSP de fixture, más corta que la del backend) para las
+ *  pruebas de aislamiento, porque ahí hace falta contenido hostil. */
 import { expect, test, type Frame, type Page } from "@playwright/test";
 import { simularRutas, type Peticion } from "./sidecar-falso";
 import { irAlEditor, limpiarVideo, proyectoDeCocina } from "./video-comun";
@@ -36,7 +36,13 @@ const pagina = (script: string, cuerpo = "") =>
   `<!doctype html><meta charset="utf-8"><body>${cuerpo}<script>${script}</script></body>`;
 
 /** Sirve `html` como composición de la preview y simula `POST …/preview` con su URL. */
-async function conFixture(page: Page, id: string, html: string, extra: Record<string, unknown> = {}) {
+async function conFixture(
+  page: Page,
+  id: string,
+  html: string,
+  extra: Record<string, unknown> = {},
+  conCsp = true,
+) {
   const llamadas = await simularRutas(page, {
     [`/video/proyectos/${id}/preview`]: (_u: URL, p: Peticion) =>
       p.metodo === "POST"
@@ -44,7 +50,7 @@ async function conFixture(page: Page, id: string, html: string, extra: Record<st
         : [200, {}],
   });
   await page.route(/127\.0\.0\.1:47810\/p\/fixture\//, (route) =>
-    route.fulfill({ status: 200, contentType: "text/html", headers: { "content-security-policy": CSP, "cache-control": "no-store" }, body: html }),
+    route.fulfill({ status: 200, contentType: "text/html", headers: { ...(conCsp ? { "content-security-policy": CSP } : {}), "cache-control": "no-store" }, body: html }),
   );
   return llamadas;
 }
@@ -78,10 +84,31 @@ test("iframe_sin_token: sin acceso al padre, al almacenamiento ni a Tauri", asyn
   await conFixture(page, id, pagina(CONTROL + sonda));
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-marco")).toBeVisible();
+  await expect(page.getByTestId("preview-marco")).toHaveAttribute("sandbox", "allow-scripts");
   await expect.poll(() => marco(page).evaluate(() => (window as unknown as { __sonda?: unknown }).__sonda)).toEqual({
     padre: "bloqueado",
     local: "lanza",
     tauri: "undefined",
+    origen: "null",
+  });
+});
+
+test("sandbox_solo_atributo: sin cabecera CSP, el atributo aísla por sí solo", async ({ page }) => {
+  const id = await proyectoDeCocina();
+  const sonda = `
+    const r = {};
+    try { r.padre = typeof parent.document.title; } catch (e) { r.padre = "bloqueado"; }
+    try { localStorage.getItem("x"); r.local = "accesible"; } catch (e) { r.local = "lanza"; }
+    r.origen = location.origin;
+    window.__sonda = r;
+  `;
+  await conFixture(page, id, pagina(CONTROL + sonda), {}, false);
+  await irAlEditor(page, id);
+  const f = page.getByTestId("preview-marco");
+  await expect(f).toHaveAttribute("sandbox", "allow-scripts"); // exacto: ni allow-same-origin ni otros
+  await expect.poll(() => marco(page).evaluate(() => (window as unknown as { __sonda?: unknown }).__sonda)).toEqual({
+    padre: "bloqueado",
+    local: "lanza",
     origen: "null",
   });
 });

@@ -17,8 +17,11 @@ export type OrdenIframe =
   | { tipo: "play" }
   | { tipo: "pause" };
 
-/** Tope de duración que acepta `listo` (3 h): una cifra absurda no es de fiar. */
-export const DURACION_MAXIMA = 10_800;
+/** Duración máxima de un proyecto (I1, `LIMITES.duracionS` del backend): 180 s. */
+export const DURACION_PROYECTO_S = 180;
+/** Tope que acepta `listo`: el límite real más 1 s de margen. Una cifra mayor no es de fiar y
+ *  ampliaría el rango de `tiempo` que alcanza al cabezal del editor. */
+export const DURACION_MAXIMA = DURACION_PROYECTO_S + 1;
 /** Margen de redondeo al comparar `t` con la duración. */
 const EPSILON = 1e-3;
 export const MAX_MENSAJES_POR_SEGUNDO = 120;
@@ -68,25 +71,23 @@ export function validarMensajeIframe(
   }
 }
 
-/** Ventana fija: más de `max` mensajes en `ventanaMs` se ignoran (y se cuentan). */
+/** Ventana deslizante: en cualquier intervalo de `ventanaMs` se admiten como mucho `max`
+ *  mensajes; los demás se ignoran (y se cuentan). Sin el efecto borde de una ventana fija. */
 export class LimitadorMensajes {
   ignorados = 0;
-  private inicio = Number.NEGATIVE_INFINITY;
-  private n = 0;
+  private marcas: number[] = [];
   constructor(
     private readonly max = MAX_MENSAJES_POR_SEGUNDO,
     private readonly ventanaMs = 1000,
   ) {}
   admitir(ahoraMs: number): boolean {
-    if (ahoraMs - this.inicio >= this.ventanaMs || ahoraMs < this.inicio) {
-      this.inicio = ahoraMs;
-      this.n = 0;
-    }
-    if (this.n >= this.max) {
+    // Fuera las marcas caducadas (y las «del futuro», si el reloj retrocede).
+    this.marcas = this.marcas.filter((m) => m <= ahoraMs && ahoraMs - m < this.ventanaMs);
+    if (this.marcas.length >= this.max) {
       this.ignorados++;
       return false;
     }
-    this.n++;
+    this.marcas.push(ahoraMs);
     return true;
   }
 }

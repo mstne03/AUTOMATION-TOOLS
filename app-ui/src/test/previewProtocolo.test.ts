@@ -54,6 +54,12 @@ describe("validarMensajeIframe", () => {
     expect(val(evento({ tipo: "tiempo", t: 30, reproduciendo: false }), [], 30)).not.toBeNull();
     expect(val(evento({ tipo: "listo", duracion: -1 }))).toBeNull();
     expect(val(evento({ tipo: "listo", duracion: 1e9 }))).toBeNull();
+    // I1: un proyecto no pasa de 180 s; ni 3 h ni 10 minutos son de fiar.
+    expect(val(evento({ tipo: "listo", duracion: 10_800 }))).toBeNull();
+    expect(val(evento({ tipo: "listo", duracion: 600 }))).toBeNull();
+    expect(val(evento({ tipo: "listo", duracion: 182 }))).toBeNull();
+    expect(val(evento({ tipo: "listo", duracion: 180 }))).toEqual({ tipo: "listo", duracion: 180 });
+    expect(val(evento({ tipo: "listo", duracion: 181 }))).toEqual({ tipo: "listo", duracion: 181 }); // margen
   });
   it("objeto_con_html: claves de más o valores no esperados se descartan", () => {
     expect(val(evento({ tipo: "tiempo", t: 1, reproduciendo: false, html: "<img src=x onerror=alert(1)>" }))).toBeNull();
@@ -84,5 +90,23 @@ describe("LimitadorMensajes", () => {
     const l = new LimitadorMensajes(120, 1000);
     for (let i = 0; i < 200; i++) l.admitir(0);
     expect(l.admitir(1001)).toBe(true);
+  });
+  it("rafaga_en_el_borde: 120 al final de una ventana y 120 al principio de la siguiente no pasan de 120 por segundo", () => {
+    const l = new LimitadorMensajes(120, 1000);
+    const admitidos: number[] = [];
+    const probar = (t: number) => l.admitir(t) && admitidos.push(t);
+    probar(0); // abre la «ventana» de una implementación fija
+    for (let i = 0; i < 119; i++) probar(999);
+    for (let i = 0; i < 120; i++) probar(1000);
+    // en [999, 1999] solo caben 120 (119 a 999 + el que recupera el hueco del de t=0)
+    expect(admitidos.filter((t) => t >= 999 && t < 1999).length).toBeLessThanOrEqual(120);
+    expect(admitidos.length).toBe(121);
+  });
+  it("ventana deslizante: nunca más de 120 en cualquier intervalo de 1 s", () => {
+    const l = new LimitadorMensajes(120, 1000);
+    const admitidos: number[] = [];
+    for (let t = 0; t < 5000; t += 2) if (l.admitir(t)) admitidos.push(t);
+    for (const a of admitidos) expect(admitidos.filter((x) => x >= a && x < a + 1000).length).toBeLessThanOrEqual(120);
+    expect(admitidos.length).toBeGreaterThan(500); // y sigue admitiendo cuando hay hueco
   });
 });

@@ -451,12 +451,16 @@ describe("marco del editor", () => {
       const post = diferido<never>();
       const c = cliente({ videoPreviewAbrir: vi.fn(() => post.p) });
       const { unmount } = montar(c, "/video/p1");
-      await screen.findByTestId("editor");
+      await vi.waitFor(() => expect(sesionPreview()).not.toBeNull());
       const sesion = sesionPreview()!;
+      const espia = vi.spyOn(sesion, "abrir"); // la Preview real abre con el POST en vuelo
+      await screen.findByTestId("editor");
       await waitFor(() => expect(c.videoPreviewAbrir).toHaveBeenCalledTimes(1)); // POST de la Preview
+      expect(espia).toHaveBeenCalledTimes(1);
       unmount();
       expect(c.videoPreviewCerrar).not.toHaveBeenCalled();
       post.ok(prev);
+      expect(await espia.mock.results[0]!.value).toBeNull(); // cerrada: T17 no debe usar la clave
       await waitFor(() => expect(c.videoPreviewCerrar).toHaveBeenCalledWith("p1"));
       expect(await sesion.abrir(false)).toBeNull();
       expect(c.videoPreviewAbrir).toHaveBeenCalledTimes(1);
