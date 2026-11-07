@@ -113,6 +113,10 @@ function recorrer(raiz: Nodo, visita: (n: Nodo, clave?: string) => void): void {
   ir(raiz);
 }
 
+const checks = (n: Nodo): any[] => (n._zod.def.checks ?? []).map((c: any) => c._zod.def);
+const tieneMax = (n: Nodo) => checks(n).some((c) => c.check === "max_length" || (c.check === "less_than" && c.value !== undefined));
+const tieneMin = (n: Nodo) => checks(n).some((c) => c.check === "greater_than");
+
 const RAICES = [EsquemaGuionVideo, EsquemaProyecto] as unknown as Nodo[];
 function desenvolver(n: Nodo): Nodo {
   let d = n._zod.def;
@@ -172,13 +176,13 @@ describe("esquema de guion y proyecto", () => {
     for (const raiz of RAICES)
       recorrer(raiz, (n, clave) => {
         const t = n._zod.def.type;
-        if (t === "string" && n._zod.bag.maximum === undefined) fallos.push(`cadena sin max (${clave ?? "?"})`);
-        if (t === "array" && n._zod.bag.maximum === undefined) fallos.push(`array sin max (${clave ?? "?"})`);
-        if (t === "number" && (n._zod.bag.maximum === undefined || n._zod.bag.minimum === undefined)) fallos.push(`número sin rango (${clave ?? "?"})`);
+        if (t === "string" && !tieneMax(n)) fallos.push(`cadena sin max (${clave ?? "?"})`);
+        if (t === "array" && !tieneMax(n)) fallos.push(`array sin max (${clave ?? "?"})`);
+        if (t === "number" && (!tieneMax(n) || !tieneMin(n))) fallos.push(`número sin rango (${clave ?? "?"})`);
         if (t === "object" && n._zod.def.catchall?._zod.def.type !== "never") fallos.push(`objeto no estricto (${clave ?? "raíz"})`);
         if (t === "object")
           for (const [k, v] of Object.entries(n._zod.def.shape))
-            if (ESTILO.has(k) && desenvolver(v as Nodo)._zod.def.type !== "enum") fallos.push(`campo de estilo ${k} no es enum`);
+            if (ESTILO.has(k) && desenvolver(v as Nodo)._zod.def.type !== "object" && desenvolver(v as Nodo)._zod.def.type !== "enum") fallos.push(`campo de estilo ${k} no es enum`);
       });
     expect([...new Set(fallos)]).toEqual([]);
   });

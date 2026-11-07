@@ -735,7 +735,7 @@ function sinEscapesCss(t: string): string {
   return t.replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([^\r\n\f]))/gi, (_, hex?: string, c?: string) => (hex ? caracter(parseInt(hex, 16)) : c!));
 }
 
-function hallazgosDeRed(texto: string, nombre: string): string[] {
+export function hallazgosDeRed(texto: string, nombre: string): string[] {
   const hallados = new Set<string>();
   const anotar = (t: string, re: RegExp) => {
     for (const m of t.matchAll(re)) {
