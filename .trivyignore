@@ -6,3 +6,16 @@
 #
 # Formato: un ID por línea (CVE-…, GHSA-…, o el ID de la regla de misconfig, p. ej. DS-0002).
 # Para caducar una excepción sola: `CVE-XXXX-YYYY exp:AAAA-MM-DD`.
+
+# zip 4.6.1 (Cargo.lock), dependencia transitiva de tauri-plugin-updater 2.13.3, en producción.
+#   CVE-2026-115905 (CRITICAL, diferencial de parser entre cabeceras; corregido en zip 9.0.5).
+#   CVE-2026-115909 (HIGH, DoS por reserva de memoria con enlaces simbólicos; corregido en 9.0.0).
+# No alcanzable hoy: tauri.conf.json tiene `createUpdaterArtifacts: true` (no `v1Compatible`), así
+# que el updater de Windows recibe el -setup.exe de NSIS, no un .zip, y la firma minisign de la
+# actualización se verifica antes de procesar el fichero. Para llegar a zip haría falta además la
+# clave privada de firma del updater.
+# Corrección: tauri-plugin-updater 2.14.1 (pide zip ^9 y tauri ^2.12; hay 2.12.3). Es tarea aparte
+# porque hay que validar el flujo de actualización en Windows con la app instalada.
+# Revisar: al subir el plugin, o el 2026-12-07 como tarde (caducan solas).
+CVE-2026-115905 exp:2026-12-07
+CVE-2026-115909 exp:2026-12-07
