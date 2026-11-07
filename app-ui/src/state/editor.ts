@@ -39,6 +39,10 @@ let version = 0;
 let epoca = 0;
 /** Ediciones de otros proyectos que no se pudieron guardar al cambiar: borrador de su propio id. */
 const borradores = new Map<string, Proyecto>();
+/** Última edición local de un proyecto que se abandonó con un PUT (o el GET de un 409) en vuelo,
+ *  por época. Lo que el PUT viejo enviaba ya no es lo último: los manejadores de esa época usan
+ *  esto, nunca su copia enviada, para el borrador y para el PUT de seguimiento. */
+const salientes = new Map<number, Proyecto>();
 
 export function vincularCliente(c: Client) {
   cliente = c;
@@ -48,6 +52,19 @@ export function vincularCliente(c: Client) {
 export function desvincularCliente() {
   cliente = null;
   borradores.clear();
+  salientes.clear();
+}
+
+/** Deja `p` como borrador de su proyecto. Si ese mismo proyecto está abierto ahora (se reabrió
+ *  durante el PUT/GET), el borrador se muestra ya, sobre la versión `remoto` si la hay. */
+function dejarBorrador(p: Proyecto, remoto?: Proyecto) {
+  const abierto = useEditor.getState().proyecto;
+  if (abierto && abierto.id === p.id) {
+    const base = remoto ?? abierto;
+    useEditor.setState({ proyecto: base, revision: base.revision, borrador: p, conflicto: true, guardado: "error", historial: [], futuro: [] });
+  } else {
+    borradores.set(p.id, p);
+  }
 }
 
 /** Guarda en segundo plano la edición pendiente del proyecto que se abandona; si no puede, la
@@ -58,7 +75,14 @@ function salvarSaliente() {
     borradores.set(st.borrador.id, st.borrador);
     return;
   }
-  if (!st.proyecto || (st.guardado !== "pendiente" && st.guardado !== "error")) return;
+  if (!st.proyecto) return;
+  // PUT (o GET de un 409) en vuelo: no se lanza otro PUT con la misma revisión. Se anota la última
+  // edición y el manejador de esa época la guarda con la revisión nueva, o la deja de borrador.
+  if (st.guardado === "guardando" || (guardando && st.guardado === "pendiente")) {
+    salientes.set(epoca, st.proyecto);
+    return;
+  }
+  if (st.guardado !== "pendiente" && st.guardado !== "error") return;
   const p = st.proyecto;
   const c = cliente;
   if (!c) {
@@ -183,7 +207,16 @@ export async function guardar() {
   useEditor.setState({ guardado: "guardando" });
   try {
     const r = await cliente.videoProyectoGuardar(proyecto.id, { revision: st.revision, proyecto: { ...proyecto, revision: st.revision } });
-    if (mia !== epoca) return; // se cambió de proyecto durante el PUT: `abrir` ya reinició el estado
+    if (mia !== epoca) {
+      // Se cambió de proyecto durante el PUT: `abrir` ya reinició el estado. Si hubo ediciones
+      // después de lo enviado, se guardan ahora con la revisión que acaba de dar el servidor.
+      const ultima = salientes.get(mia);
+      salientes.delete(mia);
+      if (ultima && ultima !== proyecto) {
+        cliente.videoProyectoGuardar(ultima.id, { revision: r.revision, proyecto: { ...ultima, revision: r.revision } }).catch(() => dejarBorrador(ultima));
+      }
+      return;
+    }
     const actual = useEditor.getState().proyecto;
     useEditor.setState({ revision: r.revision, proyecto: actual ? { ...actual, revision: r.revision } : actual });
     guardando = false;
@@ -195,7 +228,10 @@ export async function guardar() {
     }
   } catch (e) {
     if (mia !== epoca) {
-      borradores.set(proyecto.id, proyecto); // el PUT del proyecto anterior falló: no se pierde
+      // El PUT del proyecto anterior falló: no se pierde, y se conserva lo último, no lo enviado.
+      const ultima = salientes.get(mia) ?? proyecto;
+      salientes.delete(mia);
+      dejarBorrador(ultima);
       return;
     }
     guardando = false;
@@ -209,7 +245,9 @@ async function alConflicto(local: Proyecto, mia: number) {
   try {
     const remoto = await cliente!.videoProyecto(local.id);
     if (mia !== epoca) {
-      borradores.set(local.id, useEditor.getState().proyecto?.id === local.id ? useEditor.getState().proyecto! : local);
+      const ultima = salientes.get(mia) ?? local;
+      salientes.delete(mia);
+      dejarBorrador(ultima, useEditor.getState().proyecto?.id === local.id ? remoto : undefined);
       return;
     }
     // La edición local se toma DESPUÉS del GET: lo escrito mientras duraba va al borrador.
@@ -217,7 +255,9 @@ async function alConflicto(local: Proyecto, mia: number) {
     useEditor.setState({ proyecto: remoto, revision: remoto.revision, borrador: actualLocal, conflicto: true, guardado: "error", historial: [], futuro: [] });
   } catch {
     if (mia !== epoca) {
-      borradores.set(local.id, local);
+      const ultima = salientes.get(mia) ?? local;
+      salientes.delete(mia);
+      dejarBorrador(ultima);
       return;
     }
     useEditor.setState({ guardado: "error", borrador: useEditor.getState().proyecto ?? local, conflicto: true });

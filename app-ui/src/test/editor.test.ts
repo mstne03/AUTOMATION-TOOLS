@@ -171,6 +171,48 @@ describe("store del editor", () => {
       expect(titulo()).toBe("Del servidor");
     });
 
+    it("reabrir_mismo_id_durante_get_de_409_conserva_la_edicion_mia", async () => {
+      guardar.mockRejectedValueOnce(new ApiError(409, "Revisión antigua."));
+      let servir!: (p: Proyecto) => void;
+      leer.mockImplementationOnce(() => new Promise((ok) => { servir = ok; }));
+      editar((p) => { p.titulo = "Mía"; });
+      await vi.advanceTimersByTimeAsync(800);
+      cargar({ ...proyecto("Recargado"), revision: 5 }); // mismo id, durante el GET
+      servir({ ...proyecto("Del servidor"), revision: 7 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEditor.getState()).toMatchObject({ conflicto: true });
+      expect(useEditor.getState().borrador?.titulo).toBe("Mía");
+    });
+
+    it("salvarSaliente_no_lanza_un_segundo_PUT_con_la_misma_revision", async () => {
+      let soltar!: () => void;
+      guardar.mockImplementationOnce(() => new Promise((ok) => { soltar = () => ok({ revision: 4, avisos: [] }); }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      editar((p) => { p.titulo = "B"; }); // durante el PUT
+      cargar(otro());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guardar).toHaveBeenCalledTimes(1); // espera al PUT en vuelo
+      soltar();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guardar).toHaveBeenCalledTimes(2);
+      expect(guardar.mock.calls[1][1]).toMatchObject({ revision: 4, proyecto: { titulo: "B", revision: 4 } });
+    });
+
+    it("409_de_un_PUT_viejo_no_deja_una_version_anterior_como_borrador", async () => {
+      let fallar!: () => void;
+      guardar.mockImplementationOnce(() => new Promise((_, ko) => { fallar = () => ko(new ApiError(409, "Revisión antigua.")); }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      editar((p) => { p.titulo = "B"; });
+      cargar(otro());
+      fallar();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guardar).toHaveBeenCalledTimes(1);
+      cargar(proyecto());
+      expect(useEditor.getState().borrador?.titulo).toBe("B");
+    });
+
     it("guardar_sin_cliente_marca_error", async () => {
       desvincularCliente();
       editar((p) => { p.titulo = "A"; });

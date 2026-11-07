@@ -10,6 +10,7 @@ Variables propias:
   %LOCALAPPDATA%\\seo-studio.
 - APP_BACKEND_SECRETS: "keyring" (por defecto, Credential Manager) o "file"
   (JSON en claro en el directorio de estado; solo para tests y desarrollo).
+- APP_BACKEND_SIN_DOTENV: con "1" no se cargan `.env` ni `.env.local` (lo fijan los E2E).
 - APP_BACKEND_TOKEN: token de la cabecera Authorization. Si falta se genera uno.
 - ANTHROPIC_API_KEY: respaldo para desarrollo; en el producto la clave va al almacen
   de secretos via PUT /settings y esta variable no se usa.
@@ -31,6 +32,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
+def cargar_dotenv(raiz: Path) -> bool:
+    """Carga `.env` y `.env.local` de `raiz` (`.env.local` pisa a `.env`), salvo con
+    APP_BACKEND_SIN_DOTENV=1: los E2E la fijan para que un `.env.local` de desarrollo con claves
+    reales no entre nunca en el sidecar de prueba. Devuelve si cargó algo."""
+    if os.environ.get("APP_BACKEND_SIN_DOTENV") == "1":
+        return False
+    load_dotenv(raiz / ".env")
+    load_dotenv(raiz / ".env.local", override=True)
+    return True
+
+
 # Binario de PyInstaller (sys.frozen): sin .env (un fichero junto al ejecutable no debe
 # poder cambiar la configuracion) y con el modelo de embeddings dentro del bundle.
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -44,8 +57,7 @@ else:
     # .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
     # Ninguno se commitea; .env.local pisa a .env.
     _RAIZ = Path(__file__).resolve().parent.parent
-    load_dotenv(_RAIZ / ".env")
-    load_dotenv(_RAIZ / ".env.local", override=True)
+    cargar_dotenv(_RAIZ)
 
 STATE_DIR = Path(
     os.environ.get("APP_BACKEND_DIR")
