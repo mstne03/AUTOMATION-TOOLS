@@ -176,6 +176,12 @@ describe("servidor stdio", () => {
         "video_proyecto_listar",
         "video_renderizar",
         "video_vista_previa",
+        "video_voces",
+        "video_voz_coste",
+        "video_voz_forma",
+        "video_voz_generar",
+        "video_voz_muestra",
+        "video_voz_quitar_silencios",
       ]);
       const guardar = lista.result.tools.find((t: { name: string }) => t.name === "video_guardar_guion");
       expect(guardar.description).toMatch(/video_ayuda/);

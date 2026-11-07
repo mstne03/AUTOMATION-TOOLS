@@ -35,7 +35,13 @@ export interface RespuestaTts {
   requestId?: string;
 }
 
-export class ErrorElevenLabs extends Error {}
+export class ErrorElevenLabs extends Error {
+  /**
+   * Caracteres que ElevenLabs ya cobró con un 200 aunque la respuesta se descarte después (audio demasiado grande,
+   * alineación inválida, corte a medias). Ausente si el error llegó antes de que hubiera cobro.
+   */
+  facturados?: number;
+}
 
 /** Cuerpo de la respuesta (D7): ≤ 20 MB. */
 export const MAX_RESPUESTA_TTS = 20 * 1024 * 1024;
@@ -151,6 +157,20 @@ export async function listarVocesElevenLabs(opts: { apiKey: string; fetchImpl?: 
   }
 }
 
+/**
+ * Caracteres facturados según la cabecera: solo un entero en [0, 10 × lo enviado]. Cualquier otra cosa (negativo,
+ * fraccionario, NaN, enorme) se ignora y se avisa: se usará la estimación local (los caracteres enviados).
+ */
+export function caracteresDeCabecera(cabecera: string | null, enviados: number): number | undefined {
+  if (cabecera === null || cabecera === "") return undefined;
+  const n = /^\d{1,9}$/.test(cabecera.trim()) ? Number(cabecera) : Number.NaN;
+  if (Number.isInteger(n) && n >= 0 && n <= 10 * enviados) return n;
+  log.warn(`ElevenLabs devolvió un x-character-count no válido (${cabecera.slice(0, 40)}); uso la estimación local de ${enviados} caracteres.`);
+  return undefined;
+}
+
+const idDePeticion = (v: string | null): string | undefined => (v !== null && /^[A-Za-z0-9_-]{1,100}$/.test(v) ? v : undefined);
+
 export async function sintetizarConTimestamps(opts: {
   texto: string;
   apiKey: string;
@@ -176,9 +196,21 @@ export async function sintetizarConTimestamps(opts: {
     throw new ErrorElevenLabs(`No se pudo conectar con ElevenLabs: ${ocultarClave((e as Error).message, opts.apiKey)}`);
   }
 
-  const cuerpo = await leerCuerpo(res, res.ok ? MAX_RESPUESTA_TTS : MAX_ERROR_TTS, opts.apiKey);
-  if (!res.ok) throw errorHttp(res.status, cuerpo, opts.apiKey);
+  if (!res.ok) throw errorHttp(res.status, await leerCuerpo(res, MAX_ERROR_TTS, opts.apiKey), opts.apiKey);
 
+  // Con el 200 el servicio ya cobra: desde aquí, todo error lleva los caracteres facturados (Medium 1 de la revisión de T5).
+  const cabecera = res.headers.get("x-character-count") ?? res.headers.get("character-cost");
+  const caracteresFacturados = caracteresDeCabecera(cabecera, opts.texto.length);
+  try {
+    return await procesarRespuesta(res, opts, caracteresFacturados);
+  } catch (e) {
+    if (e instanceof ErrorElevenLabs) e.facturados = caracteresFacturados ?? opts.texto.length;
+    throw e;
+  }
+}
+
+async function procesarRespuesta(res: Response, opts: { texto: string; apiKey: string }, caracteresFacturados: number | undefined): Promise<RespuestaTts> {
+  const cuerpo = await leerCuerpo(res, MAX_RESPUESTA_TTS, opts.apiKey);
   let j: { audio_base64?: string; alignment?: unknown; normalized_alignment?: unknown };
   try {
     j = JSON.parse(cuerpo);
@@ -202,8 +234,6 @@ export async function sintetizarConTimestamps(opts: {
   // Se registran las cabeceras de coste tal cual llegan (nunca la clave) para poder contrastarlas con el panel.
   const cabecerasCoste = [...res.headers.entries()].filter(([k]) => /charact|cost|credit|request-id/i.test(k));
   log.info(`ElevenLabs: ${opts.texto.length} caracteres enviados; cabeceras de coste: ${cabecerasCoste.map(([k, v]) => `${k}=${v}`).join(", ") || "ninguna"}`);
-  const cabecera = res.headers.get("x-character-count") ?? res.headers.get("character-cost");
-  const caracteresFacturados = cabecera && Number.isFinite(Number(cabecera)) ? Number(cabecera) : undefined;
   return {
     audio,
     crudo: {
@@ -212,6 +242,6 @@ export async function sintetizarConTimestamps(opts: {
     },
     alineacion,
     caracteresFacturados,
-    requestId: res.headers.get("request-id") ?? undefined,
+    requestId: idDePeticion(res.headers.get("request-id")),
   };
 }

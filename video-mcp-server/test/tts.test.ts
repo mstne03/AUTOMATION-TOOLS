@@ -211,3 +211,33 @@ describe("baseElevenLabs: VIDEO_PRUEBAS_TTS_URL no abre una salida de red nueva 
     expect(urls).toEqual([]);
   });
 });
+
+describe("cabeceras de coste y request-id (no confiables)", () => {
+  const conCabeceras = (h: Record<string, string>) => async () => new Response(JSON.stringify(cuerpo()), { status: 200, headers: h });
+  it("solo un entero en [0, 10 × lo enviado]; si no, se usa la estimación local", async () => {
+    for (const malo of ["-1", "1.5", "abc", "1e9", "111", "99999999999", " "]) {
+      const r = await llamar(conCabeceras({ "x-character-count": malo }));
+      expect(r.caracteresFacturados, malo).toBeUndefined();
+    }
+    expect((await llamar(conCabeceras({ "x-character-count": "11" }))).caracteresFacturados).toBe(11);
+    expect((await llamar(conCabeceras({ "x-character-count": "0" }))).caracteresFacturados).toBe(0);
+    
+  });
+
+  it("el request-id se acota", async () => {
+    expect((await llamar(conCabeceras({ "request-id": "abc_DEF-123" }))).requestId).toBe("abc_DEF-123");
+    expect((await llamar(conCabeceras({ "request-id": "a b\"<x>" }))).requestId).toBeUndefined();
+    expect((await llamar(conCabeceras({ "request-id": "x".repeat(101) }))).requestId).toBeUndefined();
+  });
+
+  it("un error después del 200 lleva los caracteres cobrados; uno antes del 200, no", async () => {
+    const e1 = await llamar(async () => new Response(JSON.stringify(cuerpo({ alignment: null })), { status: 200, headers: { "x-character-count": "7" } })).catch((e) => e);
+    expect(e1).toBeInstanceOf(ErrorElevenLabs);
+    expect(e1.facturados).toBe(7);
+    const e2 = await llamar(async () => new Response("no es json", { status: 200 })).catch((e) => e);
+    expect(e2.facturados).toBe(TEXTO.length); // sin cabecera: la estimación local
+    const e3 = await llamar(async () => new Response("{}", { status: 429 })).catch((e) => e);
+    expect(e3).toBeInstanceOf(ErrorElevenLabs);
+    expect(e3.facturados).toBeUndefined();
+  });
+});

@@ -15,8 +15,11 @@ import {
   silencios,
   vozCoste,
   vozForma,
-  vozGenerar,
-  vozMuestra,
+  vozGenerar as vozGenerarReal,
+  vozMuestra as vozMuestraReal,
+  cabeceraMp3Valida,
+  carpetaMuestras,
+  planMuestra,
   vozQuitarSilencios,
   voces,
 } from "../src/voz.js";
@@ -57,6 +60,13 @@ beforeAll(async () => {
   if (r.code !== 0) throw new Error(r.stderr);
   mp3 = fs.readFileSync(ruta);
 }, 60_000);
+
+// La confirmación lleva el plan que mostró `vozCoste`; las pruebas lo piden en vivo salvo que fijen el suyo.
+const vozGenerar = (c: Config, a: any, f?: typeof fetch) => vozGenerarReal(c, { planConfirmado: vozCoste(c, a.id, a.frases).plan, ...a }, f);
+const vozMuestra = (c: Config, a: any, f?: typeof fetch) => vozMuestraReal(c, { planConfirmado: planMuestra(c.elevenModelId, a.voiceId), ...a }, f);
+// Las negativas que fallan antes de ffprobe (cabecera, red) solo necesitan que los binarios existan, no que hfHome() acepte la ruta.
+const hayBinarios = herramientasFfmpeg(undefined);
+const sinSonda = it.skipIf(!hayBinarios);
 
 const clon = <T>(x: T): T => JSON.parse(JSON.stringify(x));
 
@@ -249,7 +259,7 @@ describe("facturación (CA3, Review Focus 2)", () => {
   it("una frase que no existe, o un voiceId raro, se rechazan antes de llamar", async () => {
     const id = nuevo();
     const f = falso();
-    await expect(vozGenerar(cfg(), { id, frases: ["f99"], caracteresConfirmados: 0 }, comoFetch(f))).rejects.toMatchObject({ codigo: "esquema" });
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f99"], caracteresConfirmados: 0, planConfirmado: "x" }, comoFetch(f))).rejects.toMatchObject({ codigo: "esquema" });
     for (const malo of ["../etc", "corta", "a/b/c/d/e/f/g/h", "x".repeat(41), "voz con espacios", "Vz12345678A?"]) {
       expect(() => vozCoste({ ...cfg(), elevenVoiceId: malo }, id)).toThrow(ErrorAlmacen);
     }
@@ -282,7 +292,7 @@ describe("respuesta hostil: no se guarda nada (D7, I15)", () => {
       expect(r.generadas).toBe(0);
       expect(r.fallo).toMatchObject({ fraseId: "f1" });
       expect(r.fallo?.mensaje).toMatch(patron!);
-      expect(ficherosVoz(id)).toEqual([]); // ni mp3, ni json, ni temporales
+      expect(ficherosVoz(id).filter((n) => !n.endsWith(".fallo"))).toEqual([]); // ni mp3, ni json, ni temporales (la marca de cobro sí)
       expect(vozCoste(cfg(), id).pendientes).toContain("f1");
     });
   }
@@ -292,7 +302,8 @@ describe("respuesta hostil: no se guarda nada (D7, I15)", () => {
     const f = falso((t) => respuesta(t, { paso: 0.2 })); // 27 caracteres × 0,2 s ≈ 5 s frente a 1 s de audio
     const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: 27 }, comoFetch(f));
     expect(r.fallo?.mensaje).toMatch(/alineación/);
-    expect(ficherosVoz(id)).toEqual([]);
+    expect(r.fallo?.facturada).toBe(true);
+    expect(ficherosVoz(id).filter((n) => !n.endsWith(".fallo"))).toEqual([]);
   });
 
   requiere("clave_fuera_de_error: un 401 con la clave en el cuerpo no la deja salir", async () => {
@@ -408,8 +419,8 @@ describe("catálogo de voces y muestra (M-D3)", () => {
     const f = vi.fn(async () => new Response(JSON.stringify(catalogo), { status: 200 }));
     const r = await voces(cfg(), f as unknown as typeof fetch);
     expect(r.voces).toEqual([
-      { id: "Aa1234567890", nombre: "Lucía", idioma: "es" },
-      { id: "Bb1234567890", nombre: "Marc", idioma: "" },
+      { id: "Aa1234567890", nombre: "Lucía", idioma: "es", planMuestra: planMuestra("eleven_multilingual_v2", "Aa1234567890") },
+      { id: "Bb1234567890", nombre: "Marc", idioma: "", planMuestra: planMuestra("eleven_multilingual_v2", "Bb1234567890") },
     ]);
     expect(JSON.stringify(r)).not.toMatch(/preview/);
     expect(f).toHaveBeenCalledTimes(1);
@@ -441,5 +452,171 @@ describe("catálogo de voces y muestra (M-D3)", () => {
     const r2 = await vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f));
     expect(f).toHaveBeenCalledTimes(1); // de caché: sin segunda llamada
     expect(r2).toMatchObject({ caracteres: 0, cache: true, audioBase64: r1.audioBase64 });
+  });
+});
+
+// ---------- Revisión de seguridad de T5 ----------
+
+const TEXTO1 = "Frase número 1 del partido.";
+const marcas = (id: string) => ficherosVoz(id).filter((n) => n.endsWith(".fallo"));
+const basura = Buffer.from("esto no es un mp3, es texto");
+
+describe("cabecera MP3 (antes de ffprobe)", () => {
+  it("solo ID3 o sync de trama MPEG", () => {
+    expect(cabeceraMp3Valida(Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00", "latin1"))).toBe(true);
+    expect(cabeceraMp3Valida(Buffer.from([0xff, 0xfb, 0x90, 0x00]))).toBe(true);
+    expect(cabeceraMp3Valida(Buffer.from([0xff, 0xe3, 0x90, 0x00]))).toBe(true);
+    expect(cabeceraMp3Valida(Buffer.from([0xff, 0xc0, 0x90, 0x00]))).toBe(false);
+    expect(cabeceraMp3Valida(Buffer.from([0x00, 0xfb, 0x90, 0x00]))).toBe(false);
+    expect(cabeceraMp3Valida(Buffer.from("ffconcat version 1.0\nfile 'x.mp3'\n"))).toBe(false);
+    expect(cabeceraMp3Valida(Buffer.alloc(2, 0xff))).toBe(false);
+  });
+
+  sinSonda("un ffconcat disfrazado de mp3 se rechaza antes de ffprobe y no se guarda (pero se cobró)", async () => {
+    const id = nuevo();
+    const disfraz = Buffer.concat([Buffer.from("ffconcat version 1.0\nfile 'x.mp3'\n#"), mp3.length ? mp3 : Buffer.alloc(64, 0xff)]);
+    const f = falso((t) => respuesta(t, { audio: disfraz }));
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f));
+    expect(r.generadas).toBe(0);
+    expect(r.fallo?.mensaje).toMatch(/cabecera MP3/);
+    expect(ficherosVoz(id).filter((n) => !n.endsWith(".fallo"))).toEqual([]);
+  });
+});
+
+describe("facturación tras un fallo de validación (Medium 1)", () => {
+  sinSonda("el cobro con 200 se suma aunque el audio se descarte, y la frase queda marcada como facturada", async () => {
+    const id = nuevo();
+    const f = falso((t) => respuesta(t, { audio: basura }));
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f));
+    expect(r).toMatchObject({ generadas: 0, caracteresFacturados: TEXTO1.length, fallo: { fraseId: "f1", facturada: true } });
+    expect(marcas(id)).toHaveLength(1);
+    const c = vozCoste(cfg(), id, ["f1"]);
+    expect(c.pendientes).toEqual(["f1"]);
+    expect(c.fallidasFacturadas).toEqual([{ fraseId: "f1", intentos: 1, caracteresCobrados: TEXTO1.length }]);
+    expect(c.caracteresRefacturados).toBe(TEXTO1.length);
+  });
+
+  sinSonda("un 429 (sin cobro) no deja marca ni cuenta caracteres", async () => {
+    const id = nuevo();
+    const f = falso(() => new Response("{}", { status: 429 }));
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f));
+    expect(r).toMatchObject({ generadas: 0, caracteresFacturados: 0, fallo: { facturada: false } });
+    expect(marcas(id)).toEqual([]);
+    expect(vozCoste(cfg(), id, ["f1"]).fallidasFacturadas).toEqual([]);
+  });
+
+  sinSonda("un fallo determinista repetido no se vuelve a cobrar sin confirmación expresa", async () => {
+    const id = nuevo();
+    const f1 = falso((t) => respuesta(t, { audio: basura }));
+    await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f1));
+    expect(f1).toHaveBeenCalledTimes(1);
+
+    // Mismo coste, mismo plan visto, sin reintentarFacturadas: no hay llamada.
+    const c = vozCoste(cfg(), id, ["f1"]);
+    const f2 = falso((t) => respuesta(t, { audio: basura }));
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: c.caracteres, planConfirmado: c.plan }, comoFetch(f2))).rejects.toMatchObject({ codigo: "reintento_facturado" });
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: c.caracteres, planConfirmado: c.plan, reintentarFacturadas: false }, comoFetch(f2))).rejects.toMatchObject({
+      codigo: "reintento_facturado",
+    });
+    expect(f2).toHaveBeenCalledTimes(0);
+
+    // Con la confirmación expresa se llama una vez, se vuelve a cobrar y se anota el segundo intento.
+    const r = await vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: c.caracteres, planConfirmado: c.plan, reintentarFacturadas: true }, comoFetch(f2));
+    expect(f2).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ caracteresFacturados: TEXTO1.length, fallo: { facturada: true } });
+    const c2 = vozCoste(cfg(), id, ["f1"]);
+    expect(c2.fallidasFacturadas[0]).toMatchObject({ intentos: 2, caracteresCobrados: 2 * TEXTO1.length });
+    expect(c2.plan).not.toBe(c.plan); // el plan visto antes ya no vale
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: c.caracteres, planConfirmado: c.plan, reintentarFacturadas: true }, comoFetch(f2))).rejects.toMatchObject({ codigo: "coste_cambiado" });
+    expect(f2).toHaveBeenCalledTimes(1);
+  });
+
+  requiere("si el reintento confirmado funciona, la frase se guarda y la marca desaparece", async () => {
+    const id = nuevo();
+    await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(falso((t) => respuesta(t, { audio: basura }))));
+    expect(marcas(id)).toHaveLength(1);
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length, reintentarFacturadas: true }, comoFetch(falso()));
+    expect(r).toMatchObject({ generadas: 1, caracteresFacturados: TEXTO1.length });
+    expect(marcas(id)).toEqual([]);
+    expect(vozCoste(cfg(), id, ["f1"]).pendientes).toEqual([]);
+  });
+
+  requiere("audio que ffprobe no acepta pese a una cabecera válida: también se cobra y se marca", async () => {
+    const id = nuevo();
+    const falsoMp3 = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x00]), Buffer.alloc(200, 1)]);
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(falso((t) => respuesta(t, { audio: falsoMp3 }))));
+    expect(r.fallo).toMatchObject({ facturada: true });
+    expect(r.caracteresFacturados).toBe(TEXTO1.length);
+    expect(ficherosVoz(id).filter((n) => /tmp/.test(n))).toEqual([]);
+  });
+});
+
+describe("la confirmación ata el contenido", () => {
+  it("cambiar el texto sin cambiar el total de caracteres invalida la confirmación", async () => {
+    const id = nuevo();
+    const visto = vozCoste(cfg(), id, ["f1"]);
+    editar(id, (p) => (p.frases[0].texto = "Frase numero 1 del partido.")); // misma longitud
+    const f = falso();
+    expect(vozCoste(cfg(), id, ["f1"]).caracteres).toBe(visto.caracteres);
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: visto.caracteres, planConfirmado: visto.plan }, comoFetch(f))).rejects.toMatchObject({ codigo: "coste_cambiado" });
+    expect(f).toHaveBeenCalledTimes(0);
+  });
+
+  it("sin plan, o con otro tipo, no se llama; cambiar de voz cambia el plan", async () => {
+    const id = nuevo();
+    const f = falso();
+    const total = vozCoste(cfg(), id).caracteres;
+    for (const planConfirmado of [undefined, "", 7, "0".repeat(64)]) {
+      await expect(vozGenerarReal(cfg(), { id, caracteresConfirmados: total, planConfirmado } as any, comoFetch(f))).rejects.toMatchObject({ codigo: "coste_cambiado" });
+    }
+    expect(f).toHaveBeenCalledTimes(0);
+    expect(vozCoste({ ...cfg(), elevenVoiceId: "Ot12345678CD" }, id).plan).not.toBe(vozCoste(cfg(), id).plan);
+  });
+
+  it("la muestra también: otro plan, no se llama", async () => {
+    const f = falso();
+    await expect(vozMuestraReal(cfg(), { voiceId: VOZ, caracteresConfirmados: 60, planConfirmado: planMuestra("otro_modelo", VOZ) }, comoFetch(f))).rejects.toMatchObject({ codigo: "coste_cambiado" });
+    await expect(vozMuestraReal(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 } as any, comoFetch(f))).rejects.toMatchObject({ codigo: "coste_cambiado" });
+    expect(f).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("muestra: carpeta, candado y caché", () => {
+  it("la carpeta de muestras es hermana de VIDEO_ROOT", () => {
+    expect(carpetaMuestras(cfg())).toBe(path.join(path.dirname(RAIZ), "muestras"));
+  });
+
+  it("si muestras/ es un enlace, no se lee la caché ni se llama", async () => {
+    const otra = path.join(path.dirname(RAIZ), "otra");
+    fs.mkdirSync(otra, { recursive: true });
+    const hash = hashFrase(VOZ, "eleven_multilingual_v2", "Hola, esta es una muestra de mi voz para tus vídeos del día.");
+    fs.writeFileSync(path.join(otra, `${hash}.mp3`), Buffer.from([0xff, 0xfb, 0x90, 0x00, 1, 2, 3]));
+    fs.symlinkSync(otra, path.join(path.dirname(RAIZ), "muestras"), "junction");
+    const f = falso();
+    await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f))).rejects.toMatchObject({ codigo: "esquema", problemas: [{ codigo: "enlace_no_permitido", ruta: "" }] });
+    expect(f).toHaveBeenCalledTimes(0);
+  });
+
+  sinSonda("dos clics seguidos sobre la misma voz son una sola llamada (candado)", async () => {
+    let soltar!: () => void;
+    const espera = new Promise<void>((r) => (soltar = r));
+    const f = falso(async (t) => {
+      await espera;
+      return respuesta(t, { audio: basura });
+    });
+    const primera = vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f)).catch((e) => e);
+    await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f))).rejects.toMatchObject({ codigo: "conflicto" });
+    soltar();
+    expect(await primera).toMatchObject({ codigo: "fallo_facturado" });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  sinSonda("una muestra cobrada y descartada pide confirmación expresa para repetirse", async () => {
+    const f = falso((t) => respuesta(t, { audio: basura }));
+    await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f))).rejects.toMatchObject({ codigo: "fallo_facturado" });
+    await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60 }, comoFetch(f))).rejects.toMatchObject({ codigo: "reintento_facturado" });
+    expect(f).toHaveBeenCalledTimes(1);
+    await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60, reintentarFacturada: true }, comoFetch(f))).rejects.toMatchObject({ codigo: "fallo_facturado" });
+    expect(f).toHaveBeenCalledTimes(2);
   });
 });

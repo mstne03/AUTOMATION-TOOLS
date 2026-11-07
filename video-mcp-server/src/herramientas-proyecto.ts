@@ -65,15 +65,16 @@ export function proyectoGuardarTool(cfg: Config, a: { id: string; revision: numb
 
 // ---------- Voz por frases (T5) ----------
 
-export function vozCosteTool(cfg: Config, a: { id: string }): Respuesta {
-  const r = vozCoste(cfg, a.id);
-  return { texto: `${r.pendientes.length} frase(s) sin voz: ${r.caracteres} caracteres a facturar.`, datos: r };
+export function vozCosteTool(cfg: Config, a: { id: string; frases?: string[] }): Respuesta {
+  const r = vozCoste(cfg, a.id, a.frases);
+  const aviso = r.fallidasFacturadas.length ? ` ${r.fallidasFacturadas.length} ya se cobraron y fallaron: reintentarlas cobra ${r.caracteresRefacturados} caracteres más.` : "";
+  return { texto: `${r.pendientes.length} frase(s) sin voz: ${r.caracteres} caracteres a facturar.${aviso}`, datos: { ...r } };
 }
 
-export async function vozGenerarTool(cfg: Config, a: { id: string; frases?: string[]; caracteresConfirmados: number }, fetchImpl?: typeof fetch): Promise<Respuesta> {
+export async function vozGenerarTool(cfg: Config, a: { id: string; frases?: string[]; caracteresConfirmados: number; planConfirmado: string; reintentarFacturadas?: boolean }, fetchImpl?: typeof fetch): Promise<Respuesta> {
   const r = await vozGenerar(cfg, a, fetchImpl);
   const texto = r.fallo
-    ? `Voz generada en parte: ${r.generadas} hecha(s) y se conservan. Falló la frase ${r.fallo.fraseId}: ${r.fallo.mensaje}`
+    ? `Voz generada en parte: ${r.generadas} hecha(s) y se conservan. Falló la frase ${r.fallo.fraseId}: ${r.fallo.mensaje}${r.fallo.facturada ? " ElevenLabs ya cobró esa frase; reintentarla se cobra otra vez." : ""}`
     : `Voz generada: ${r.generadas} llamada(s), ${r.caracteresFacturados} caracteres facturados.`;
   return { texto, datos: { ...r } };
 }
@@ -93,7 +94,7 @@ export async function vocesTool(cfg: Config, fetchImpl?: typeof fetch): Promise<
   return { texto: `${r.voces.length} voz(oces) en la cuenta.`, datos: r };
 }
 
-export async function vozMuestraTool(cfg: Config, a: { voiceId: string; caracteresConfirmados: number }, fetchImpl?: typeof fetch): Promise<Respuesta> {
+export async function vozMuestraTool(cfg: Config, a: { voiceId: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean }, fetchImpl?: typeof fetch): Promise<Respuesta> {
   const r = await vozMuestra(cfg, a, fetchImpl);
   return { texto: r.cache ? "Muestra de la voz (de la caché, sin coste)." : `Muestra de la voz generada: ${r.caracteres} caracteres facturados.`, datos: r };
 }
@@ -175,7 +176,7 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
   // Voz por frases (T5). Gastan créditos de ElevenLabs: el modelo no las usa (D2, I10) y el gasto exige los caracteres confirmados.
   server.registerTool(
     "video_voz_coste",
-    { title: "Coste de la voz", description: "Frases del proyecto sin voz y caracteres que se facturarían al generarlas. No llama a ElevenLabs. Devuelve { pendientes, caracteres, voz }.", inputSchema: { id: ID_PROYECTO } },
+    { title: "Coste de la voz", description: "Frases del proyecto sin voz y caracteres que se facturarían al generarlas. No llama a ElevenLabs. `frases` limita el cálculo a esas frases. Devuelve { pendientes, caracteres, voz, plan, fallidasFacturadas, caracteresRefacturados }.", inputSchema: { id: ID_PROYECTO, frases: z.array(z.string().max(40)).max(540).optional() } },
     (a) => envolver("video_voz_coste", () => vozCosteTool(cfg, a)),
   );
   server.registerTool(
@@ -183,8 +184,8 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
     {
       title: "Generar voz por frases",
       description:
-        "Genera la voz de las frases que no la tienen (o de `frases`), de una en una, y las conserva en disco. `caracteresConfirmados` tiene que ser igual al coste de video_voz_coste; si no, codigo \"coste_cambiado\" y no se llama. Un fallo a medias devuelve `fallo` y conserva lo hecho. Devuelve { generadas, caracteresFacturados, fallo? }.",
-      inputSchema: { id: ID_PROYECTO, frases: z.array(z.string().max(40)).max(540).optional(), caracteresConfirmados: z.number().describe("Caracteres que la persona vio y confirmó.") },
+        "Genera la voz de las frases que no la tienen (o de `frases`), de una en una, y las conserva en disco. `caracteresConfirmados` y `planConfirmado` tienen que ser los de video_voz_coste; si no, codigo \"coste_cambiado\" y no se llama. Si hay frases ya cobradas que fallaron, hace falta `reintentarFacturadas: true` (codigo \"reintento_facturado\"). Un fallo a medias devuelve `fallo` (con `facturada`) y conserva lo hecho. Devuelve { generadas, caracteresFacturados, fallo? }.",
+      inputSchema: { id: ID_PROYECTO, frases: z.array(z.string().max(40)).max(540).optional(), caracteresConfirmados: z.number().describe("Caracteres que la persona vio y confirmó."), planConfirmado: z.string().max(100).describe("El `plan` de video_voz_coste que la persona vio."), reintentarFacturadas: z.boolean().optional() },
     },
     (a) => envolver("video_voz_generar", () => vozGenerarTool(cfg, a)),
   );
@@ -211,8 +212,8 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
     "video_voz_muestra",
     {
       title: "Muestra de una voz",
-      description: "Genera una muestra de 60 caracteres con esa voz (guardada por voz). `caracteresConfirmados` tiene que ser 60. Devuelve { audioBase64, caracteres, cache }.",
-      inputSchema: { voiceId: z.string().max(60), caracteresConfirmados: z.number() },
+      description: "Genera una muestra de 60 caracteres con esa voz (guardada por voz). `caracteresConfirmados` tiene que ser 60 y `planConfirmado` el `planMuestra` de esa voz en video_voces. Si ya se cobró y falló, `reintentarFacturada: true`. Devuelve { audioBase64, caracteres, cache }.",
+      inputSchema: { voiceId: z.string().max(60), caracteresConfirmados: z.number(), planConfirmado: z.string().max(100), reintentarFacturada: z.boolean().optional() },
     },
     (a) => envolver("video_voz_muestra", () => vozMuestraTool(cfg, a)),
   );

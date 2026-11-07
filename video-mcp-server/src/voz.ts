@@ -4,7 +4,7 @@
 // lo hecho, reintentar factura solo lo que falta, cambiar una frase paga una frase y reordenar no paga nada.
 // El gasto exige los caracteres que el cliente mostró (I10): si el cálculo del servidor es otro, no se llama.
 // ElevenLabs y el audio que devuelve son entrada no confiable (D7, I15): ver tts.ts y el sondeo de `generarUna`.
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { procesarAlineacion, validarPalabras, type ResultadoAlineacion } from "./alineacion.js";
@@ -89,6 +89,59 @@ function ficheroNormal(ruta: string, tope: number): boolean {
   }
 }
 
+/**
+ * ¿Empieza por una cabecera MP3 de verdad? `ID3` o el sync de trama MPEG (11 bits a 1: 0xFF y 0xE0 en el segundo byte).
+ * Se exige antes de ffprobe: un texto como `ffconcat version 1.0…` que ffprobe aún acepte como mp3 no puede llegar nunca
+ * al demuxer `concat` del ensamblado.
+ */
+export function cabeceraMp3Valida(b: Buffer): boolean {
+  if (b.length < 4) return false;
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return true; // "ID3"
+  return b[0] === 0xff && (b[1] & 0xe0) === 0xe0;
+}
+
+// ---------- Fallos ya cobrados ----------
+
+interface MarcaFallo {
+  intentos: number;
+  caracteres: number;
+}
+
+/**
+ * Marca `voz/<hash>.fallo`: ElevenLabs cobró esa frase y el audio se descartó. Mientras exista, reintentar exige una
+ * confirmación expresa (`reintentarFacturadas`) además del coste. Si el fichero existe pero no se puede leer, cuenta
+ * igual (falla cerrado). Se borra cuando la frase se guarda.
+ */
+function leerMarca(dir: string, hash: string): MarcaFallo | null {
+  const ruta = path.join(dir, `${hash}.fallo`);
+  try {
+    fs.lstatSync(ruta);
+  } catch {
+    return null;
+  }
+  try {
+    if (ficheroNormal(ruta, 4096)) {
+      const j = JSON.parse(fs.readFileSync(ruta, "utf8")) as { intentos?: unknown; caracteres?: unknown };
+      const ok = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v < 1e9;
+      if (ok(j.intentos) && ok(j.caracteres)) return { intentos: j.intentos, caracteres: j.caracteres };
+    }
+  } catch {
+    /* ilegible: cuenta como un intento */
+  }
+  return { intentos: 1, caracteres: 0 };
+}
+
+function anotarFallo(dir: string, hash: string, caracteres: number): void {
+  const previa = leerMarca(dir, hash);
+  const marca = { version: 1, hash, intentos: (previa?.intentos ?? 0) + 1, caracteres: (previa?.caracteres ?? 0) + caracteres };
+  try {
+    fs.rmSync(path.join(dir, `${hash}.fallo`), { force: true });
+    escribirAtomico(path.join(dir, `${hash}.fallo`), JSON.stringify(marca));
+  } catch (e) {
+    log.error(`no se pudo anotar el fallo facturado de ${hash}: ${(e as Error).message}`);
+  }
+}
+
 /** La frase hecha, o null si falta algo o no cuadra: lo que no se puede leer se trata como pendiente, nunca como válido. */
 function leerFrase(dir: string, hash: string): FraseHecha | null {
   const mp3 = path.join(dir, `${hash}.mp3`);
@@ -111,6 +164,10 @@ interface Plan {
   /** Una entrada por texto distinto: es lo que se llama y se factura. */
   unicas: { hash: string; texto: string; fraseId: string }[];
   caracteres: number;
+  /** Textos distintos que ya se cobraron una vez y fallaron al validarse: reintentarlos se cobra otra vez. */
+  fallidas: { hash: string; fraseId: string; intentos: number; caracteres: number; texto: string }[];
+  /** Huella de lo que se va a generar: la voz, el modelo, los textos (por su hash) y las marcas de fallo. */
+  plan: string;
 }
 
 function planear(ctx: Contexto, solo?: readonly string[]): Plan {
@@ -131,13 +188,38 @@ function planear(ctx: Contexto, solo?: readonly string[]): Plan {
     if (!unicas.has(hash)) unicas.set(hash, { hash, texto: f.texto, fraseId: f.id });
   }
   const lista = [...unicas.values()];
-  return { pendientes, unicas: lista, caracteres: lista.reduce((s, u) => s + u.texto.length, 0) };
+  const fallidas = lista.flatMap((u) => {
+    const m = leerMarca(ctx.dir, u.hash);
+    return m ? [{ hash: u.hash, fraseId: u.fraseId, intentos: m.intentos, caracteres: m.caracteres, texto: u.texto }] : [];
+  });
+  const plan = createHash("sha256")
+    .update(JSON.stringify([ctx.voiceId, ctx.modelo, lista.map((u) => u.hash).sort(), fallidas.map((u) => `${u.hash}:${u.intentos}`).sort()]))
+    .digest("hex");
+  return { pendientes, unicas: lista, caracteres: lista.reduce((s, u) => s + u.texto.length, 0), fallidas, plan };
 }
 
-export function vozCoste(cfg: Config, id: string): { pendientes: string[]; caracteres: number; voz: { voiceId: string; modelo: string } } {
+export interface ResultadoCoste {
+  pendientes: string[];
+  caracteres: number;
+  voz: { voiceId: string; modelo: string };
+  /** Huella del contenido del plan: se devuelve en `planConfirmado` al generar. */
+  plan: string;
+  /** Frases cobradas que no se pudieron usar; generarlas otra vez las cobra de nuevo (`caracteresRefacturados`). */
+  fallidasFacturadas: { fraseId: string; intentos: number; caracteresCobrados: number }[];
+  caracteresRefacturados: number;
+}
+
+export function vozCoste(cfg: Config, id: string, frases?: readonly string[]): ResultadoCoste {
   const ctx = contexto(cfg, id);
-  const p = planear(ctx);
-  return { pendientes: p.pendientes, caracteres: p.caracteres, voz: { voiceId: ctx.voiceId, modelo: ctx.modelo } };
+  const p = planear(ctx, frases);
+  return {
+    pendientes: p.pendientes,
+    caracteres: p.caracteres,
+    voz: { voiceId: ctx.voiceId, modelo: ctx.modelo },
+    plan: p.plan,
+    fallidasFacturadas: p.fallidas.map((f) => ({ fraseId: f.fraseId, intentos: f.intentos, caracteresCobrados: f.caracteres })),
+    caracteresRefacturados: p.fallidas.reduce((s, f) => s + f.texto.length, 0),
+  };
 }
 
 // ---------- Generar ----------
@@ -148,6 +230,15 @@ function exigirCoste(esperado: number, confirmados: unknown): void {
   if (typeof confirmados !== "number" || !Number.isInteger(confirmados) || confirmados !== esperado) {
     throw new ErrorAlmacen("coste_cambiado", `El coste ha cambiado: ahora son ${esperado} caracteres. Vuelve a revisarlo antes de confirmar.`, [
       { ruta: "caracteresConfirmados", codigo: "coste_cambiado" },
+    ]);
+  }
+}
+
+/** La confirmación ata también el contenido: si cambió algo con el mismo total de caracteres, no se llama. */
+function exigirPlan(esperado: string, confirmado: unknown): void {
+  if (typeof confirmado !== "string" || confirmado !== esperado) {
+    throw new ErrorAlmacen("coste_cambiado", "El contenido a generar ha cambiado desde que lo revisaste. Vuelve a revisarlo antes de confirmar.", [
+      { ruta: "planConfirmado", codigo: "plan_cambiado" },
     ]);
   }
 }
@@ -163,6 +254,19 @@ function requerirFfmpegVoz(cfg: Config): Herramientas {
   return h;
 }
 
+/** Fallo de validación después de que ElevenLabs cobrara: lleva los caracteres facturados. */
+class ErrorTrasCobro extends ErrorVideo {
+  constructor(
+    mensaje: string,
+    public facturados: number,
+  ) {
+    super(mensaje);
+  }
+}
+
+const facturadosDe = (e: unknown): number | undefined =>
+  e instanceof ErrorTrasCobro || e instanceof ErrorElevenLabs ? e.facturados : undefined;
+
 /** Sintetiza un texto y lo valida entero (D7, I15) antes de que nada llegue a disco. */
 async function sintetizarValidado(
   cfg: Config,
@@ -174,11 +278,21 @@ async function sintetizarValidado(
   fetchImpl?: typeof fetch,
 ): Promise<{ audio: Buffer; duracion: number; facturados: number; requestId?: string; palabras: ResultadoAlineacion; crudo: unknown }> {
   const tts = await sintetizarConTimestamps({ texto, apiKey: cfg.elevenApiKey!, voiceId, modelId: cfg.elevenModelId, fetchImpl });
-  const temporal = path.join(dir, `${hash}.tmp-${process.pid}.mp3`);
+  const facturados = tts.caracteresFacturados ?? texto.length;
+  // Desde aquí la frase ya está cobrada: cualquier rechazo lleva `facturados`.
+  const temporal = path.join(dir, `${hash}.tmp-${process.pid}-${randomBytes(6).toString("hex")}.mp3`);
+  let creado = false;
   try {
-    fs.writeFileSync(temporal, tts.audio);
+    if (!cabeceraMp3Valida(tts.audio)) throw new ErrorVideo("El audio que devolvió ElevenLabs no empieza por una cabecera MP3 válida; no guardo nada.");
+    const fd = fs.openSync(temporal, "wx");
+    creado = true;
+    try {
+      fs.writeFileSync(fd, tts.audio);
+    } finally {
+      fs.closeSync(fd);
+    }
     const info = await sondear(h.ffprobe, temporal).catch((e: Error) => {
-      throw new ErrorVideo(`El audio que devolvió ElevenLabs no es un MP3 válido; no guardo nada (${e.message.slice(0, 200)}).`);
+      throw new ErrorVideo(`El audio que devolvió ElevenLabs no es un MP3 válido; no guardo nada (${e.message.slice(0, 200).split(temporal).join(path.basename(temporal))}).`);
     });
     if (!info.tieneAudio || !info.duracion || !(info.duracion > 0)) {
       throw new ErrorVideo("El audio que devolvió ElevenLabs no tiene pista de audio o no tiene duración; no guardo nada.");
@@ -190,9 +304,14 @@ async function sintetizarValidado(
     const palabras = validarPalabras(
       procesarAlineacion({ narracion: texto, bloques: [{ n: 1, inicio: 0, fin: texto.length }], alineacion: tts.alineacion, duracionAudio: info.duracion, hashNarracion: hash }),
     );
-    return { audio: tts.audio, duracion: info.duracion, facturados: tts.caracteresFacturados ?? texto.length, requestId: tts.requestId, palabras, crudo: tts.crudo };
+    return { audio: tts.audio, duracion: info.duracion, facturados, requestId: tts.requestId, palabras, crudo: tts.crudo };
+  } catch (e) {
+    if (e instanceof ErrorTrasCobro) throw e;
+    const msg = e instanceof ErrorVideo || e instanceof ErrorAlmacen ? e.message : "No se pudo validar la voz de la frase.";
+    if (!(e instanceof ErrorVideo || e instanceof ErrorAlmacen)) log.error(`sintetizarValidado: ${(e as Error).message}`);
+    throw new ErrorTrasCobro(msg, facturados);
   } finally {
-    fs.rmSync(temporal, { force: true });
+    if (creado) fs.rmSync(temporal, { force: true });
   }
 }
 
@@ -200,7 +319,8 @@ export interface ResultadoGenerar {
   /** Llamadas hechas con éxito (una por texto distinto). */
   generadas: number;
   caracteresFacturados: number;
-  fallo?: { fraseId: string; mensaje: string };
+  /** `facturada`: ElevenLabs cobró la frase y no se pudo usar; reintentarla se cobra otra vez. */
+  fallo?: { fraseId: string; mensaje: string; facturada: boolean };
 }
 
 /**
@@ -209,12 +329,21 @@ export interface ResultadoGenerar {
  */
 export async function vozGenerar(
   cfg: Config,
-  a: { id: string; frases?: string[]; caracteresConfirmados: number },
+  a: { id: string; frases?: string[]; caracteresConfirmados: number; planConfirmado: string; reintentarFacturadas?: boolean },
   fetchImpl?: typeof fetch,
 ): Promise<ResultadoGenerar> {
   const ctx = contexto(cfg, a.id);
   const plan = planear(ctx, a.frases);
   exigirCoste(plan.caracteres, a.caracteresConfirmados);
+  exigirPlan(plan.plan, a.planConfirmado);
+  if (plan.fallidas.length && a.reintentarFacturadas !== true) {
+    const cuanto = plan.fallidas.reduce((s, f) => s + f.texto.length, 0);
+    throw new ErrorAlmacen(
+      "reintento_facturado",
+      `${plan.fallidas.length} frase(s) ya se cobraron y no se pudieron usar; generarlas otra vez cobra ${cuanto} caracteres más. Confírmalo de forma expresa para reintentar.`,
+      plan.fallidas.map((f) => ({ ruta: f.fraseId, codigo: "reintento_facturado" })),
+    );
+  }
   if (!plan.unicas.length) return { generadas: 0, caracteresFacturados: 0 };
   requerirClave(cfg);
   const h = requerirFfmpegVoz(cfg);
@@ -224,19 +353,27 @@ export async function vozGenerar(
   let caracteresFacturados = 0;
   try {
     for (const u of plan.unicas) {
+      let cobrado: number | undefined;
       try {
         const r = await sintetizarValidado(cfg, h, ctx.dir, u.hash, u.texto, ctx.voiceId, fetchImpl);
+        cobrado = r.facturados;
         escribirAtomico(path.join(ctx.dir, `${u.hash}.mp3`), r.audio);
         escribirAtomico(
           path.join(ctx.dir, `${u.hash}.json`),
           JSON.stringify({ version: 1, hash: u.hash, generado: new Date().toISOString(), modelo: ctx.modelo, requestId: r.requestId, texto: u.texto, duracion: r.duracion, caracteresFacturados: r.facturados, crudo: r.crudo, palabras: r.palabras }),
         );
+        fs.rmSync(path.join(ctx.dir, `${u.hash}.fallo`), { force: true });
         generadas++;
         caracteresFacturados += r.facturados;
       } catch (e) {
+        const cobradoAqui = facturadosDe(e) ?? cobrado;
+        if (cobradoAqui !== undefined) {
+          caracteresFacturados += cobradoAqui;
+          anotarFallo(ctx.dir, u.hash, cobradoAqui);
+        }
         const crudo = e instanceof ErrorElevenLabs || e instanceof ErrorVideo ? (e as Error).message : "No se pudo guardar la voz de la frase.";
         if (!(e instanceof ErrorElevenLabs || e instanceof ErrorVideo)) log.error(`vozGenerar ${ctx.proyecto.id}: ${(e as Error).message}`);
-        return { generadas, caracteresFacturados, fallo: { fraseId: u.fraseId, mensaje: ocultarClave(crudo, cfg.elevenApiKey) } };
+        return { generadas, caracteresFacturados, fallo: { fraseId: u.fraseId, mensaje: ocultarClave(crudo, cfg.elevenApiKey), facturada: cobradoAqui !== undefined } };
       }
     }
     return { generadas, caracteresFacturados };
@@ -427,51 +564,85 @@ const limpiar = (v: unknown, max: number): string =>
  * Voces de la cuenta. Solo ids, nombre e idioma: `preview_url` se descarta y nunca se pide (I14); para escuchar una
  * voz está `vozMuestra`, que la genera con la propia clave.
  */
-export async function voces(cfg: Config, fetchImpl?: typeof fetch): Promise<{ voces: { id: string; nombre: string; idioma: string }[] }> {
+export async function voces(cfg: Config, fetchImpl?: typeof fetch): Promise<{ voces: { id: string; nombre: string; idioma: string; planMuestra: string }[] }> {
   const crudo = (await listarVocesElevenLabs({ apiKey: requerirClave(cfg), fetchImpl })) as { voices?: unknown };
   const lista = Array.isArray(crudo?.voices) ? crudo.voices.slice(0, MAX_VOCES) : [];
-  const salida: { id: string; nombre: string; idioma: string }[] = [];
+  const salida: { id: string; nombre: string; idioma: string; planMuestra: string }[] = [];
   for (const v of lista as { voice_id?: unknown; name?: unknown; labels?: { language?: unknown } | null }[]) {
     if (typeof v?.voice_id !== "string" || !VOICE_ID_RE.test(v.voice_id)) continue;
-    salida.push({ id: v.voice_id, nombre: limpiar(v.name, 80) || v.voice_id, idioma: limpiar(v.labels?.language, 20) });
+    salida.push({ id: v.voice_id, nombre: limpiar(v.name, 80) || v.voice_id, idioma: limpiar(v.labels?.language, 20), planMuestra: planMuestra(cfg.elevenModelId, v.voice_id) });
   }
   return { voces: salida };
 }
 
-function carpetaMuestras(cfg: Config): string {
-  return path.join(path.dirname(path.resolve(cfg.videoRoot)), "video", "muestras");
+/**
+ * Carpeta de las muestras: `muestras/` junto a `VIDEO_ROOT` (hermana, no dentro: no es un proyecto). En el producto
+ * integrado `VIDEO_ROOT` es `<estado>/video/proyectos`, así que son `<estado>/video/muestras`; en desarrollo,
+ * `~/Videos/muestras`. Se comprueba (sin enlaces) antes de leer o escribir nada.
+ */
+export function carpetaMuestras(cfg: Config): string {
+  return path.join(path.dirname(path.resolve(cfg.videoRoot)), "muestras");
 }
 
+/** Huella de lo que confirma la persona al escuchar una voz: la voz, el modelo y el texto fijo. */
+export function planMuestra(modelo: string, voiceId: string): string {
+  return createHash("sha256").update(JSON.stringify(["muestra", voiceId, modelo, MUESTRA_TEXTO])).digest("hex");
+}
+
+const muestrasEnCurso = new Set<string>();
+
 /**
- * Muestra de una voz: el texto fijo de 60 caracteres, generado con la clave de la persona y guardado por voz. Siempre
- * se confirman 60 caracteres (lo que muestra la UI); si ya está en caché no se llama ni se factura (`caracteres: 0`).
+ * Muestra de una voz: el texto fijo de 60 caracteres, generado con la clave de la persona y guardado por voz. Se
+ * confirman 60 caracteres y la huella `planMuestra` (la lista de `video_voces` la trae); si ya está en caché no se
+ * llama ni se factura (`caracteres: 0`). Un candado por voz evita cobrar dos veces con dos clics seguidos. Si una
+ * muestra se cobró y no se pudo usar, reintentarla exige `reintentarFacturada: true`.
  */
 export async function vozMuestra(
   cfg: Config,
-  a: { voiceId: string; caracteresConfirmados: number },
+  a: { voiceId: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean },
   fetchImpl?: typeof fetch,
 ): Promise<{ audioBase64: string; caracteres: number; cache: boolean }> {
   if (typeof a.voiceId !== "string" || !VOICE_ID_RE.test(a.voiceId)) throw esquema("El identificador de la voz no es válido.", "voice_id_invalido", "voiceId");
   exigirCoste(MUESTRA_CARACTERES, a.caracteresConfirmados);
+  exigirPlan(planMuestra(cfg.elevenModelId, a.voiceId), a.planConfirmado);
   const dir = carpetaMuestras(cfg);
   const hash = hashFrase(a.voiceId, cfg.elevenModelId, MUESTRA_TEXTO);
   const ruta = path.join(dir, `${hash}.mp3`);
-  if (ficheroNormal(ruta, MAX_AUDIO_TTS)) return { audioBase64: fs.readFileSync(ruta).toString("base64"), caracteres: 0, cache: true };
-  requerirClave(cfg);
-  const h = requerirFfmpegVoz(cfg);
-  fs.mkdirSync(dir, { recursive: true });
   try {
+    fs.mkdirSync(dir, { recursive: true });
     comprobarCarpeta(dir);
   } catch (e) {
     if (e instanceof ErrorVideo) throw esquema(e.message, "enlace_no_permitido");
     throw e;
   }
+  if (ficheroNormal(ruta, MAX_AUDIO_TTS)) {
+    const guardado = fs.readFileSync(ruta);
+    if (cabeceraMp3Valida(guardado)) return { audioBase64: guardado.toString("base64"), caracteres: 0, cache: true };
+  }
+  requerirClave(cfg);
+  const h = requerirFfmpegVoz(cfg);
+  if (leerMarca(dir, hash) && a.reintentarFacturada !== true) {
+    throw new ErrorAlmacen("reintento_facturado", `La muestra de esta voz ya se cobró (${MUESTRA_CARACTERES} caracteres) y no se pudo usar; reintentarla la cobra otra vez. Confírmalo de forma expresa.`, [
+      { ruta: "voiceId", codigo: "reintento_facturado" },
+    ]);
+  }
+  if (muestrasEnCurso.has(hash)) throw new ErrorAlmacen("conflicto", "Ya se está generando la muestra de esta voz.");
+  muestrasEnCurso.add(hash);
   try {
     const r = await sintetizarValidado(cfg, h, dir, hash, MUESTRA_TEXTO, a.voiceId, fetchImpl);
     escribirAtomico(ruta, r.audio);
+    fs.rmSync(path.join(dir, `${hash}.fallo`), { force: true });
     return { audioBase64: r.audio.toString("base64"), caracteres: MUESTRA_CARACTERES, cache: false };
   } catch (e) {
-    if (e instanceof ErrorElevenLabs || e instanceof ErrorVideo) throw new ErrorVideo(ocultarClave(e.message, cfg.elevenApiKey));
+    const cobrado = facturadosDe(e);
+    if (cobrado !== undefined) anotarFallo(dir, hash, cobrado);
+    if (e instanceof ErrorElevenLabs || e instanceof ErrorVideo) {
+      const msg = ocultarClave(e.message, cfg.elevenApiKey);
+      if (cobrado !== undefined) throw new ErrorAlmacen("fallo_facturado", `${msg} ElevenLabs ya cobró ${cobrado} caracteres de esta muestra.`);
+      throw new ErrorVideo(msg);
+    }
     throw e;
+  } finally {
+    muestrasEnCurso.delete(hash);
   }
 }

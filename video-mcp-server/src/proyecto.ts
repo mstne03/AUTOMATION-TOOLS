@@ -29,7 +29,7 @@ import {
   borrarArbol,
 } from "./paths.js";
 
-export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_configurar";
+export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_configurar" | "reintento_facturado" | "fallo_facturado";
 export interface Problema {
   ruta: string;
   codigo: string;
