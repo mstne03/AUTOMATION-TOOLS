@@ -499,7 +499,8 @@ Hasta que U2 las rellene, ambas pantallas están vacías.
 `guion-video-escenas`, `guion-video-escena` (`li`), `guion-video-frase`, `guion-video-tipo`,
 `guion-video-subir`, `guion-video-bajar`, `guion-video-recurso`, `guion-video-avisos`,
 `guion-video-errores` (`role=alert`), `guion-video-guardar`, `guion-video-crear`,
-`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-borrar-<id>`.
+`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-borrar-<id>` (abre un diálogo de confirmación «Borrar»/«Cancelar»; si el borrado falla
+se muestra un `role=alert`).
 
 ### Editor (`/video/:id`)
 

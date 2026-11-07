@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "../api/client";
 import { ClientContext } from "../api/context";
 import { Escribir } from "../guiones/Escribir";
-import { GuionVideo } from "../guiones/GuionVideo";
-import { parcharEscribir, recibirRespuesta, reiniciarGuiones } from "../state/guiones";
+import { GuionVideo, GuionesGuardados } from "../guiones/GuionVideo";
+import { crearVideo, parcharEscribir, recibirRespuesta, reiniciarGuiones, useGuiones } from "../state/guiones";
 
 const HOSTIL = "<img src=x onerror=alert(1)>";
 const GUION = {
@@ -98,6 +98,94 @@ describe("GuionVideo", () => {
     await screen.findByTestId("guion-video-errores");
     expect(c.videoProyectoCrear).not.toHaveBeenCalled();
     expect(screen.queryByTestId("destino")).toBeNull();
+  });
+});
+
+describe("carrera entre editar y guardar", () => {
+  afterEach(() => {
+    cleanup();
+    reiniciarGuiones();
+  });
+
+  function diferido() {
+    let resolver!: (v: { id: string; avisos: never[] }) => void;
+    const p = new Promise<{ id: string; avisos: never[] }>((r) => (resolver = r));
+    return { p, resolver };
+  }
+
+  it("editar mientras se guarda no marca el guion como guardado", async () => {
+    const d = diferido();
+    const c = montar({ videoGuionCrear: vi.fn(() => d.p) } as Partial<Client>);
+    fireEvent.click(screen.getByTestId("guion-video-guardar"));
+    fireEvent.change(screen.getAllByTestId("guion-video-frase")[1], { target: { value: "Editada." } });
+    d.resolver({ id: "g1", avisos: [] });
+    await waitFor(() => expect((screen.getByTestId("guion-video-guardar") as HTMLButtonElement).disabled).toBe(false));
+    expect(useGuiones.getState().escribir.videoGuardadoId).toBeNull();
+    expect(screen.getByTestId("guion-video-guardar").textContent).toBe("Guardar guion");
+    expect(c.videoProyectoCrear).not.toHaveBeenCalled();
+  });
+
+  it("editar mientras se crea el vídeo aborta la creación", async () => {
+    const d = diferido();
+    const c = montar({ videoGuionCrear: vi.fn(() => d.p) } as Partial<Client>);
+    const crear = crearVideo(c);
+    fireEvent.change(screen.getAllByTestId("guion-video-frase")[1], { target: { value: "Editada." } });
+    d.resolver({ id: "g1", avisos: [] });
+    expect(await crear).toBeNull();
+    expect(c.videoProyectoCrear).not.toHaveBeenCalled();
+    expect(useGuiones.getState().escribir.videoGuardadoId).toBeNull();
+  });
+});
+
+describe("GuionesGuardados", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const montarGuardados = (borrar: () => Promise<unknown>) => {
+    const client = {
+      videoGuiones: vi.fn(async () => [{ id: "g1", titulo: HOSTIL }]),
+      videoGuionBorrar: vi.fn(borrar),
+    } as unknown as Client;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ClientContext.Provider value={client}>
+          <GuionesGuardados />
+        </ClientContext.Provider>
+      </QueryClientProvider>,
+    );
+    return client;
+  };
+
+  it("borrar_guion_pide_confirmacion: cancelar no borra", async () => {
+    const c = montarGuardados(async () => undefined);
+    fireEvent.click(await screen.findByTestId("guion-guardado-borrar-g1"));
+    const dlg = await screen.findByRole("dialog");
+    expect(dlg.textContent).toContain(HOSTIL);
+    expect(c.videoGuionBorrar).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(c.videoGuionBorrar).not.toHaveBeenCalled();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("confirmar borra el guion", async () => {
+    const c = montarGuardados(async () => undefined);
+    fireEvent.click(await screen.findByTestId("guion-guardado-borrar-g1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar" }));
+    await waitFor(() => expect(c.videoGuionBorrar).toHaveBeenCalledWith("g1"));
+  });
+
+  it("un fallo del borrado se muestra como texto con role=alert", async () => {
+    montarGuardados(async () => {
+      throw new ApiError(409, JSON.stringify({ problemas: [{ mensaje: HOSTIL }] }));
+    });
+    fireEvent.click(await screen.findByTestId("guion-guardado-borrar-g1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar" }));
+    const a = await screen.findByRole("alert");
+    expect(a.textContent).toContain(HOSTIL);
+    expect(document.querySelector("img")).toBeNull();
   });
 });
 

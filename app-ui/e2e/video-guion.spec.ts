@@ -91,6 +91,11 @@ test.describe("Guiones en modo Vídeo", () => {
     await expect(page.getByTestId("guiones-guardados")).toBeVisible();
     await expect(fila).toContainText("Tortilla perfecta");
     await page.getByTestId(`guion-guardado-borrar-${guardados[0].id}`).click();
+    await page.getByRole("button", { name: "Cancelar" }).click();
+    await expect(fila).toHaveCount(1);
+    expect(await api<GuionVideoResumen[]>("/video/guiones")).toHaveLength(1);
+    await page.getByTestId(`guion-guardado-borrar-${guardados[0].id}`).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Borrar" }).click();
     await expect(fila).toHaveCount(0);
     expect(await api<GuionVideoResumen[]>("/video/guiones")).toHaveLength(0);
   });

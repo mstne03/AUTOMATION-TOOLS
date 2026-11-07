@@ -167,6 +167,11 @@ export async function guardarGuionVideo(client: Client): Promise<string | null> 
   parcharEscribir({ videoOcupado: true, videoErrores: [] });
   try {
     const r = await client.videoGuionCrear(guionVideo.aCuerpo());
+    // Si se editó mientras viajaba la petición, lo guardado ya no es lo que se ve: no se marca como guardado.
+    if (useGuiones.getState().escribir.guionVideo !== guionVideo) {
+      parcharEscribir({ videoErrores: ["El guion cambió mientras se guardaba. Vuelve a guardarlo."] });
+      return null;
+    }
     parcharEscribir({ videoGuardadoId: r.id, videoAvisos: r.avisos });
     return r.id;
   } catch (e) {

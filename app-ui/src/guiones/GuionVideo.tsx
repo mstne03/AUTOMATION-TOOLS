@@ -3,12 +3,15 @@
  *  se pinta como texto (nunca HTML) y nada se envía sin un clic del usuario. La UI no valida por el
  *  motor: `POST /video/guiones` decide y sus errores se muestran tal cual (T9). */
 import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { ArrowDown, ArrowUp, Clapperboard, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router";
+import { ApiError } from "../api/client";
 import { useClient } from "../api/context";
 import { useGuionesVideo } from "../api/queries";
 import { crearVideo, editarCabeceraVideo, editarEscenaVideo, empezarDeNuevo, guardarGuionVideo, moverEscenaVideo, useGuiones } from "../state/guiones";
-import { Button, Chip, Field, IconButton, Input, Select, Textarea } from "../ui";
+import { Button, Chip, ConfirmDialog, Field, IconButton, Input, Select, Textarea } from "../ui";
+import { erroresServidor } from "./modelo";
 import s from "./Guiones.module.css";
 
 const TIPOS: { value: string; label: string }[] = [
@@ -125,10 +128,16 @@ export function GuionesGuardados() {
   const client = useClient();
   const qc = useQueryClient();
   const lista = useGuionesVideo();
+  const [aBorrar, setABorrar] = useState<{ id: string; titulo: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   if (!lista.data?.length) return null;
   const borrar = async (id: string) => {
+    setError(null);
     try {
       await client.videoGuionBorrar(id);
+    } catch (e) {
+      const lineas = e instanceof ApiError ? erroresServidor(e.detail) : [e instanceof Error ? e.message : "Error desconocido."];
+      setError(`No se pudo borrar el guion: ${lineas[0] ?? "error desconocido"}`);
     } finally {
       void qc.invalidateQueries({ queryKey: ["video", "guiones"] });
     }
@@ -142,10 +151,26 @@ export function GuionesGuardados() {
         {lista.data.map((gu) => (
           <li key={gu.id} className={s.guardado} data-testid={`guion-guardado-${gu.id}`}>
             <span className={s.guardadoTitulo}>{gu.titulo}</span>
-            <IconButton size="sm" icon={Trash2} aria-label={`Borrar el guion ${gu.titulo}`} data-testid={`guion-guardado-borrar-${gu.id}`} onClick={() => void borrar(gu.id)} />
+            <IconButton size="sm" icon={Trash2} aria-label={`Borrar el guion ${gu.titulo}`} data-testid={`guion-guardado-borrar-${gu.id}`} onClick={() => setABorrar({ id: gu.id, titulo: gu.titulo })} />
           </li>
         ))}
       </ul>
+      {error && (
+        <p className={s.aviso} role="alert">
+          {error}
+        </p>
+      )}
+      <ConfirmDialog
+        open={aBorrar !== null}
+        onOpenChange={(a) => !a && setABorrar(null)}
+        title="¿Borrar este guion?"
+        description={aBorrar?.titulo}
+        confirmLabel="Borrar"
+        tone="danger"
+        onConfirm={() => {
+          if (aBorrar) return borrar(aBorrar.id);
+        }}
+      />
     </section>
   );
 }
