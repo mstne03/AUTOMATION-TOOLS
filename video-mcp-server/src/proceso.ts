@@ -21,6 +21,8 @@ export interface Resultado {
   stderr: string;
   /** true si el proceso se mató (con todo su árbol) por superar `timeoutMs`; entonces `code` es null. */
   timeout?: boolean;
+  /** Solo con `salidaBinaria`: la salida estándar tal cual, sin pasar por UTF-8. */
+  salida?: Buffer;
 }
 
 // ---------- Entorno de los hijos (I5) y modo cerrado de HyperFrames (I13) ----------
@@ -427,6 +429,8 @@ export type OpcionesEjecutar = Omit<SpawnOptions, "env" | "shell" | "stdio" | "d
   onLinea?: (linea: string) => void;
   /** Obligatorio (I7): sin plazo, un nieto que retiene las tuberías bloquea la llamada para siempre. */
   timeoutMs: number;
+  /** Guarda la salida estándar como bytes en `Resultado.salida` (p. ej. un WAV por tubería), hasta este tope; `stdout` queda vacío. */
+  salidaBinaria?: { maxBytes: number };
 };
 
 const plazoValido = (t: unknown): t is number => typeof t === "number" && Number.isFinite(t) && t > 0;
@@ -480,7 +484,7 @@ async function lanzar(comando: string, args: string[], opciones: OpcionesEjecuta
 }
 
 function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
-  const { onLinea, timeoutMs, ...spawnOpts } = opciones;
+  const { onLinea, timeoutMs, salidaBinaria, ...spawnOpts } = opciones;
   return new Promise((resolve, reject) => {
     // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
     const hijo = spawn(comando, args, {
@@ -503,6 +507,9 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
     let stdout = "";
     let stderr = "";
     let resto = "";
+    const trozos: Buffer[] = [];
+    let bytes = 0;
+    let truncada = false;
     const trocear = (texto: string) => {
       if (!onLinea) return;
       const partes = (resto + texto).split(/\r?\n|\r/);
@@ -510,6 +517,15 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       for (const p of partes) if (p.trim()) onLinea(p);
     };
     hijo.stdout?.on("data", (d: Buffer) => {
+      if (salidaBinaria) {
+        // Sin decodificar como texto: un WAV no sobrevive a UTF-8. Pasado el tope se sigue leyendo, para no bloquear al hijo, y se descarta.
+        if (bytes + d.length > salidaBinaria.maxBytes) truncada = true;
+        else {
+          trozos.push(d);
+          bytes += d.length;
+        }
+        return;
+      }
       const t = d.toString("utf8");
       stdout += t;
       trocear(t);
@@ -547,7 +563,8 @@ function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar):
       if (terminado) return;
       terminado = true;
       if (onLinea && resto.trim()) onLinea(resto);
-      resolve({ code, stdout, stderr });
+      // Una salida que pasó del tope no se entrega a medias: el llamador la ve como fallo.
+      resolve({ code: truncada ? (code === 0 ? 1 : code) : code, stdout, stderr: truncada ? `${stderr}\nLa salida pasa de ${salidaBinaria?.maxBytes} bytes.` : stderr, ...(salidaBinaria ? { salida: Buffer.concat(trozos) } : {}) });
     });
   });
 }
@@ -946,6 +963,8 @@ const DEMUXERS: Readonly<Record<string, string>> = {
   ".jpeg": "jpeg_pipe",
   ".webp": "webp_pipe",
   ".mp3": "mp3",
+  // Lista de concatenación que escribe el propio motor (T5): solo nombres hash; ver `argsEntrada(…, internos)`.
+  ".ffconcat": "concat",
   ".wav": "wav",
   ".flac": "flac",
   ".ogg": "ogg",
@@ -961,11 +980,12 @@ const DEMUXERS: Readonly<Record<string, string>> = {
  * por la extensión y sin sondear otro. Fallo cerrado: una ruta UNC es DNS y SMB (captura de NTLM), otro esquema abre
  * un protocolo, y un nombre sin extensión conocida no se abre. No sustituye a la normalización al importar (I15).
  */
-export function argsEntrada(archivo: string, demuxer = DEMUXERS[path.extname(archivo).toLowerCase()]): string[] {
+export function argsEntrada(archivo: string, demuxer = DEMUXERS[path.extname(archivo).toLowerCase()], internos: readonly string[] = []): string[] {
   const unc = /^[\\/]{2}/.test(archivo) || path.win32.resolve(archivo).startsWith("\\\\");
   if (unc || /^[a-z][a-z0-9+.-]+:/i.test(archivo)) throw new Error(`El motor solo abre medios por ruta local: ${path.basename(archivo)}.`);
   if (!demuxer) throw new Error(`El motor no admite este formato de medio: ${path.basename(archivo)}.`);
-  return ["-protocol_whitelist", "file", "-format_whitelist", demuxer, "-f", demuxer];
+  // `internos`: formatos que el demuxer abre por dentro (el de `concat` abre los mp3 de su lista); nunca los elige quien llama con texto ajeno.
+  return ["-protocol_whitelist", "file", "-format_whitelist", [demuxer, ...internos].join(","), "-f", demuxer];
 }
 
 /**
