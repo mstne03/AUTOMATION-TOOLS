@@ -96,8 +96,16 @@ function ficheroNormal(ruta: string, tope: number): boolean {
  */
 export function cabeceraMp3Valida(b: Buffer): boolean {
   if (b.length < 4) return false;
-  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return true; // "ID3"
-  return b[0] === 0xff && (b[1] & 0xe0) === 0xe0;
+  // Una lista de concatenación escondida tras un tag ID3 vacío se abriría como `concat` dentro del ensamblado.
+  if (b.toString("latin1").toLowerCase().includes("ffconcat")) return false;
+  let ini = 0;
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) {
+    // Tag ID3v2: 10 bytes de cabecera + tamaño synchsafe (4 x 7 bits) + pie opcional. Tras él tiene que venir una trama.
+    if (b.length < 14 || ((b[6] | b[7] | b[8] | b[9]) & 0x80) !== 0) return false;
+    const tam = (b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9];
+    ini = 10 + tam + (b[5] & 0x10 ? 10 : 0);
+  }
+  return ini + 1 < b.length && b[ini] === 0xff && (b[ini + 1] & 0xe0) === 0xe0;
 }
 
 // ---------- Fallos ya cobrados ----------
@@ -113,6 +121,42 @@ interface MarcaFallo {
  * igual (falla cerrado). Se borra cuando la frase se guarda.
  */
 function leerMarca(dir: string, hash: string): MarcaFallo | null {
+  const fallo = leerFallo(dir, hash);
+  // Marca de vuelo huérfana: el motor cayó entre la llamada a ElevenLabs y el registro del resultado; pudo cobrarse.
+  let vuelo = false;
+  if (!propiasEnVuelo.has(path.join(dir, hash))) {
+    try {
+      fs.lstatSync(rutaVuelo(dir, hash));
+      vuelo = true;
+    } catch {
+      /* sin marca */
+    }
+  }
+  if (!vuelo) return fallo;
+  return { intentos: (fallo?.intentos ?? 0) + 1, caracteres: fallo?.caracteres ?? 0 };
+}
+
+/** Llamadas en vuelo de ESTE proceso: su marca no es huérfana (otra petición concurrente recibe «conflicto», no «refacturada»). */
+const propiasEnVuelo = new Set<string>();
+
+const rutaVuelo = (dir: string, hash: string): string => path.join(dir, `${hash}.vuelo`);
+
+/** Se escribe antes de llamar a ElevenLabs; si falla, no se llama. */
+function marcarVuelo(dir: string, hash: string): void {
+  escribirAtomico(rutaVuelo(dir, hash), JSON.stringify({ version: 1, hash, inicio: new Date().toISOString() }));
+  propiasEnVuelo.add(path.join(dir, hash));
+}
+
+function quitarVuelo(dir: string, hash: string): void {
+  propiasEnVuelo.delete(path.join(dir, hash));
+  try {
+    fs.rmSync(rutaVuelo(dir, hash), { force: true });
+  } catch (e) {
+    log.error(`no se pudo borrar la marca de vuelo de ${hash}: ${(e as Error).message}`);
+  }
+}
+
+function leerFallo(dir: string, hash: string): MarcaFallo | null {
   const ruta = path.join(dir, `${hash}.fallo`);
   try {
     fs.lstatSync(ruta);
@@ -132,7 +176,7 @@ function leerMarca(dir: string, hash: string): MarcaFallo | null {
 }
 
 function anotarFallo(dir: string, hash: string, caracteres: number): void {
-  const previa = leerMarca(dir, hash);
+  const previa = leerFallo(dir, hash);
   const marca = { version: 1, hash, intentos: (previa?.intentos ?? 0) + 1, caracteres: (previa?.caracteres ?? 0) + caracteres };
   try {
     fs.rmSync(path.join(dir, `${hash}.fallo`), { force: true });
@@ -355,6 +399,7 @@ export async function vozGenerar(
     for (const u of plan.unicas) {
       let cobrado: number | undefined;
       try {
+        marcarVuelo(ctx.dir, u.hash);
         const r = await sintetizarValidado(cfg, h, ctx.dir, u.hash, u.texto, ctx.voiceId, fetchImpl);
         cobrado = r.facturados;
         escribirAtomico(path.join(ctx.dir, `${u.hash}.mp3`), r.audio);
@@ -363,6 +408,7 @@ export async function vozGenerar(
           JSON.stringify({ version: 1, hash: u.hash, generado: new Date().toISOString(), modelo: ctx.modelo, requestId: r.requestId, texto: u.texto, duracion: r.duracion, caracteresFacturados: r.facturados, crudo: r.crudo, palabras: r.palabras }),
         );
         fs.rmSync(path.join(ctx.dir, `${u.hash}.fallo`), { force: true });
+        quitarVuelo(ctx.dir, u.hash);
         generadas++;
         caracteresFacturados += r.facturados;
       } catch (e) {
@@ -371,6 +417,7 @@ export async function vozGenerar(
           caracteresFacturados += cobradoAqui;
           anotarFallo(ctx.dir, u.hash, cobradoAqui);
         }
+        quitarVuelo(ctx.dir, u.hash); // la respuesta llegó (con o sin cobro anotado): ya no hay duda
         const crudo = e instanceof ErrorElevenLabs || e instanceof ErrorVideo ? (e as Error).message : "No se pudo guardar la voz de la frase.";
         if (!(e instanceof ErrorElevenLabs || e instanceof ErrorVideo)) log.error(`vozGenerar ${ctx.proyecto.id}: ${(e as Error).message}`);
         return { generadas, caracteresFacturados, fallo: { fraseId: u.fraseId, mensaje: ocultarClave(crudo, cfg.elevenApiKey), facturada: cobradoAqui !== undefined } };
@@ -413,7 +460,7 @@ function pendienteDeVoz(ids: string[]): ErrorAlmacen {
 /**
  * Une las frases en `voz/ensamblada-<hash>.wav` con el demuxer `concat` y `inpoint`/`outpoint` por recorte. La lista la
  * escribe el motor solo con nombres hash y rutas relativas; el texto del guion no entra nunca. Se abre con
- * `-protocol_whitelist file` y `-format_whitelist concat,mp3`. El nombre depende del contenido de la lista: mismo
+ * `-protocol_whitelist file`, `-safe 1` y `-format_whitelist concat,mp3` (sin `ffconcat`: una frase no puede abrirse como lista). El nombre depende del contenido de la lista: mismo
  * ensamblado, mismo fichero.
  */
 export async function ensamblarVoz(cfg: Config, id: string): Promise<string> {
@@ -445,7 +492,7 @@ export async function ensamblarVoz(cfg: Config, id: string): Promise<string> {
   try {
     const r = await ejecutar(
       ff.ffmpeg,
-      ["-y", "-v", "error", ...argsEntrada(lista, undefined, ["mp3"]), "-i", lista, "-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-f", "wav", temporal],
+      ["-y", "-v", "error", ...argsEntrada(lista, "concat", ["mp3"]), "-safe", "1", "-i", lista, "-vn", "-c:a", "pcm_s16le", "-ar", "44100", "-f", "wav", temporal],
       { timeoutMs: 120_000 },
     );
     if (r.code !== 0) throw new ErrorVideo(`ffmpeg no pudo unir la voz: ${r.stderr.trim().slice(0, 300)}`);
@@ -629,13 +676,16 @@ export async function vozMuestra(
   if (muestrasEnCurso.has(hash)) throw new ErrorAlmacen("conflicto", "Ya se está generando la muestra de esta voz.");
   muestrasEnCurso.add(hash);
   try {
+    marcarVuelo(dir, hash);
     const r = await sintetizarValidado(cfg, h, dir, hash, MUESTRA_TEXTO, a.voiceId, fetchImpl);
     escribirAtomico(ruta, r.audio);
     fs.rmSync(path.join(dir, `${hash}.fallo`), { force: true });
+    quitarVuelo(dir, hash);
     return { audioBase64: r.audio.toString("base64"), caracteres: MUESTRA_CARACTERES, cache: false };
   } catch (e) {
     const cobrado = facturadosDe(e);
     if (cobrado !== undefined) anotarFallo(dir, hash, cobrado);
+    quitarVuelo(dir, hash);
     if (e instanceof ErrorElevenLabs || e instanceof ErrorVideo) {
       const msg = ocultarClave(e.message, cfg.elevenApiKey);
       if (cobrado !== undefined) throw new ErrorAlmacen("fallo_facturado", `${msg} ElevenLabs ya cobró ${cobrado} caracteres de esta muestra.`);

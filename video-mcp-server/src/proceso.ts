@@ -963,8 +963,7 @@ const DEMUXERS: Readonly<Record<string, string>> = {
   ".jpeg": "jpeg_pipe",
   ".webp": "webp_pipe",
   ".mp3": "mp3",
-  // Lista de concatenación que escribe el propio motor (T5): solo nombres hash; ver `argsEntrada(…, internos)`.
-  ".ffconcat": "concat",
+  // La lista de concatenación del motor (T5) NO está aquí: quien la abre pasa `demuxer = "concat"` expreso.
   ".wav": "wav",
   ".flac": "flac",
   ".ogg": "ogg",
