@@ -289,6 +289,8 @@ struct InstanciaUnica(usize);
 
 impl Drop for InstanciaUnica {
     fn drop(&mut self) {
+        // SAFETY: `self.0` es el handle devuelto por CreateMutexW, propio de esta estructura y
+        // cerrado solo aquí.
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
     }
 }
@@ -315,11 +317,17 @@ fn adquirir(nombre: &str) -> Result<InstanciaUnica, String> {
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
     let ancho: Vec<u16> = nombre.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `ancho` es UTF-16 terminado en 0 y vive durante la llamada; sin atributos de seguridad.
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, ancho.as_ptr()) };
     if handle.is_null() {
-        return Err(format!("CreateMutexW: {}", std::io::Error::last_os_error()));
+        // Incluye ACCESS_DENIED (nombre ocupado por otro objeto): no es «ya abierto».
+        return Err(format!(
+            "No se pudo reservar la instancia única: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     // Se lee justo después de la llamada: cualquier otra API pisaría el último error.
+    // SAFETY: sin llamadas intermedias; el handle es válido y se cierra una sola vez.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         unsafe { CloseHandle(handle) };
         return Err("Ya hay otra instancia de SEO Studio abierta.".into());
@@ -338,10 +346,13 @@ fn arrancar_con_instancia_unica(app: &mut tauri::App) -> Result<(), Box<dyn std:
         }
         Err(e) => {
             eprintln!("[tauri] {e}");
-            *app.state::<Sidecar>().failed.lock().unwrap() = Some(e);
+            *app.state::<Sidecar>().failed.lock().unwrap() = Some(e.clone());
             let handle = app.handle().clone();
             app.dialog()
-                .message("SEO Studio ya está abierto. Esta segunda ventana se cerrará.")
+                .message(format!(
+                    "{e}
+Esta ventana se cerrará."
+                ))
                 .title("SEO Studio")
                 .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
                 .show(move |_| handle.exit(0));

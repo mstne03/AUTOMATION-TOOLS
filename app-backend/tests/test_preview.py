@@ -228,7 +228,11 @@ LOOPBACK = "http://127.0.0.1:"
 def _directivas(clave: str) -> dict[str, list[str]]:
     conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
     csp = conf["app"]["security"][clave]
-    return {d.split()[0]: d.split()[1:] for d in (x.strip() for x in csp.split(";")) if d}
+    partes = [d.split() for d in (x.strip() for x in csp.split(";")) if d]
+    nombres = [d[0] for d in partes]
+    # Chromium aplica la PRIMERA directiva repetida: un duplicado podría esconder un comodín.
+    assert len(nombres) == len(set(nombres)), f"{clave}: directivas repetidas: {nombres}"
+    return {d[0]: d[1:] for d in partes}
 
 
 @pytest.mark.parametrize("clave", ["csp", "devCsp"])
@@ -254,8 +258,8 @@ def test_connect_src_y_frame_src_solo_loopback(clave):
         assert f in permitido_connect or f.startswith(LOOPBACK), f"{clave}: connect-src admite {f}"
     assert "*" not in d["connect-src"] and "http:" not in d["connect-src"]
     assert not any(f.startswith(("*", "http:", "https:", "data:", "blob:")) and not f.startswith(LOOPBACK) for f in d["frame-src"])
-    # Sin frame-src heredado de default-src: ni un host ajeno ni un comodín.
-    assert not any("*" == x for x in d.get("default-src", []))
+    # default-src no abre nada más que el propio origen (y el servidor de Vite en desarrollo).
+    assert set(d["default-src"]) <= {"'self'", "http://localhost:1420"}
 
 
 def test_capacidades_sin_cambios():
