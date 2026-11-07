@@ -29,7 +29,14 @@ import {
   borrarArbol,
 } from "./paths.js";
 
-export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_configurar" | "reintento_facturado" | "fallo_facturado";
+/**
+ * Códigos de configuración que falta, distintos a propósito para que el anfitrión no tenga que leer el texto:
+ *  - `sin_clave`: no hay clave de ElevenLabs (`requerirClave` en voz.ts).
+ *  - `sin_voz`: el perfil del proyecto no trae una voz válida (`voiceIdDePerfil` en voz.ts) o no se indicó ninguna.
+ * Los emiten solo voz.ts (con `ErrorAlmacen`); tts.ts no emite códigos: sus fallos son `ErrorElevenLabs` y salen como
+ * mensaje o como `fallo_facturado`.
+ */
+export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_clave" | "sin_voz" | "reintento_facturado" | "fallo_facturado";
 export interface Problema {
   ruta: string;
   codigo: string;

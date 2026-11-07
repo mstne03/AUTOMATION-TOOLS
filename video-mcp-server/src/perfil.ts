@@ -6,10 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { CARAS_FUENTE, COLOR_RE, validarTema, type Tema } from "./composicion.js";
-import { PERFIL_ID_RE, textoSeguro, validar } from "./esquema.js";
+import { PERFIL_ID_RE, VOICE_ID_RE, textoSeguro, validar } from "./esquema.js";
 import { ErrorVideo, comprobarCarpeta, escribirAtomico, valorCorto } from "./paths.js";
 import { ErrorAlmacen, esquema, existe, leerJson, validando } from "./proyecto.js";
-import { VOICE_ID_RE } from "./voz.js";
 
 /** Lista cerrada de idiomas del perfil (código ISO 639-1, como los de ElevenLabs). */
 export const IDIOMAS = ["es", "en", "ca", "fr", "de", "it", "pt"] as const;
@@ -84,7 +83,8 @@ function validarPerfil(v: unknown): Perfil {
   return p;
 }
 
-function cargarPerfil(raiz: string, id: string): Perfil {
+/** Perfil validado del disco (o el neutro). `no_encontrado` si no existe; `esquema` si el fichero no es válido. */
+export function cargarPerfil(raiz: string, id: string): Perfil {
   validarPerfilId(id);
   const ruta = path.join(dirPerfiles(raiz, false), `${id}.json`);
   if (!existe(ruta)) {

@@ -127,7 +127,7 @@ export function errorHttp(status: number, cuerpo: string, apiKey: string): Error
     401: integrado ? " Revisa tu clave de ElevenLabs en Ajustes de SEO Studio." : " Revisa ELEVENLABS_API_KEY en el .env del servidor.",
     404: integrado
       ? " La voz elegida no existe en esta cuenta; cámbiala en Ajustes de SEO Studio."
-      : " Revisa ELEVENLABS_VOICE_ID (la voz no existe en esta cuenta).",
+      : " Revisa la voz del perfil (no existe en esta cuenta).",
     422: integrado ? " Revisa el modelo de voz en Ajustes de SEO Studio y el texto enviado." : " Revisa ELEVENLABS_MODEL_ID y el texto enviado.",
     429: " Límite de uso o de concurrencia alcanzado; espera y vuelve a intentarlo.",
   };

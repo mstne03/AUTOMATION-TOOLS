@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config } from "../src/config.js";
 import { ejecutar, herramientasFfmpeg, hfHome, sondear } from "../src/proceso.js";
+import { perfilDuplicar, perfilGuardar, perfilesListar, type Perfil } from "../src/perfil.js";
 import { ErrorAlmacen, guionGuardar, proyectoCrear, proyectoGuardar, proyectoLeer } from "../src/proyecto.js";
 import {
   MUESTRA_CARACTERES,
@@ -84,7 +85,20 @@ function guion12(): any {
 
 function nuevo(): string {
   const { id: guionId } = guionGuardar(RAIZ, { guion: guion12() });
-  return proyectoCrear(RAIZ, { guionId, perfilId: "defecto" }).id;
+  return proyectoCrear(RAIZ, { guionId, perfilId: perfilConVoz(VOZ) }).id;
+}
+
+/** La voz sale del perfil (no de la configuración): un perfil nuevo con la voz dada. */
+function perfilConVoz(voz: string): string {
+  const { id } = perfilDuplicar(RAIZ, { id: "defecto" });
+  const p = perfilesListar(RAIZ).find((x) => "nombre" in x && x.id === id) as Perfil;
+  perfilGuardar(RAIZ, { id, perfil: { ...p, voz } });
+  return id;
+}
+
+function nuevoConVoz(voz: string): string {
+  const { id: guionId } = guionGuardar(RAIZ, { guion: guion12() });
+  return proyectoCrear(RAIZ, { guionId, perfilId: perfilConVoz(voz) }).id;
 }
 
 function editar(id: string, f: (p: any) => void): void {
@@ -260,8 +274,9 @@ describe("facturación (CA3, Review Focus 2)", () => {
     const id = nuevo();
     const f = falso();
     await expect(vozGenerarReal(cfg(), { id, frases: ["f99"], caracteresConfirmados: 0, planConfirmado: "x" }, comoFetch(f))).rejects.toMatchObject({ codigo: "esquema" });
+    // Un voiceId raro en el perfil no llega a ElevenLabs: el perfil no se puede ni guardar así (sin_voz si estuviera en disco).
     for (const malo of ["../etc", "corta", "a/b/c/d/e/f/g/h", "x".repeat(41), "voz con espacios", "Vz12345678A?"]) {
-      expect(() => vozCoste({ ...cfg(), elevenVoiceId: malo }, id)).toThrow(ErrorAlmacen);
+      expect(() => perfilConVoz(malo)).toThrow(ErrorAlmacen);
     }
     expect(f).toHaveBeenCalledTimes(0);
   });
@@ -592,7 +607,8 @@ describe("la confirmación ata el contenido", () => {
       await expect(vozGenerarReal(cfg(), { id, caracteresConfirmados: total, planConfirmado } as any, comoFetch(f))).rejects.toMatchObject({ codigo: "coste_cambiado" });
     }
     expect(f).toHaveBeenCalledTimes(0);
-    expect(vozCoste({ ...cfg(), elevenVoiceId: "Ot12345678CD" }, id).plan).not.toBe(vozCoste(cfg(), id).plan);
+    const otro = nuevoConVoz("Ot12345678CD");
+    expect(vozCoste(cfg(), otro).plan).not.toBe(vozCoste(cfg(), id).plan);
   });
 
   it("la muestra también: otro plan, no se llama", async () => {

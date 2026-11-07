@@ -11,12 +11,14 @@ import { procesarAlineacion, validarPalabras, type ResultadoAlineacion } from ".
 import type { Config } from "./config.js";
 import { log, ocultarClave } from "./log.js";
 import { argsEntrada, ejecutar, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas } from "./proceso.js";
+import { VOICE_ID_RE } from "./esquema.js";
+import { cargarPerfil } from "./perfil.js";
 import { ErrorAlmacen, proyectoGuardar, proyectoLeer } from "./proyecto.js";
 import { ErrorVideo, carpetaVideo, comprobarCarpeta, escribirAtomico } from "./paths.js";
 import type { Proyecto } from "./esquema.js";
 import { ErrorElevenLabs, MAX_AUDIO_TTS, listarVocesElevenLabs, sintetizarConTimestamps } from "./tts.js";
 
-export const VOICE_ID_RE = /^[A-Za-z0-9]{10,40}$/;
+export { VOICE_ID_RE };
 /** Hueco entre palabras que cuenta como silencio. */
 export const SILENCIO_MIN_S = 0.25;
 /** Margen que se deja a cada lado de la voz al recortar un silencio. */
@@ -46,10 +48,19 @@ interface Contexto {
   modelo: string;
 }
 
-function voiceIdDe(cfg: Config): string {
-  if (!cfg.elevenVoiceId) throw new ErrorAlmacen("sin_configurar", "Elige la voz de ElevenLabs en Ajustes de SEO Studio.");
-  if (!VOICE_ID_RE.test(cfg.elevenVoiceId)) throw esquema("El identificador de la voz no es válido.", "voice_id_invalido", "voiceId");
-  return cfg.elevenVoiceId;
+/**
+ * La voz es la del perfil que referencia el proyecto (`defecto` trae la predefinida); `ELEVENLABS_VOICE_ID` ya no cuenta.
+ * Sin perfil: `no_encontrado`. Perfil sin voz válida: `sin_voz`. Nunca se cae a otra voz en silencio (I11).
+ */
+function voiceIdDePerfil(cfg: Config, perfilId: string): string {
+  try {
+    const voz = cargarPerfil(cfg.videoRoot, perfilId).voz;
+    if (VOICE_ID_RE.test(voz)) return voz;
+  } catch (e) {
+    // Solo el fallo de la voz del perfil es «sin voz»; cualquier otro (no existe, otro campo malo) sale tal cual.
+    if (!(e instanceof ErrorAlmacen && e.codigo === "esquema" && e.problemas.some((p) => p.ruta === "voz" || p.ruta.startsWith("voz")))) throw e;
+  }
+  throw new ErrorAlmacen("sin_voz", "El perfil no tiene una voz válida. Elige la voz en el perfil.", [{ ruta: "voz", codigo: "sin_voz" }]);
 }
 
 function carpetaVoz(cfg: Config, proyecto: Proyecto): string {
@@ -68,7 +79,7 @@ function carpetaVoz(cfg: Config, proyecto: Proyecto): string {
 
 function contexto(cfg: Config, id: string): Contexto {
   const { proyecto } = proyectoLeer(cfg.videoRoot, id);
-  return { proyecto, dir: carpetaVoz(cfg, proyecto), voiceId: voiceIdDe(cfg), modelo: cfg.elevenModelId };
+  return { proyecto, dir: carpetaVoz(cfg, proyecto), voiceId: voiceIdDePerfil(cfg, proyecto.perfilId), modelo: cfg.elevenModelId };
 }
 
 // ---------- Fichero por frase ----------
@@ -288,7 +299,7 @@ function exigirPlan(esperado: string, confirmado: unknown): void {
 }
 
 function requerirClave(cfg: Config): string {
-  if (!cfg.elevenApiKey) throw new ErrorAlmacen("sin_configurar", "Añade tu clave de ElevenLabs en Ajustes de SEO Studio.");
+  if (!cfg.elevenApiKey) throw new ErrorAlmacen("sin_clave", "Añade tu clave de ElevenLabs en Ajustes de SEO Studio.");
   return cfg.elevenApiKey;
 }
 
@@ -646,14 +657,24 @@ const muestrasEnCurso = new Set<string>();
  */
 export async function vozMuestra(
   cfg: Config,
-  a: { voiceId: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean },
+  a: { voiceId?: string; perfilId?: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean },
   fetchImpl?: typeof fetch,
 ): Promise<{ audioBase64: string; caracteres: number; cache: boolean }> {
-  if (typeof a.voiceId !== "string" || !VOICE_ID_RE.test(a.voiceId)) throw esquema("El identificador de la voz no es válido.", "voice_id_invalido", "voiceId");
+  // La voz de la muestra es la que se prueba: la indicada (`voiceId`, al elegir una voz) o la del perfil (`perfilId`).
+  // Sin ninguna de las dos es `sin_voz`; nunca se usa ELEVENLABS_VOICE_ID.
+  let voiceId: string;
+  if (a.voiceId !== undefined) {
+    if (typeof a.voiceId !== "string" || !VOICE_ID_RE.test(a.voiceId)) throw esquema("El identificador de la voz no es válido.", "voice_id_invalido", "voiceId");
+    voiceId = a.voiceId;
+  } else if (a.perfilId !== undefined) {
+    voiceId = voiceIdDePerfil(cfg, a.perfilId);
+  } else {
+    throw new ErrorAlmacen("sin_voz", "Indica la voz o el perfil de la muestra.", [{ ruta: "voiceId", codigo: "sin_voz" }]);
+  }
   exigirCoste(MUESTRA_CARACTERES, a.caracteresConfirmados);
-  exigirPlan(planMuestra(cfg.elevenModelId, a.voiceId), a.planConfirmado);
+  exigirPlan(planMuestra(cfg.elevenModelId, voiceId), a.planConfirmado);
   const dir = carpetaMuestras(cfg);
-  const hash = hashFrase(a.voiceId, cfg.elevenModelId, MUESTRA_TEXTO);
+  const hash = hashFrase(voiceId, cfg.elevenModelId, MUESTRA_TEXTO);
   const ruta = path.join(dir, `${hash}.mp3`);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -677,7 +698,7 @@ export async function vozMuestra(
   muestrasEnCurso.add(hash);
   try {
     marcarVuelo(dir, hash);
-    const r = await sintetizarValidado(cfg, h, dir, hash, MUESTRA_TEXTO, a.voiceId, fetchImpl);
+    const r = await sintetizarValidado(cfg, h, dir, hash, MUESTRA_TEXTO, voiceId, fetchImpl);
     escribirAtomico(ruta, r.audio);
     fs.rmSync(path.join(dir, `${hash}.fallo`), { force: true });
     quitarVuelo(dir, hash);

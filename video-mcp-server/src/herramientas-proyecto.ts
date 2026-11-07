@@ -112,7 +112,7 @@ export async function vocesTool(cfg: Config, fetchImpl?: typeof fetch): Promise<
   return { texto: `${r.voces.length} voz(oces) en la cuenta.`, datos: r };
 }
 
-export async function vozMuestraTool(cfg: Config, a: { voiceId: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean }, fetchImpl?: typeof fetch): Promise<Respuesta> {
+export async function vozMuestraTool(cfg: Config, a: { voiceId?: string; perfilId?: string; caracteresConfirmados: number; planConfirmado: string; reintentarFacturada?: boolean }, fetchImpl?: typeof fetch): Promise<Respuesta> {
   const r = await vozMuestra(cfg, a, fetchImpl);
   return { texto: r.cache ? "Muestra de la voz (de la caché, sin coste)." : `Muestra de la voz generada: ${r.caracteres} caracteres facturados.`, datos: r };
 }
@@ -255,8 +255,8 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
     "video_voz_muestra",
     {
       title: "Muestra de una voz",
-      description: "Genera una muestra de 60 caracteres con esa voz (guardada por voz). `caracteresConfirmados` tiene que ser 60 y `planConfirmado` el `planMuestra` de esa voz en video_voces. Si ya se cobró y falló, `reintentarFacturada: true`. Devuelve { audioBase64, caracteres, cache }.",
-      inputSchema: { voiceId: z.string().max(60), caracteresConfirmados: z.number(), planConfirmado: z.string().max(100), reintentarFacturada: z.boolean().optional() },
+      description: "Genera una muestra de 60 caracteres con esa voz (`voiceId`) o con la del perfil (`perfilId`); una de las dos (guardada por voz). `caracteresConfirmados` tiene que ser 60 y `planConfirmado` el `planMuestra` de esa voz en video_voces. Si ya se cobró y falló, `reintentarFacturada: true`. Devuelve { audioBase64, caracteres, cache }.",
+      inputSchema: { voiceId: z.string().max(60).optional(), perfilId: z.string().max(20).optional(), caracteresConfirmados: z.number(), planConfirmado: z.string().max(100), reintentarFacturada: z.boolean().optional() },
     },
     (a) => envolver("video_voz_muestra", () => vozMuestraTool(cfg, a)),
   );
