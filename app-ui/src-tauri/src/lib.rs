@@ -376,7 +376,7 @@ fn abrir_regular(ruta: &Path, limite: u64) -> Result<File, String> {
     }
     if info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) != 0 {
         return Err(
-            "No se admiten enlaces, carpetas ni ficheros solo en la nube (descárgalo en local)."
+            "No se admiten enlaces, carpetas ni ficheros de OneDrive; cópialo fuera de OneDrive."
                 .into(),
         );
     }
@@ -771,11 +771,11 @@ b",
             .map(|o| o.status.success())
             .unwrap_or(false);
         assert!(ok, "mklink /J no necesita privilegios: debe poder crearse");
-        assert!(copiar_a_bandeja(&j, &t.bandeja(), 100).is_err());
-        assert!(
-            copiar_a_bandeja(&destino, &t.bandeja(), 100).is_err(),
-            "una carpeta tampoco"
-        );
+        // Se comprueba el texto: así falla si rechaza otra cosa (un fallo de `open`) y no el filtro.
+        for ruta in [&j, &destino] {
+            let e = copiar_a_bandeja(ruta, &t.bandeja(), 100).unwrap_err();
+            assert!(e.starts_with("No se admiten enlaces, carpetas"), "{e}");
+        }
         assert!(vacia(&t.bandeja()));
     }
 

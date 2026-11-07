@@ -27,14 +27,14 @@ característica `Win32_Storage_FileSystem` de `windows-sys` (sin cambios en `Car
 `dir_estado_sigue_a_config_py`.
 
 **Aviso:** `rechaza_symlink` se omite (con aviso por stderr) si la máquina no deja crear symlinks sin
-privilegio; en esta máquina de Marc se omitió. La CI de `windows-latest` sí lo ejecuta.
+privilegio; en esta máquina de Marc se omitió. La CI de `windows-latest` normalmente lo ejecuta, pero no está garantizado.
 
 ## Revisión (Opus, solo lectura): 0 Critical, 0 High
 
 | Gravedad | Hallazgo | Estado |
 |---|---|---|
-| Medium M1 | Se rechaza cualquier `REPARSE_POINT`, también ficheros de OneDrive (Files On-Demand) o de deduplicación. | **Abierto, falla cerrado.** Mensaje ahora explícito («descárgalo en local»). Pulirlo (rechazar solo *name surrogates* con `FileAttributeTagInfo`) exige probar en la máquina de Marc con OneDrive |
-| Medium M2 | `rechaza_junction` pasaba por un fallo incidental de `open`; el destino parcial y `NUL` sin test. | Corregido: `BACKUP_SEMANTICS` (la comprobación de atributos es la que rechaza), test de destino parcial y de `NUL` |
+| Medium M1 | Se rechaza cualquier `REPARSE_POINT`, también ficheros de OneDrive (Files On-Demand) o de deduplicación. | **Abierto, falla cerrado.** Mensaje ahora explícito («cópialo fuera de OneDrive»); un fichero ya descargado puede seguir siendo un placeholder y rechazarse: confirmarlo en la máquina de Marc. Pulirlo (rechazar solo *name surrogates* con `FileAttributeTagInfo`) exige probar en la máquina de Marc con OneDrive |
+| Medium M2 | `rechaza_junction` pasaba por un fallo incidental de `open`; el destino parcial y `NUL` sin test. | Corregido salvo `rechaza_symlink`: `BACKUP_SEMANTICS`, `rechaza_junction` comprueba el texto del error (rechaza el filtro de atributos), test de destino parcial y de `NUL`. `rechaza_symlink` sigue omitiéndose sin privilegio y no está garantizado en CI |
 | Low L1 | `OPEN_REPARSE_POINT` solo cubre el último componente; las junctions intermedias se siguen. | Aceptado: mismo usuario, sin escalada. I6 protege al fichero elegido, no a la ruta entera |
 | Low L2 | Si el proceso muere a mitad de una exportación queda un MP4 truncado con el nombre final. | Abierto (escribir a `.parcial` y renombrar sin reemplazo) |
 | Low L3 | Los `blocking_*` en comandos `async` bloquean workers de tokio y no hay cerrojo: un WebView comprometido podría encadenar diálogos. | Abierto (patrón previo); admitir un solo diálogo a la vez |
