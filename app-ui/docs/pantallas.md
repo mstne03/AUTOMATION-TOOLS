@@ -507,6 +507,8 @@ Layout B: cabecera de 48 px; cuerpo `minmax(0, 1fr) 320px` (preview a la izquier
 derecha); timeline a todo el ancho, 240 px, por debajo. Cabe a 900×600.
 `editor`, `editor-titulo`, `editor-volver`, `editor-guardado` («Guardado», «Guardando…», «Error al
 guardar»), `editor-conflicto`, `editor-deshacer`, `editor-rehacer`, `editor-render`, `editor-error`.
+Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.ts`):
+`editor-zona-preview`, `editor-zona-panel` (320 px de ancho) y `editor-zona-timeline` (240 px de alto).
 
 - **Preview:** `preview-marco` (iframe 1080×1920 escalado con `transform`), `preview-play`,
   `preview-tiempo`, `preview-cargando`, `preview-error`, `preview-aviso-fondo`.
