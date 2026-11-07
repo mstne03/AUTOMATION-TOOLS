@@ -1,0 +1,251 @@
+/* Cinco pistas sobre una escala común (40 px por segundo). La columna de etiquetas queda fija a la
+   izquierda; el resto se desplaza con la zona de 240 px del marco. Solo tokens. */
+.raiz {
+  --etiqueta: 176px;
+  --alto-fila: 44px;
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-12);
+}
+.rejilla {
+  position: relative;
+  width: calc(var(--etiqueta) + var(--ancho-timeline));
+  min-height: 100%;
+}
+.fila {
+  display: grid;
+  grid-template-columns: var(--etiqueta) var(--ancho-timeline);
+  min-height: var(--alto-fila);
+  border-bottom: 1px solid var(--color-divider);
+}
+.etiqueta {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-divider);
+  color: var(--color-muted);
+  font-weight: 600;
+}
+.carril {
+  position: relative;
+  min-width: 0;
+}
+.pista {
+  position: relative;
+  height: var(--alto-fila);
+}
+.pistaAlta {
+  position: relative;
+  min-height: var(--alto-fila);
+}
+.coste {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.aviso {
+  margin: 0;
+  color: var(--color-risk-write-fg);
+  font-weight: 400;
+}
+.aviso a {
+  color: var(--color-accent-link);
+}
+.controles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-weight: 400;
+}
+.campo,
+.campoCheck {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--color-text-soft);
+}
+.campo > span {
+  min-width: 56px;
+}
+.campoCheck input {
+  accent-color: var(--color-accent);
+}
+
+/* Regla y cabezal */
+.regla {
+  position: relative;
+  height: var(--alto-fila);
+  cursor: col-resize;
+  background: var(--color-surface);
+  touch-action: none;
+}
+.regla:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+.marca {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: var(--space-4) 0 0 var(--space-4);
+  border-left: 1px solid var(--color-border-strong);
+  color: var(--color-subtle);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.capaCabezal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--etiqueta);
+  width: var(--ancho-timeline);
+  z-index: 3;
+  pointer-events: none;
+}
+.cabezal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--color-accent-link);
+}
+
+/* Clips */
+.clip {
+  position: absolute;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 0 var(--space-6);
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: none;
+}
+.clip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+  z-index: 2;
+}
+.activo {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+.arrastrando {
+  z-index: 2;
+  opacity: 0.85;
+  cursor: grabbing;
+}
+.num {
+  flex: none;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.texto {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clipRecurso {
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success-fg);
+}
+.clipMusica {
+  background: var(--color-risk-read-bg);
+  border-color: var(--color-risk-read-border);
+  color: var(--color-risk-read-fg);
+  cursor: default;
+}
+.clipSubtitulo {
+  top: var(--space-6);
+  bottom: auto;
+  height: 28px;
+}
+.clipVoz {
+  background: transparent;
+  cursor: default;
+  justify-content: space-between;
+}
+.pendiente {
+  border-style: dashed;
+  border-color: var(--color-risk-write-border);
+}
+.chipPend {
+  flex: none;
+}
+.accionesClip {
+  display: inline-flex;
+  margin-left: auto;
+}
+.borde {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--space-6);
+  background: var(--color-border-strong);
+  cursor: ew-resize;
+}
+.onda {
+  position: absolute;
+  top: var(--space-4);
+  left: 0;
+  pointer-events: none;
+}
+.ondaTrazo {
+  stroke: var(--color-accent);
+  stroke-width: 1;
+  fill: none;
+  opacity: 0.6;
+}
+
+/* Edición de la línea de subtítulos seleccionada */
+.edicion {
+  position: sticky;
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  width: min(560px, 100%);
+  padding: var(--space-6);
+  background: var(--color-surface-overlay);
+  border-top: 1px solid var(--color-divider);
+}
+.campoTexto {
+  flex: 1;
+  min-width: 160px;
+  padding: var(--space-4) var(--space-8);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+}
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-risk-destructive-text);
+}
+.confirmar p {
+  margin: 0 0 var(--space-8);
+}

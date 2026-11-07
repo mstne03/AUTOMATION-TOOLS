@@ -25,6 +25,8 @@ import type {
   YouTubeStatus,
   AvisoVideo,
   CosteVoz,
+  CuerpoMuestra,
+  CuerpoQuitarSilencios,
   CuerpoVoz,
   FormaVoz,
   GuionVideoResumen,
@@ -41,6 +43,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public detail: string,
+    /** Código estable de `detail: { mensaje, codigo }`; la UI decide por él, nunca por el texto. */
+    public codigo?: string,
   ) {
     super(detail);
   }
@@ -99,10 +103,12 @@ export interface Client {
   videoProyectoBorrar(id: string): Promise<Record<string, never>>;
   videoPreviewAbrir(id: string, webgpu: boolean): Promise<PreviewVideo>;
   videoPreviewCerrar(id: string): Promise<Record<string, never>>;
-  videoVozCoste(id: string): Promise<CosteVoz>;
+  /** POST: el plan depende de `frases`. Nunca gasta; la cifra y el `plan` son los que luego se confirman. */
+  videoVozCoste(id: string, frases?: string[]): Promise<CosteVoz>;
   videoVozForma(id: string): Promise<FormaVoz>;
   videoVozGenerar(id: string, cuerpo: CuerpoVoz): Promise<Record<string, unknown>>;
-  videoVozQuitarSilencios(id: string, cuerpo: CuerpoVoz): Promise<Record<string, unknown>>;
+  /** No gasta y el motor guarda el proyecto: después hay que recargarlo del servidor. */
+  videoVozQuitarSilencios(id: string, cuerpo: CuerpoQuitarSilencios): Promise<{ revision: number; recorte: { inicio: number; fin: number } }>;
   /** El recurso se identifica por `bandejaId` (32 hex que devuelve el comando nativo), nunca por ruta. */
   videoRecursoAnadir(id: string, bandejaId: string, clase: "foto" | "clip"): Promise<Record<string, unknown>>;
   videoRecursoBorrar(id: string, rid: string): Promise<Record<string, unknown>>;
@@ -111,7 +117,7 @@ export interface Client {
   videoPerfilDuplicar(pid: string): Promise<PerfilVideo>;
   videoPerfilGuardar(pid: string, perfil: PerfilVideo): Promise<PerfilVideo>;
   videoVoces(): Promise<VozVideo[]>;
-  videoVozMuestra(voiceId: string, caracteresConfirmados: number): Promise<Record<string, unknown>>;
+  videoVozMuestra(voiceId: string, cuerpo: CuerpoMuestra): Promise<Record<string, unknown>>;
   videoMusica(): Promise<PistaMusica[]>;
   videoMusicaImportar(bandejaId: string): Promise<PistaMusica>;
 }
@@ -122,7 +128,10 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
 
   async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetchFn(base + path, { ...init, headers: { ...headers, ...init.headers } });
-    if (!res.ok) throw new ApiError(res.status, await detalle(res));
+    if (!res.ok) {
+      const { mensaje, codigo } = await detalleCodigo(res);
+      throw new ApiError(res.status, mensaje, codigo);
+    }
     return (await res.json()) as T;
   }
   const q = (params: Record<string, string | number | undefined>) => {
@@ -199,7 +208,8 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     videoPreviewAbrir: (id, webgpu) =>
       req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "POST", body: JSON.stringify({ webgpu }) }),
     videoPreviewCerrar: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "DELETE" }),
-    videoVozCoste: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/voz/coste`),
+    videoVozCoste: (id, frases) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz/coste`, { method: "POST", body: JSON.stringify(frases ? { frases } : {}) }),
     videoVozForma: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/voz/forma`),
     videoVozGenerar: (id, cuerpo) =>
       req(`/video/proyectos/${encodeURIComponent(id)}/voz`, { method: "POST", body: JSON.stringify(cuerpo) }),
@@ -216,20 +226,28 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     videoPerfilGuardar: (pid, perfil) =>
       req(`/video/perfiles/${encodeURIComponent(pid)}`, { method: "PUT", body: JSON.stringify(perfil) }),
     videoVoces: () => req("/video/voces"),
-    videoVozMuestra: (voiceId, caracteresConfirmados) =>
-      req("/video/voces/muestra", { method: "POST", body: JSON.stringify({ voiceId, caracteres_confirmados: caracteresConfirmados }) }),
+    videoVozMuestra: (voiceId, cuerpo) => req("/video/voces/muestra", { method: "POST", body: JSON.stringify({ voiceId, ...cuerpo }) }),
     videoMusica: () => req("/video/musica"),
     videoMusicaImportar: (bandejaId) => req("/video/musica", { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId }) }),
   };
 }
 
-async function detalle(res: Response): Promise<string> {
+/** `detail` puede ser un texto o `{ mensaje, codigo }` (contrato de la voz: `docs/video-fase1/contrato-voz.md`). */
+async function detalleCodigo(res: Response): Promise<{ mensaje: string; codigo?: string }> {
   try {
     const j = (await res.json()) as { detail?: unknown };
-    if (typeof j.detail === "string") return j.detail;
-    if (j.detail) return JSON.stringify(j.detail);
+    if (typeof j.detail === "string") return { mensaje: j.detail };
+    if (j.detail && typeof j.detail === "object") {
+      const d = j.detail as { mensaje?: unknown; codigo?: unknown };
+      if (typeof d.mensaje === "string") return { mensaje: d.mensaje, codigo: typeof d.codigo === "string" ? d.codigo : undefined };
+    }
+    if (j.detail) return { mensaje: JSON.stringify(j.detail) };
   } catch {
     /* sin cuerpo JSON */
   }
-  return `HTTP ${res.status}`;
+  return { mensaje: `HTTP ${res.status}` };
+}
+
+async function detalle(res: Response): Promise<string> {
+  return (await detalleCodigo(res)).mensaje;
 }
