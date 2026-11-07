@@ -184,7 +184,22 @@ def video_proyecto_listar() -> CallToolResult:
 def video_proyecto_leer(id: str) -> CallToolResult:
     if id not in _PROYECTOS:
         return _error("no_encontrado", "No existe ese proyecto.")
-    return _ok("Proyecto", {**_PROYECTOS[id], "avisos": []})
+    creado = Path(os.environ["VIDEO_ROOT"]) / id / "creado.txt"  # un test lo cambia para simular un id reutilizado
+    marca = creado.read_text(encoding="utf-8").strip() if creado.is_file() else "2026-11-07T10:00:00.000Z"
+    return _ok("Proyecto", {**_PROYECTOS[id], "creado": marca, "avisos": []})
+
+
+@mcp.tool()
+def video_montar_preview(id: str, webgpu: bool = False) -> CallToolResult:
+    """SIMULADOR (T10): la `_composicion/` real la genera T3; el test la crea y fija aquí `carpeta`."""
+    if id not in _PROYECTOS:
+        return _error("no_encontrado", "No existe ese proyecto.")
+    ajustes = Path(os.environ["VIDEO_ROOT"]) / id / "_composicion" / "montar.json"
+    datos = json.loads(ajustes.read_text(encoding="utf-8")) if ajustes.is_file() else {}
+    return _ok(
+        "Preview montada",
+        {"carpeta": datos.get("carpeta", "r1"), "duracion": 12.5, "avisos": [], "fondo": {"pedido": "x", "usado": "x"}},
+    )
 
 
 @mcp.tool()
