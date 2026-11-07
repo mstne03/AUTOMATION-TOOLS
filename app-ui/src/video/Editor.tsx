@@ -3,7 +3,7 @@
  *  `RenderBoton`) las rellenan T17, T18, T19 y T20; todas leen el store del editor, sin props.
  *  Todo texto del proyecto se pinta como texto. */
 import { ArrowLeft, Redo2, Undo2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import {
   deshacer,
@@ -13,7 +13,7 @@ import {
   useEditor,
   type EstadoGuardado,
 } from "../state/editor";
-import { Button, IconButton } from "../ui";
+import { Button, ConfirmDialog, IconButton } from "../ui";
 import s from "./Editor.module.css";
 import { Preview } from "./Preview";
 import { Panel } from "./panel/Panel";
@@ -31,11 +31,21 @@ const TEXTO_GUARDADO: Record<EstadoGuardado, string> = {
 function enCampoDeTexto(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
   return (
-    t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)
+    t.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
+    t.getAttribute("role") === "textbox"
   );
 }
 
+/** Con un diálogo abierto, los atajos del editor no deben actuar sobre lo que hay detrás. */
+function hayDialogoAbierto(t: EventTarget | null): boolean {
+  const SEL = '[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
+  if (t instanceof Element && t.closest(SEL)) return true;
+  return document.querySelector(SEL) !== null;
+}
+
 export function Editor() {
+  const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const titulo = useEditor((e) => e.proyecto?.titulo ?? "");
   const guardado = useEditor((e) => e.guardado);
   const conflicto = useEditor((e) => e.conflicto);
@@ -44,8 +54,11 @@ export function Editor() {
 
   useEffect(() => {
     const alTeclar = (ev: KeyboardEvent) => {
-      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || enCampoDeTexto(ev.target))
+      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.defaultPrevented || ev.isComposing)
         return;
+      if (enCampoDeTexto(ev.target) || hayDialogoAbierto(ev.target)) return;
+      // Con el aviso de conflicto no se edita (el cuerpo es inerte): tampoco por teclado.
+      if (useEditor.getState().conflicto) return;
       const k = ev.key.toLowerCase();
       if (k === "z" && !ev.shiftKey) deshacer();
       else if (k === "y" || (k === "z" && ev.shiftKey)) rehacer();
@@ -85,7 +98,7 @@ export function Editor() {
             variant="ghost"
             aria-label="Deshacer"
             data-testid="editor-deshacer"
-            disabled={!hayDeshacer}
+            disabled={!hayDeshacer || conflicto}
             onClick={deshacer}
           />
           <IconButton
@@ -94,7 +107,7 @@ export function Editor() {
             variant="ghost"
             aria-label="Rehacer"
             data-testid="editor-rehacer"
-            disabled={!hayRehacer}
+            disabled={!hayRehacer || conflicto}
             onClick={rehacer}
           />
           <RenderBoton />
@@ -112,13 +125,22 @@ export function Editor() {
             <Button size="sm" variant="primary" onClick={usarBorrador}>
               Recuperar mi edición
             </Button>
-            <Button size="sm" variant="ghost" onClick={descartarBorrador}>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmarDescarte(true)}>
               Descartar la mía
             </Button>
           </div>
         )}
       </div>
-      <div className={s.cuerpo}>
+      <ConfirmDialog
+        open={confirmarDescarte && conflicto}
+        onOpenChange={setConfirmarDescarte}
+        title="¿Descartar tu edición?"
+        description="Tu edición local se perderá y te quedarás con la versión guardada."
+        confirmLabel="Descartar"
+        tone="danger"
+        onConfirm={descartarBorrador}
+      />
+      <div className={s.cuerpo} inert={conflicto}>
         <div className={s.zonaPreview} data-testid="editor-zona-preview">
           <Preview />
         </div>
@@ -126,7 +148,11 @@ export function Editor() {
           <Panel />
         </aside>
       </div>
-      <div className={s.zonaTimeline} data-testid="editor-zona-timeline">
+      <div
+        className={s.zonaTimeline}
+        data-testid="editor-zona-timeline"
+        inert={conflicto}
+      >
         <Timeline />
       </div>
     </div>

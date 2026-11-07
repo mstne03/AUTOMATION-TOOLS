@@ -21,7 +21,8 @@ import {
   reiniciarEditor,
   useEditor,
 } from "../state/editor";
-import { Toaster, reiniciarToasts } from "../ui";
+import { Toaster, ConfirmDialog, reiniciarToasts } from "../ui";
+import { sesionPreview } from "../video/EditorPreview";
 import type { Proyecto } from "../video/modelo";
 
 const HOSTIL = "<img src=x onerror=alert(1)>";
@@ -347,8 +348,149 @@ describe("marco del editor", () => {
     });
     await screen.findByTestId("editor-conflicto");
     fireEvent.click(screen.getByRole("button", { name: "Descartar la mía" }));
+    expect(t("editor-conflicto")).not.toBeNull(); // pide confirmación
+    fireEvent.click(await screen.findByRole("button", { name: "Descartar" }));
     expect(t("editor-conflicto")).toBeNull();
     expect(t("editor-titulo")!.textContent).toBe("Remoto");
     expect(t("editor-guardado")!.textContent).toBe("Guardado");
+  });
+
+  it("con el aviso de conflicto el cuerpo y la timeline son inertes y «Descartar» pide confirmación", async () => {
+    const remoto = proyecto({ revision: 5, titulo: "Remoto" });
+    montar(
+      cliente({
+        videoProyecto: vi
+          .fn()
+          .mockResolvedValueOnce(proyecto())
+          .mockResolvedValue(remoto),
+        videoProyectoGuardar: vi.fn(async () =>
+          Promise.reject(new ApiError(409, "Revisión antigua")),
+        ),
+      }),
+      "/video/p1",
+    );
+    await screen.findByTestId("editor");
+    expect(t("editor-zona-panel")!.closest("[inert]")).toBeNull();
+    act(() => editar((p) => void (p.titulo = "Mi edición")));
+    await act(async () => {
+      await guardar();
+    });
+    await screen.findByTestId("editor-conflicto");
+    for (const z of ["editor-zona-preview", "editor-zona-panel", "editor-zona-timeline"])
+      expect(t(z)!.closest("[inert]")).not.toBeNull();
+    // Ctrl+Z tampoco actúa.
+    act(() => editar((p) => void (p.titulo = "Otra")));
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(useEditor.getState().proyecto!.titulo).toBe("Otra");
+    // Cancelar la confirmación no descarta.
+    fireEvent.click(screen.getByRole("button", { name: "Descartar la mía" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(t("editor-conflicto")).not.toBeNull();
+    expect(useEditor.getState().borrador).not.toBeNull();
+  });
+
+  it("Ctrl+Z se ignora con un diálogo abierto o con el evento ya tratado", async () => {
+    montar(cliente(), "/video/p1");
+    await screen.findByTestId("editor");
+    act(() => editar((p) => void (p.titulo = "Nuevo")));
+    const { unmount } = render(
+      <ConfirmDialog open onOpenChange={() => undefined} title="Render" onConfirm={() => undefined} />,
+    );
+    const cancelar = await screen.findByRole("button", { name: "Cancelar" });
+    fireEvent.keyDown(cancelar, { key: "z", ctrlKey: true });
+    expect(useEditor.getState().proyecto!.titulo).toBe("Nuevo");
+    unmount();
+    const falso = document.createElement("div");
+    falso.setAttribute("aria-modal", "true");
+    document.body.appendChild(falso);
+    fireEvent.keyDown(document.body, { key: "y", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(useEditor.getState().proyecto!.titulo).toBe("Nuevo");
+    falso.remove();
+    const previo = (ev: KeyboardEvent) => ev.preventDefault();
+    window.addEventListener("keydown", previo, true);
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    window.removeEventListener("keydown", previo, true);
+    expect(useEditor.getState().proyecto!.titulo).toBe("Nuevo");
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    expect(useEditor.getState().proyecto!.titulo).toBe("Cocina");
+  });
+
+  describe("ciclo de vida de la preview (I8)", () => {
+    const diferido = <T,>() => {
+      let ok!: (v: T) => void;
+      const p = new Promise<T>((r) => (ok = r));
+      return { p, ok };
+    };
+    const prev = { url: "http://127.0.0.1:1/preview/k", clave: "k" } as never;
+
+    it("el DELETE sale después de un POST lento en vuelo", async () => {
+      const post = diferido<never>();
+      const orden: string[] = [];
+      const c = cliente({
+        videoPreviewAbrir: vi.fn(() => {
+          orden.push("POST");
+          return post.p;
+        }),
+        videoPreviewCerrar: vi.fn(async () => {
+          orden.push("DELETE");
+          return {};
+        }),
+      });
+      const { unmount } = montar(c, "/video/p1");
+      await screen.findByTestId("editor");
+      const abierta = sesionPreview()!.abrir(true);
+      unmount();
+      await Promise.resolve();
+      expect(orden).toEqual(["POST"]);
+      post.ok(prev);
+      await abierta;
+      await waitFor(() => expect(orden).toEqual(["POST", "DELETE"]));
+    });
+
+    it("un POST que responde tras desmontar provoca un DELETE de esa clave, y no se abren más", async () => {
+      const post = diferido<never>();
+      const c = cliente({ videoPreviewAbrir: vi.fn(() => post.p) });
+      const { unmount } = montar(c, "/video/p1");
+      await screen.findByTestId("editor");
+      const sesion = sesionPreview()!;
+      const abierta = sesion.abrir(false);
+      unmount();
+      expect(c.videoPreviewCerrar).not.toHaveBeenCalled();
+      post.ok(prev);
+      expect(await abierta).toBeNull(); // cerrada: T17 no debe usar la clave
+      await waitFor(() => expect(c.videoPreviewCerrar).toHaveBeenCalledWith("p1"));
+      expect(await sesion.abrir(false)).toBeNull();
+      expect(c.videoPreviewAbrir).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancela los temporizadores pendientes al desmontar", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const c = cliente({ videoPreviewAbrir: vi.fn(async () => prev) });
+        const { unmount } = montar(c, "/video/p1");
+        await vi.waitFor(() => expect(sesionPreview()).not.toBeNull());
+        const alarma = vi.fn();
+        sesionPreview()!.programar(alarma, 400);
+        unmount();
+        vi.advanceTimersByTime(1000);
+        expect(alarma).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("un DELETE fallido se registra y se reintenta una vez", async () => {
+      const aviso = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const c = cliente({
+        videoPreviewCerrar: vi.fn(async () => Promise.reject(new ApiError(500, "ocupado"))),
+      });
+      const { unmount } = montar(c, "/video/p1");
+      await screen.findByTestId("editor");
+      unmount();
+      await waitFor(() => expect(c.videoPreviewCerrar).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(aviso).toHaveBeenCalled());
+      aviso.mockRestore();
+    });
   });
 });
