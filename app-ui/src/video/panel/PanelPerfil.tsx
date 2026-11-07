@@ -4,9 +4,8 @@
  *  del anterior, nunca de la copia en caché, para no pisar cambios. Guardar un perfil NO toca el
  *  historial de deshacer (el perfil vive en el servidor).
  *
- *  TODO(T17): recargar la preview tras guardar un perfil. `SesionPreview` (EditorPreview.ts) solo
- *  ofrece `abrir`/`programar`/`cerrar`; cuando `Preview.tsx` exponga cómo reabrir la preview, se
- *  llamará desde `guardar` (hoy no hay `editar(() => {})`: ensuciaba el historial).
+ *  Tras cada guardado correcto se llama a `recargarPreview()` (T17): el perfil vive en el servidor y no
+ *  cambia la `revision` del proyecto, así que la preview no se reabriría sola.
  *
  *  «Escuchar» (D7) queda DESHABILITADO hasta que T11 fije la respuesta de `video_voz_muestra`
  *  (`videoVozMuestra` devuelve `Record<string, unknown>`, sin audio tipado): gastar cuota de
@@ -20,6 +19,7 @@ import { esObjeto } from "../../json";
 import { sinRutas } from "../../screens/MotorVideo";
 import { editar, useEditor } from "../../state/editor";
 import { Button, Field, Input, Select } from "../../ui";
+import { recargarPreview } from "../previewRecarga";
 import s from "./Panel.module.css";
 
 const AVISO_MUESTRA = "Disponible cuando el backend sirva la muestra (T11).";
@@ -111,6 +111,7 @@ export function PanelPerfil() {
         const guardado = await client.videoPerfilGuardar(id, cambio(structuredClone(base)));
         ultimo.current.set(id, { ...base, ...guardado });
         qc.setQueryData<PerfilVideo[]>(["video", "perfiles"], (l) => (l ?? []).map((x) => (x.id === id ? { ...x, ...guardado } : x)));
+        recargarPreview();
       } catch (e) {
         setError(mensaje(e, "No se pudo guardar el perfil."));
       } finally {
