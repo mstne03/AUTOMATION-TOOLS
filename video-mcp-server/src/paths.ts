@@ -226,16 +226,22 @@ function quitarEnlace(ruta: string): void {
  * entrar, y si la propia carpeta es un enlace, solo se quita el enlace. Si no existe, no hace nada.
  */
 export function borrarArbol(dir: string): void {
+  if (!dir || !path.isAbsolute(dir)) throw new ErrorVideo("borrarArbol exige una ruta absoluta y no vacía.");
   const raiz = path.resolve(dir);
+  const padre = path.dirname(raiz);
+  if (padre === raiz) throw new ErrorVideo("borrarArbol no borra la raíz de una unidad.");
   let st: fs.Stats;
   try {
     st = fs.lstatSync(raiz);
-  } catch {
-    return;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e; // bloqueada o ilegible: volver sin borrar dejaría ficheros viejos que la preview serviría (I11)
   }
-  const padre = path.dirname(raiz);
-  const enPadre = padre === raiz ? undefined : leerEntradas(padre).find((e) => igualRuta(e.name, path.basename(raiz)));
-  if (st.isSymbolicLink() || enPadre?.isSymbolicLink()) return quitarEnlace(raiz);
+  // El Dirent del padre marca las junctions que lstat no ve. Si no se puede listar o la raíz no aparece (8.3,
+  // mayúsculas), no se sabe si es un enlace: se falla en cerrado en vez de suponer que no lo es.
+  const enPadre = fs.readdirSync(padre, { withFileTypes: true }).find((e) => igualRuta(e.name, path.basename(raiz)));
+  if (!enPadre) throw new ErrorVideo(`borrarArbol: ${nombreDe(raiz)} no aparece en el listado de su carpeta; no se borra.`);
+  if (st.isSymbolicLink() || enPadre.isSymbolicLink()) return quitarEnlace(raiz);
   if (!st.isDirectory()) return conReintentos(() => fs.unlinkSync(raiz));
   vaciar(raiz);
   conReintentos(() => fs.rmdirSync(raiz));
