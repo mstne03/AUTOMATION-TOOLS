@@ -11,10 +11,12 @@ Nada de lo que pasa por aquí se registra: ni la ruta ni la clave (`access_log=F
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import secrets
 import socket
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +29,7 @@ from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 
 from app_backend import config
-from app_backend.navegador import comprobar_ancestros, es_enlace
+from app_backend.navegador import NavegadorError, comprobar_ancestros, es_enlace
 
 log = logging.getLogger("app_backend.preview")
 
@@ -169,7 +171,14 @@ class Claves:
         return clave
 
     def cerrar(self, id: str) -> None:
+        """Invalida **todas** las claves del proyecto (hoy hay una; T16 puede abrir varias sesiones)."""
         self._por_id.pop(id, None)
+
+    def invalidar(self, entrada: Entrada) -> None:
+        """Cierra la clave de `entrada` solo si sigue siendo la vigente (no pisa una más nueva)."""
+        actual = self._por_id.get(entrada.id)
+        if actual is not None and actual[1] == entrada:
+            del self._por_id[entrada.id]
 
     def buscar(self, clave: str) -> Entrada | None:
         """Compara con todas (sin cortar en la primera) para no filtrar cuál acertó por el tiempo."""
@@ -293,13 +302,34 @@ def _segmento_valido(s: str) -> bool:
     return not _RESERVADO_WINDOWS.fullmatch(s)
 
 
-def _resolver(entrada: Entrada, segmentos: list[str]) -> Path | None:
-    """Fichero de `segmentos` dentro de `_composicion/<carpeta>/` del proyecto, o None. Nunca sigue enlaces."""
+_MAX_PROYECTO_JSON = 8 * 1024 * 1024
+
+
+def _creado_vigente(proyecto: Path, creado: str) -> bool:
+    """El `creado` de `proyecto.json` en disco sigue siendo el de la terna (R0-5). Ilegible o ausente: no."""
+    fichero = proyecto / "proyecto.json"
+    try:
+        if es_enlace(fichero) or not fichero.is_file() or fichero.stat().st_size > _MAX_PROYECTO_JSON:
+            return False
+        doc = json.loads(fichero.read_text("utf-8"))
+    except (OSError, ValueError):  # UnicodeError y JSONDecodeError son ValueError
+        return False
+    actual = doc.get("creado") if isinstance(doc, dict) else None
+    return isinstance(actual, str) and secrets.compare_digest(actual.encode(), creado.encode())
+
+
+def _resolver(entrada: Entrada, segmentos: list[str]) -> Path | None | bool:
+    """Fichero de `segmentos` dentro de `_composicion/<carpeta>/` del proyecto, o None. Nunca sigue enlaces.
+
+    `False` si la terna ya no es la del proyecto en disco (borrado y recreado): hay que cerrar la clave.
+    """
     if not _ID.fullmatch(entrada.id) or not _CARPETA.fullmatch(entrada.carpeta):
         return None
     try:
         comprobar_ancestros()
         proyecto = config.VIDEO_ROOT / entrada.id
+        if not es_enlace(proyecto) and not _creado_vigente(proyecto, entrada.creado):
+            return False
         base = proyecto / "_composicion" / entrada.carpeta
         actual = base
         for p in (config.VIDEO_ROOT, proyecto, proyecto / "_composicion", base):
@@ -311,7 +341,7 @@ def _resolver(entrada: Entrada, segmentos: list[str]) -> Path | None:
                 return None
         if not actual.is_file() or not actual.resolve().is_relative_to(base.resolve()):
             return None
-    except (OSError, ValueError):
+    except (OSError, ValueError, NavegadorError):  # NavegadorError: un ancestro es un enlace; mensaje fijo (404)
         return None
     return actual
 
@@ -347,6 +377,9 @@ def crear_app(claves: Claves, puerto: int, runtime: Runtime | None = None):
         if tipo is None:
             return Response(status_code=404)
         fichero = await asyncio.to_thread(_resolver, entrada, segmentos)
+        if fichero is False:  # el proyecto ya no es el de la clave
+            claves.invalidar(entrada)
+            return Response(status_code=404)
         if fichero is None:
             return Response(status_code=404)
         if segmentos == ["index.html"]:
@@ -398,17 +431,43 @@ def _vincular(puerto: int) -> socket.socket:
     return s
 
 
-def reservar_puertos(puertos: tuple[int, ...] = config.PUERTOS_PREVIEW) -> Reserva:
-    """Vincula todos los puertos que pueda. Los que falla quedan en `ajenos` (aviso `puertos_preview_ajenos`)."""
-    sockets, libres, ajenos = [], [], []
-    for p in puertos:
-        try:
-            sockets.append(_vincular(p))
-            libres.append(p)
-        except OSError as e:
-            ajenos.append(p)
-            log.warning("puertos_preview_ajenos: el puerto %d de la preview está ocupado por otro programa: %s", p, e)
-    return Reserva(sockets, tuple(libres), tuple(ajenos))
+REINTENTOS_RESERVA = 3
+ESPERA_RESERVA = 0.5  # s; con 3 reintentos, como mucho 1,5 s de arranque y solo si algún puerto falla
+
+
+def reservar_puertos(
+    puertos: tuple[int, ...] = config.PUERTOS_PREVIEW,
+    reintentos: int = REINTENTOS_RESERVA,
+    espera: float = ESPERA_RESERVA,
+    dormir: Callable[[float], None] = time.sleep,
+) -> Reserva:
+    """Vincula todos los puertos que pueda. Los que falla quedan en `ajenos` (aviso `puertos_preview_ajenos`).
+
+    Reintento corto y acotado antes de dar un puerto por ajeno: al reabrir la app, el cierre anterior
+    puede dejar el puerto en TIME_WAIT y `SO_EXCLUSIVEADDRUSE` no lo vuelve a vincular hasta que acabe.
+    TODO(Windows): medir cuánto dura ese bloqueo con el WebView2 abierto (keep-alive); si supera con
+    mucho este margen, reintentar en diferido desde `POST …/preview` en vez de alargar el arranque.
+    """
+    sockets: dict[int, socket.socket] = {}
+    pendientes = list(puertos)
+    errores: dict[int, OSError] = {}
+    for intento in range(reintentos + 1):
+        if intento:
+            dormir(espera)
+        siguientes = []
+        for p in pendientes:
+            try:
+                sockets[p] = _vincular(p)
+            except OSError as e:
+                errores[p] = e
+                siguientes.append(p)
+        pendientes = siguientes
+        if not pendientes:
+            break
+    for p in pendientes:
+        log.warning("puertos_preview_ajenos: el puerto %d de la preview está ocupado por otro programa: %s", p, errores[p])
+    libres = tuple(p for p in puertos if p in sockets)
+    return Reserva([sockets[p] for p in libres], libres, tuple(pendientes))
 
 
 def _crear_socket_api() -> socket.socket:

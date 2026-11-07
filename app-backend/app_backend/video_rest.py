@@ -450,8 +450,9 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.delete("/proyectos/{id}/preview")
     async def cerrar_preview(id: IdProyecto):
-        """Cierra el editor: la clave deja de valer."""
-        estado.claves.cerrar(id)
+        """Cierra el editor: dejan de valer todas las claves del proyecto (con el mismo cerrojo que el POST)."""
+        async with cerrojo_de(id):
+            estado.claves.cerrar(id)
         return {}
 
     return r

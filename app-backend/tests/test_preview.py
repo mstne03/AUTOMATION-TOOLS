@@ -97,6 +97,15 @@ async def _proyecto(api) -> str:
     return r.json()["id"]
 
 
+CREADO = "2026-11-07T10:00:00.000Z"  # el que devuelve el motor falso por defecto
+
+
+def _fijar_creado(api, pid: str, creado: str) -> None:
+    """Simula un `proyecto.json` con otro `creado` (id reutilizado) en el disco y en el motor falso."""
+    (api.raiz / pid / "proyecto.json").write_text(json.dumps({"creado": creado, "centinela": CENTINELA}), encoding="utf-8")
+    (api.raiz / pid / "creado.txt").write_text(creado, encoding="utf-8")
+
+
 def _componer(api, pid: str, carpeta: str = "r1") -> Path:
     """Crea una `_composicion/<carpeta>/` de prueba (la real la genera T3)."""
     comp = api.raiz / pid / "_composicion"
@@ -108,7 +117,7 @@ def _componer(api, pid: str, carpeta: str = "r1") -> Path:
     (r / "datos.json").write_text("{}", encoding="utf-8")
     (comp / "fuera.js").write_text("// hermano de r1", encoding="utf-8")
     (comp / "montar.json").write_text(json.dumps({"carpeta": carpeta}), encoding="utf-8")
-    (api.raiz / pid / "proyecto.json").write_text(CENTINELA, encoding="utf-8")
+    _fijar_creado(api, pid, CREADO)
     (api.raiz / pid / "voz").mkdir()
     (api.raiz / pid / "voz" / "f.mp3").write_bytes(b"voz")
     (api.raiz / pid / "recursos").mkdir()
@@ -479,7 +488,7 @@ async def test_borrar_el_proyecto_invalida_la_clave(api, previa):
 
 async def test_id_reutilizado_en_rest_no_hereda(api, previa):
     pid, vieja = await _abrir(api)
-    (api.raiz / pid / "creado.txt").write_text("2030-01-01T00:00:00.000Z", encoding="utf-8")  # otro `creado`
+    _fijar_creado(api, pid, "2030-01-01T00:00:00.000Z")  # otro `creado`
     _, nueva = await _abrir(api, pid)
     assert nueva != vieja and api.app.state.claves.buscar(vieja) is None
     assert api.app.state.claves.buscar(nueva).creado == "2030-01-01T00:00:00.000Z"
@@ -888,3 +897,160 @@ async def test_peticiones_concurrentes_no_se_pisan(api, previa):
     _, clave = await _abrir(api)
     rs = await asyncio.gather(*[previa.get(f"/p/{clave}/assets/a.js") for _ in range(20)])
     assert all(r.status_code == 200 and r.text == "export const a = 1;" for r in rs)
+
+
+# ---------------------------------------------------- Low de la revisión de seguridad de T10
+
+
+async def test_cerrar_durante_montaje_no_deja_clave(api, previa, monkeypatch):
+    """DELETE …/preview espera al cerrojo del POST en vuelo: no queda una clave abierta en paralelo."""
+    from collections import defaultdict
+
+    from app_backend import video_rest
+
+    # Los cerrojos son globales y un `Lock` disputado se ata al bucle de este test: uno propio, para no contaminar.
+    monkeypatch.setattr(video_rest, "_cerrojos", defaultdict(asyncio.Lock))
+    pid = await _proyecto(api)
+    _componer(api, pid)
+    empezado, soltar = asyncio.Event(), asyncio.Event()
+    real = video_rest._llamar
+
+    async def lenta(estado, nombre, args):
+        if nombre == "video_montar_preview":
+            empezado.set()
+            await soltar.wait()
+        return await real(estado, nombre, args)
+
+    monkeypatch.setattr(video_rest, "_llamar", lenta)
+    abrir = asyncio.create_task(api.post(f"/video/proyectos/{pid}/preview", json={}))
+    await empezado.wait()
+    cerrar = asyncio.create_task(api.delete(f"/video/proyectos/{pid}/preview"))
+    await asyncio.sleep(0.05)  # el DELETE no debe haberse resuelto antes que el POST
+    assert not cerrar.done()
+    soltar.set()
+    r_abrir, r_cerrar = await asyncio.gather(abrir, cerrar)
+    assert r_abrir.status_code == 200 and r_cerrar.status_code == 200
+    clave = re.search(r"/p/([A-Za-z0-9_-]{43})/", r_abrir.json()["url"]).group(1)
+    assert (await previa.get(f"/p/{clave}/index.html")).status_code == 404
+    assert api.app.state.claves.buscar(clave) is None
+
+
+def test_cerrar_invalida_todas_las_claves_del_proyecto():
+    """Requisito de T16: un cierre (también uno atrasado de una sesión vieja) no deja ninguna viva."""
+    c = Claves()
+    k1 = c.rotar("video001", "r1", "t")
+    k2 = c.rotar("video001", "r2", "t")
+    otra = c.rotar("video002", "r1", "t")
+    c.cerrar("video001")
+    assert c.buscar(k1) is None and c.buscar(k2) is None
+    assert c.buscar(otra) is not None  # solo las del proyecto cerrado
+    c.cerrar("video001")  # idempotente
+
+
+async def test_cierre_atrasado_no_deja_claves_vivas(api, previa):
+    pid, vieja = await _abrir(api)
+    _, nueva = await _abrir(api, pid)
+    assert (await api.delete(f"/video/proyectos/{pid}/preview")).status_code == 200  # el de la sesión vieja
+    for k in (vieja, nueva):
+        assert (await previa.get(f"/p/{k}/index.html")).status_code == 404
+
+
+async def test_proyecto_recreado_con_otro_creado_no_sirve_y_cierra_la_clave(api, previa):
+    pid, clave = await _abrir(api)
+    assert (await previa.get(f"/p/{clave}/index.html")).status_code == 200
+    # el proyecto desaparece y se recrea por fuera de REST: mismo id y carpeta, otro `creado`
+    (api.raiz / pid / "proyecto.json").write_text(json.dumps({"creado": "2031-01-01T00:00:00.000Z"}), encoding="utf-8")
+    r = await previa.get(f"/p/{clave}/index.html")
+    assert r.status_code == 404
+    _cabeceras_ok(r)
+    assert api.app.state.claves.buscar(clave) is None  # la clave queda invalidada
+    # aunque el `creado` volviera a coincidir, la clave ya no vale
+    (api.raiz / pid / "proyecto.json").write_text(json.dumps({"creado": CREADO}), encoding="utf-8")
+    assert (await previa.get(f"/p/{clave}/index.html")).status_code == 404
+
+
+@pytest.mark.parametrize("contenido", [None, "no es json", "[]", '{"creado": 5}', "{}"])
+async def test_proyecto_json_ilegible_o_sin_creado_404(api, previa, contenido):
+    pid, clave = await _abrir(api)
+    destino = api.raiz / pid / "proyecto.json"
+    destino.unlink() if contenido is None else destino.write_text(contenido, encoding="utf-8")
+    assert (await previa.get(f"/p/{clave}/index.html")).status_code == 404
+
+
+async def test_ancestro_enlazado_es_404_y_no_500(api, previa, monkeypatch):
+    from app_backend.navegador import NavegadorError
+
+    _, clave = await _abrir(api)
+
+    def enlazado():
+        raise NavegadorError("La carpeta de estado es un enlace: C:\\secreto\\ruta")
+
+    monkeypatch.setattr(preview, "comprobar_ancestros", enlazado)
+    r = await previa.get(f"/p/{clave}/index.html")
+    assert r.status_code == 404 and "secreto" not in r.text
+    _cabeceras_ok(r)
+
+
+def test_reserva_reintenta_los_puertos_ajenos_y_los_recupera():
+    (p,) = _libres(1)
+    ajeno = socket.socket()
+    ajeno.bind(("127.0.0.1", p))
+    esperas: list[float] = []
+
+    def dormir(s: float) -> None:
+        esperas.append(s)
+        ajeno.close()  # el otro socket (TIME_WAIT, o un listener que cierra) libera el puerto
+
+    r = preview.reservar_puertos((p,), reintentos=3, espera=0.01, dormir=dormir)
+    try:
+        assert r.puertos == (p,) and r.ajenos == () and len(esperas) == 1
+    finally:
+        r.cerrar()
+
+
+def test_reserva_reintento_acotado_si_el_puerto_sigue_ocupado():
+    (p,) = _libres(1)
+    ajeno = socket.socket()
+    ajeno.bind(("127.0.0.1", p))
+    esperas: list[float] = []
+    try:
+        r = preview.reservar_puertos((p,), reintentos=3, espera=0.01, dormir=esperas.append)
+        assert r.puertos == () and r.ajenos == (p,)
+        assert len(esperas) == 3  # acotado: ni uno más
+    finally:
+        ajeno.close()
+
+
+def test_reserva_sin_ajenos_no_espera():
+    puertos = _libres(2)
+    esperas: list[float] = []
+    r = preview.reservar_puertos(puertos, dormir=esperas.append)
+    try:
+        assert esperas == [] and r.ajenos == ()
+    finally:
+        r.cerrar()
+
+
+def test_reserva_el_reintento_total_es_corto():
+    firma = inspect.signature(preview.reservar_puertos).parameters
+    assert firma["reintentos"].default * firma["espera"].default <= 2.0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="SO_EXCLUSIVEADDRUSE solo existe en Windows")
+def test_reabrir_con_conexion_aceptada_en_time_wait_en_windows():
+    # TODO(Windows): medir si, tras cerrar la reserva con una conexión aceptada (TIME_WAIT), el
+    # `bind` exclusivo vuelve a fallar y durante cuánto (la documentación de Winsock lo sugiere).
+    # Esta prueba solo fija lo que sí debe cumplirse: con el reintento acotado, reservar nunca
+    # lanza ni se queda esperando más de lo previsto, y los puertos que no vuelven quedan en `ajenos`.
+    (p,) = _libres(1)
+    primera = preview.reservar_puertos((p,))
+    cliente = socket.create_connection(("127.0.0.1", p), timeout=2)
+    aceptada, _ = primera.sockets[0].accept()
+    aceptada.close()
+    cliente.close()
+    primera.cerrar()
+    segunda = preview.reservar_puertos((p,), reintentos=2, espera=0.1)
+    try:
+        assert set(segunda.puertos) | set(segunda.ajenos) == {p}
+    finally:
+        segunda.cerrar()
