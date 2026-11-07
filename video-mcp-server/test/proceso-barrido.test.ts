@@ -473,7 +473,9 @@ describe("carpetasDelBundle", () => {
   it.skipIf(!h)("con manifiesto, la carpeta entera de la versión", () => {
     const man = path.join(F.nav, "MANIFIESTO-SHA256.json");
     const o = carpetasDelBundle(h, { HYPERFRAMES_BROWSER_PATH: F.exe, VIDEO_NAVEGADOR_MANIFIESTO: man });
-    // La ruta tal cual y su realpath (iguales salvo con nombres 8.3, como en el runner de CI).
+    // La ruta tal cual y su realpath (iguales salvo con nombres 8.3, como en el runner de CI). Sin alias 8.3 las
+    // dos formas coinciden y este test no distinguiría quitar `ambas()`: solo protege donde %TEMP% es corto
+    // (revisión post-R2, L3; en local se reproduce con TEMP apuntando a una ruta 8.3).
     const comoVienen = o.arboles.map((a) => a.toLowerCase());
     expect(comoVienen).toContain(path.resolve(F.nav).toLowerCase());
     expect(comoVienen).toContain(fs.realpathSync.native(F.nav).toLowerCase());

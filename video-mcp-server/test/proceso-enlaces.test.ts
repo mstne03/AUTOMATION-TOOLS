@@ -36,4 +36,24 @@ describe.runIf(process.platform === "win32")("pasaPorEnlace", () => {
     expect(pasaPorEnlace(junta)).toBe(true);
     expect(pasaPorEnlace(path.join(junta, "hf-home"))).toBe(true);
   });
+
+  // Revisión post-R2, H1: lstat no marca como enlace una junction a \\?\Volume{GUID}\… (la crea mklink /J sin
+  // privilegios); la comparación con realpath sí la rechazaba.
+  it("una junction a Volume{GUID}, también desde su ruta 8.3", () => {
+    const unidad = path.parse(real).root; // C:\
+    const guid = /\\\\\?\\Volume\{[0-9a-f-]+\}\\/i.exec(execFileSync("mountvol", [unidad, "/L"]).toString())?.[0];
+    expect(guid, "mountvol no dio el volumen").toBeTruthy();
+    const destino = guid + path.dirname(real).slice(unidad.length);
+    const junta = path.join(BASE, "junta a volumen con nombre largo");
+    execFileSync("cmd.exe", ["/d", "/c", `mklink /J "${junta}" "${destino}"`], { windowsVerbatimArguments: true });
+    expect(fs.lstatSync(junta).isSymbolicLink(), "si lstat ya la marca, este test no prueba H1").toBe(false);
+    expect(pasaPorEnlace(path.join(junta, "hf-home"))).toBe(true);
+    const c = corta(path.join(junta, "hf-home"));
+    if (c.toLowerCase() !== path.join(junta, "hf-home").toLowerCase()) expect(pasaPorEnlace(c)).toBe(true);
+  });
+
+  it("rutas UNC o de dispositivo: falla cerrado", () => {
+    for (const r of ["\\\\?\\UNC\\srv\\share\\x", "\\\\.\\C:\\x", "\\\\srv\\share\\x"]) expect(() => pasaPorEnlace(r)).toThrow(/red o de dispositivo/);
+    expect(pasaPorEnlace("\\\\?\\" + real)).toBe(false); // \\?\C:\… es local: se acepta
+  });
 });

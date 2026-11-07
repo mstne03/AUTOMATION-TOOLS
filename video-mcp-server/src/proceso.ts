@@ -58,15 +58,38 @@ const normalizarRuta = (p: string): string => (process.platform === "win32" ? pa
 const mismaRuta = (a: string, b: string): boolean => normalizarRuta(a) === normalizarRuta(b);
 
 /**
- * ¿Algún tramo de la ruta (ella o un padre) es un enlace o una junction? Se mira cada tramo con lstat en
- * vez de comparar con realpath: realpath devuelve el nombre largo y una ruta 8.3 (`C:\Users\RUNNER~1\…`,
- * habitual en %TEMP%) parecería un enlace sin serlo. En Windows lstat marca las junctions como enlace.
+ * ¿Algún tramo de la ruta (ella o un padre) es un enlace o una junction? No se compara con realpath: da el
+ * nombre largo, y una ruta 8.3 (`C:\Users\RUNNER~1\…`, habitual en %TEMP%) parecería un enlace sin serlo.
+ * En cada tramo se mira lstat y, además, su entrada en el listado del padre: lstat no marca las junctions a
+ * `\??\Volume{GUID}\…` (las crea `mklink /J` sin privilegios), y el Dirent sí, porque mira el atributo de
+ * reparse point (revisión post-R2, H1). Un tramo 8.3 no aparece por su nombre en el listado: se busca su
+ * entrada larga por identificador de fichero, y si no aparece, falla cerrado. Rutas UNC o de dispositivo
+ * (`\\?\UNC\`, `\\.\`, `\\srv\`): falla cerrado; las carpetas del motor siempre son locales.
  */
 export function pasaPorEnlace(ruta: string): boolean {
+  if (/^(\\\\\?\\UNC\\|\\\\\.\\|\\\\[^?.])/i.test(ruta)) throw new Error(`Ruta de red o de dispositivo, no la uso: ${ruta}`);
   for (let d = path.resolve(sinPrefijoLargo(ruta)); ; ) {
     if (fs.lstatSync(d).isSymbolicLink()) return true;
     const padre = path.dirname(d);
     if (padre === d) return false;
+    const nombre = path.basename(d).toLowerCase();
+    const entradas = fs.readdirSync(padre, { withFileTypes: true });
+    const entrada = entradas.find((e) => e.name.toLowerCase() === nombre);
+    if (!entrada) {
+      const id = fs.lstatSync(d, { bigint: true }).ino;
+      const mismoId = (e: fs.Dirent) => {
+        try {
+          return fs.lstatSync(path.join(padre, e.name), { bigint: true }).ino === id;
+        } catch {
+          return false; // ilegible (p. ej. un fichero del sistema bloqueado): no es el tramo buscado
+        }
+      };
+      // Todas las que comparten identificador, no la primera: lstat atraviesa una junction a Volume{GUID}, así
+      // que la junction y su destino (si está en la misma carpeta) dan el mismo; basta con que una sea enlace.
+      const iguales = entradas.filter(mismoId);
+      if (!iguales.length) throw new Error(`No encuentro ${d} en el listado de su carpeta: no puedo comprobar si es un enlace.`);
+      if (iguales.some((e) => e.isSymbolicLink())) return true;
+    } else if (entrada.isSymbolicLink()) return true;
     d = padre;
   }
 }
@@ -605,7 +628,9 @@ const MODULOS_PS = ["Microsoft.PowerShell.Utility", "Microsoft.PowerShell.Manage
 function powershell(script: string): Promise<Resultado> {
   const raiz = path.join(system32(), "WindowsPowerShell", "v1.0");
   const exe = path.join(raiz, "powershell.exe");
-  const imports = MODULOS_PS.map((m) => `Import-Module '${path.join(raiz, "Modules", m, `${m}.psd1`)}' -ErrorAction Stop`).join("\n");
+  // Comillas simples de PowerShell: una ' dentro se dobla (revisión post-R2, L1).
+  const literal = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const imports = MODULOS_PS.map((m) => `Import-Module ${literal(path.join(raiz, "Modules", m, `${m}.psd1`))} -ErrorAction Stop`).join("\n");
   const prologo = `$ErrorActionPreference = 'Stop'\n$PSModuleAutoloadingPreference = 'None'\n${imports}\n$ErrorActionPreference = 'Continue'`;
   const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${prologo}\n${script}`, "utf16le").toString("base64");
   // cwd fijo: sin LOCALAPPDATA (I5), PowerShell escribe su ModuleAnalysisCache relativa al cwd.
