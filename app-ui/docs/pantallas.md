@@ -11,7 +11,7 @@ estados posibles. Lo que no está aquí no se exige.
 - Barra lateral, de arriba abajo: logo y título "SEO Studio" (`h2`); botón `nav-paleta`
   "Buscar o ejecutar… Ctrl K" (abre la paleta de comandos, también con Ctrl K); enlaces con
   icono, en este orden y con estos `data-testid`: `nav-chat` ("Chat"), `nav-publicar`
-  ("Publicar"), `nav-guiones` ("Guiones"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento");
+  ("Publicar"), `nav-guiones` ("Guiones"), `nav-video` ("Vídeo"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento");
   el activo lleva
   `aria-current="page"`; lista de conversaciones (`nav-conversaciones`) con el botón
   `conv-nueva` ("Nueva conversación") y un botón `conv-<id>` por conversación (título = primeras
@@ -31,7 +31,7 @@ estados posibles. Lo que no está aquí no se exige.
 - Onboarding ya no es un enlace fijo del menú: se llega con el aviso, desde Ajustes o al abrir
   la app sin configurar.
 - Paleta de comandos (Ctrl K): `paleta` (diálogo) con `paleta-input`; navega a cada pantalla y
-  ofrece "Nueva conversación", "Publicar un vídeo", "Escribir un guion" (Guiones en el modo
+  ofrece "Abrir Vídeo" (`/video`), "Nueva conversación", "Publicar un vídeo", "Escribir un guion" (Guiones en el modo
   Escribir) y "Preguntar a la KB…".
 - Tema: `data-theme` en `<html>` (`dark` | `light`; sin atributo sigue al sistema), guardado en
   localStorage (`seo-studio.tema`) hasta que el sidecar lo persista.
@@ -222,7 +222,12 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
     marca: se marca el modo efectivo (Compatible) y lo guardado no se toca. Guardado automático en
     `localStorage` (`seo-studio.render-modo`; un valor inválido vale «auto») con toast «Modo de
     render guardado». `ajustes-render-modo-nota`: «La preferencia se guarda en este equipo; todavía
-    no se aplica a los renders.»
+    no se aplica a los renders.» **Se retira** en la Task 20, que quita el elemento y su E2E
+    (`motor-video.spec.ts`) en el mismo commit: el modo ya se aplica al render.
+  - **Clave de ElevenLabs** (Task 20): `ajustes-eleven-estado` (chip: con clave / sin clave),
+    `ajustes-eleven-clave` (`input` password, **vacío siempre**: la clave solo se escribe, nunca
+    se lee), `ajustes-eleven-guardar` (`PUT /settings { elevenlabs_api_key }`, tras validarla) y
+    `ajustes-eleven-borrar` (cadena vacía = borrar).
 - **Avanzado**: cuota de YouTube de hoy (`cuota-<bucket>`, "154 de 10.000"), información
   (directorio de estado y almacén de secretos con su nombre legible: "Administrador de
   credenciales de Windows") y `ajustes-asistente` ("Abrir el asistente" → Onboarding).
@@ -463,6 +468,70 @@ el texto que lee el agente). Cada elemento lleva `origen` ("publica" | "privada"
   `DELETE /kb/privada/fuentes`), alta por URL http(s) (`kb-privada-url`, `kb-privada-add`; valida
   el formato, avisa con un toast y refresca la lista) y, si está vacía, estado vacío con "Añadir
   URL". Solo se añaden URLs; las notas y los documentos locales entran por las tools del agente.
+
+## Vídeo (`/video` y `/video/:id`)
+
+Contrato completo de la Task 14. Cada lane (U1–U5) implementa su parte sin tocar este fichero; el
+orden de ficheros y de propietarios está en `PLAN-video-fase1.md`. Todo texto del modelo o del
+proyecto se pinta como texto (nunca HTML). La UI no envía rutas: los recursos se identifican por
+`bandeja_id` (32 hex del comando nativo) y los proyectos, guiones y perfiles por su id de servidor.
+Solo hay `src` de iframe desde `url` del backend, y solo si cumple `http://127.0.0.1:4781[0-3]/p/…`
+(`aPreviewUrl`). Estado del editor: `state/editor.ts` (historial ≤ 100 instantáneas, autoguardado
+con 800 ms de espera; un 409 recarga lo del servidor y guarda la edición local como borrador).
+
+### Marco
+
+`nav-video` («Vídeo»), entre `nav-guiones` y `nav-canal`. Paleta: «Abrir Vídeo». Las rutas
+`/video` (`VideoScreen`) y `/video/:id` (`EditorVideoScreen`) están dentro del marco común.
+Hasta que U2 las rellene, ambas pantallas están vacías.
+
+### Lista (`/video`)
+
+`video-lista`; por proyecto `video-proyecto-<id>` (título, perfil, duración, fecha),
+`video-proyecto-estado-<id>` (`data-estado` = `borrador|renderizando|listo|error`) y
+`video-proyecto-borrar-<id>` (con confirmación). Estados: `video-vacio`, `video-sin-motor`
+(503 del sidecar) y `video-error`.
+
+### Guiones en modo Vídeo (T15)
+
+`escribir-formato` gana la opción Vídeo. `escribir-video-nota` (coste en cuota de YouTube),
+`escribir-video-sin-motor`, `guion-video` (resultado), `guion-video-titulo`, `guion-video-gancho`,
+`guion-video-escenas`, `guion-video-escena` (`li`), `guion-video-frase`, `guion-video-tipo`,
+`guion-video-subir`, `guion-video-bajar`, `guion-video-recurso`, `guion-video-avisos`,
+`guion-video-errores` (`role=alert`), `guion-video-guardar`, `guion-video-crear`,
+`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-borrar-<id>`.
+
+### Editor (`/video/:id`)
+
+Layout B: cabecera de 48 px; cuerpo `minmax(0, 1fr) 320px` (preview a la izquierda, panel a la
+derecha); timeline a todo el ancho, 240 px, por debajo. Cabe a 900×600.
+`editor`, `editor-titulo`, `editor-volver`, `editor-guardado` («Guardado», «Guardando…», «Error al
+guardar»), `editor-conflicto`, `editor-deshacer`, `editor-rehacer`, `editor-render`, `editor-error`.
+
+- **Preview:** `preview-marco` (iframe 1080×1920 escalado con `transform`), `preview-play`,
+  `preview-tiempo`, `preview-cargando`, `preview-error`, `preview-aviso-fondo`.
+- **Panel:** `panel-pestanas`, `panel-escena`, `panel-recursos`, `panel-perfil`.
+  - Escena: `escena-vacia`, `escena-tipo`, `escena-campo-<campo>`, `escena-frase-<fraseId>`,
+    `escena-capa-modo`, `escena-capa-encuadre`, `escena-capa-quitar`.
+  - Recursos: `recursos-aviso`, `recursos-anadir-foto`, `recursos-anadir-clip`, `recursos-lista`,
+    `recurso-<id>`, `recurso-aviso-<id>`, `recurso-borrar-<id>`, `recursos-pendientes`,
+    `recurso-pendiente-<escenaId>`, `recursos-error`.
+  - Perfil: `perfil-selector`, `perfil-duplicar`, `perfil-color-<campo>`, `perfil-fuente`,
+    `perfil-voz`, `perfil-voz-escuchar`, `perfil-error`.
+- **Timeline:** `timeline`, `timeline-regla`, `timeline-cabezal`, `pista-escenas`,
+  `pista-recursos`, `pista-voz`, `pista-musica`, `pista-subtitulos`, `clip-escena-<id>`,
+  `clip-recurso-<escenaId>`, `clip-voz-<fraseId>`, `clip-subtitulo-<i>`, `voz-generar`,
+  `voz-coste`, `voz-regenerar-<fraseId>`, `voz-quitar-silencios-<fraseId>`, `voz-sin-clave`,
+  `voz-confirmar`, `voz-confirmar-coste`, `voz-confirmar-ok`, `musica-elegir`, `musica-inicio`,
+  `musica-volumen`, `musica-ducking`, `subtitulo-texto`.
+- **Render:** `render-dialogo`, `render-bloqueo`, `render-lanzar`, `render-progreso`,
+  `render-resultado`, `render-avisos`, `render-exportar`, `render-error`.
+
+La verificación E2E de cada grupo la escribe el lane que lo implementa, en el mismo commit
+(U1 `video-guion.spec.ts`; U2 `video-editor.spec.ts` y `video-preview.spec.ts`; U5
+`motor-video.spec.ts` y `video-render.spec.ts`). En la Task 14 solo existe `nav-video`, cubierto
+por `marco.spec.ts`. Utilidades compartidas: `e2e/video-comun.ts` (guion y proyecto de ejemplo,
+atajos sobre la API real) y `e2e/elevenlabs-mock.ts` (ElevenLabs falso, `VIDEO_PRUEBAS_TTS_URL`).
 
 ## Regresión visual
 

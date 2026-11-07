@@ -23,7 +23,19 @@ import type {
   ToolInfo,
   YouTubeAuthOut,
   YouTubeStatus,
+  AvisoVideo,
+  CosteVoz,
+  CuerpoVoz,
+  FormaVoz,
+  GuionVideoResumen,
+  ModoRender,
+  PerfilVideo,
+  PistaMusica,
+  PreviewVideo,
+  ProyectoVideoResumen,
+  VozVideo,
 } from "./types";
+import type { Proyecto } from "../video/modelo";
 
 export class ApiError extends Error {
   constructor(
@@ -73,6 +85,35 @@ export interface Client {
   /** Inicia la descarga (202). 409 si ya hay una en curso; 503 si el módulo de vídeo no está instalado. */
   videoNavegadorDescarga(): Promise<NavegadorEstado>;
   videoCapacidades(): Promise<CapacidadesVideo>;
+  videoGuionEsquema(): Promise<Texto>;
+  videoGuiones(): Promise<GuionVideoResumen[]>;
+  /** 413 (cuerpo grande), 422 (esquema, con `problemas` en el detalle). */
+  videoGuionCrear(guion: unknown): Promise<{ id: string; avisos: AvisoVideo[] }>;
+  videoGuion(gid: string): Promise<unknown>;
+  videoGuionBorrar(gid: string): Promise<Record<string, never>>;
+  videoProyectos(): Promise<ProyectoVideoResumen[]>;
+  videoProyectoCrear(guionId: string, perfilId: string): Promise<{ id: string }>;
+  videoProyecto(id: string): Promise<Proyecto>;
+  /** 409: la revisión enviada no es la actual. */
+  videoProyectoGuardar(id: string, cuerpo: { revision: number; proyecto: Proyecto }): Promise<{ revision: number; avisos: AvisoVideo[] }>;
+  videoProyectoBorrar(id: string): Promise<Record<string, never>>;
+  videoPreviewAbrir(id: string, webgpu: boolean): Promise<PreviewVideo>;
+  videoPreviewCerrar(id: string): Promise<Record<string, never>>;
+  videoVozCoste(id: string): Promise<CosteVoz>;
+  videoVozForma(id: string): Promise<FormaVoz>;
+  videoVozGenerar(id: string, cuerpo: CuerpoVoz): Promise<Record<string, unknown>>;
+  videoVozQuitarSilencios(id: string, cuerpo: CuerpoVoz): Promise<Record<string, unknown>>;
+  /** El recurso se identifica por `bandejaId` (32 hex que devuelve el comando nativo), nunca por ruta. */
+  videoRecursoAnadir(id: string, bandejaId: string, clase: "foto" | "clip"): Promise<Record<string, unknown>>;
+  videoRecursoBorrar(id: string, rid: string): Promise<Record<string, unknown>>;
+  videoRender(id: string, modo: ModoRender): Promise<Job>;
+  videoPerfiles(): Promise<PerfilVideo[]>;
+  videoPerfilDuplicar(pid: string): Promise<PerfilVideo>;
+  videoPerfilGuardar(pid: string, perfil: PerfilVideo): Promise<PerfilVideo>;
+  videoVoces(): Promise<VozVideo[]>;
+  videoVozMuestra(voiceId: string, caracteresConfirmados: number): Promise<Record<string, unknown>>;
+  videoMusica(): Promise<PistaMusica[]>;
+  videoMusicaImportar(bandejaId: string): Promise<PistaMusica>;
 }
 
 export function createClient(port: number, token: string, fetchFn: typeof fetch = fetch): Client {
@@ -143,6 +184,42 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     videoNavegador: () => req("/video/navegador"),
     videoNavegadorDescarga: () => req("/video/navegador/descarga", { method: "POST" }),
     videoCapacidades: () => req("/video/capacidades"),
+    videoGuionEsquema: () => req("/video/guiones/esquema"),
+    videoGuiones: () => req("/video/guiones"),
+    videoGuionCrear: (guion) => req("/video/guiones", { method: "POST", body: JSON.stringify({ guion }) }),
+    videoGuion: (gid) => req(`/video/guiones/${encodeURIComponent(gid)}`),
+    videoGuionBorrar: (gid) => req(`/video/guiones/${encodeURIComponent(gid)}`, { method: "DELETE" }),
+    videoProyectos: () => req("/video/proyectos"),
+    videoProyectoCrear: (guionId, perfilId) =>
+      req("/video/proyectos", { method: "POST", body: JSON.stringify({ guion_id: guionId, perfil_id: perfilId }) }),
+    videoProyecto: (id) => req(`/video/proyectos/${encodeURIComponent(id)}`),
+    videoProyectoGuardar: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(cuerpo) }),
+    videoProyectoBorrar: (id) => req(`/video/proyectos/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    videoPreviewAbrir: (id, webgpu) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "POST", body: JSON.stringify({ webgpu }) }),
+    videoPreviewCerrar: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "DELETE" }),
+    videoVozCoste: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/voz/coste`),
+    videoVozForma: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/voz/forma`),
+    videoVozGenerar: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz`, { method: "POST", body: JSON.stringify(cuerpo) }),
+    videoVozQuitarSilencios: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz/quitar-silencios`, { method: "POST", body: JSON.stringify(cuerpo) }),
+    videoRecursoAnadir: (id, bandejaId, clase) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/recursos`, { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId, clase }) }),
+    videoRecursoBorrar: (id, rid) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/recursos/${encodeURIComponent(rid)}`, { method: "DELETE" }),
+    videoRender: (id, modo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/render`, { method: "POST", body: JSON.stringify({ modo }) }),
+    videoPerfiles: () => req("/video/perfiles"),
+    videoPerfilDuplicar: (pid) => req(`/video/perfiles/${encodeURIComponent(pid)}/duplicar`, { method: "POST" }),
+    videoPerfilGuardar: (pid, perfil) =>
+      req(`/video/perfiles/${encodeURIComponent(pid)}`, { method: "PUT", body: JSON.stringify(perfil) }),
+    videoVoces: () => req("/video/voces"),
+    videoVozMuestra: (voiceId, caracteresConfirmados) =>
+      req("/video/voces/muestra", { method: "POST", body: JSON.stringify({ voiceId, caracteres_confirmados: caracteresConfirmados }) }),
+    videoMusica: () => req("/video/musica"),
+    videoMusicaImportar: (bandejaId) => req("/video/musica", { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId }) }),
   };
 }
 

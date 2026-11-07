@@ -1,11 +1,12 @@
 /** Arranca el sidecar REAL (APP_BACKEND_SECRETS=file, directorio temporal, token fijo) apuntando
  *  a un Anthropic falso, y Vite en el puerto 1420 (el único origen de desarrollo admitido por el CORS del sidecar) con las variables VITE_SIDECAR_*. */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startAnthropicMock } from "./anthropic-mock";
+import { startElevenLabsMock } from "./elevenlabs-mock";
 
 export const TOKEN = "e2e-token-playwright";
 export const VITE_PORT = 1420;
@@ -53,6 +54,14 @@ export default async function globalSetup() {
   anotar({});
   const mock = await startAnthropicMock();
 
+  // Motor de vídeo REAL (no el falso del backend): se compila y el sidecar lo lanza por
+  // APP_BACKEND_VIDEO_CMD. ElevenLabs va a un servidor local para no gastar créditos ni salir a la red.
+  const motorDir = resolve(raiz, "..", "video-mcp-server");
+  const compilar = spawnSync("npm", ["run", "build"], { cwd: motorDir, shell: true, stdio: "inherit" });
+  if (compilar.status !== 0) throw new Error("No se pudo compilar el motor de vídeo (npm run build en video-mcp-server).");
+  const eleven = await startElevenLabsMock();
+  process.env.VIDEO_PRUEBAS_TTS_URL = eleven.url;
+
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
     cwd: resolve(raiz, "..", "app-backend"),
     env: {
@@ -61,6 +70,8 @@ export default async function globalSetup() {
       APP_BACKEND_DIR: stateDir,
       APP_BACKEND_TOKEN: TOKEN,
       ANTHROPIC_BASE_URL: mock.url,
+      APP_BACKEND_VIDEO_CMD: JSON.stringify(["node", join(motorDir, "dist", "index.js")]),
+      VIDEO_PRUEBAS_TTS_URL: eleven.url,
     },
     shell: true,
     stdio: ["ignore", "pipe", "inherit"],
@@ -102,7 +113,7 @@ export default async function globalSetup() {
   process.env.E2E_SIDECAR = base;
   process.env.E2E_TOKEN = TOKEN;
   process.env.E2E_STATE_DIR = stateDir;
-  (globalThis as { __e2e?: unknown }).__e2e = { mock: mock.server, sidecar, vite };
+  (globalThis as { __e2e?: unknown }).__e2e = { mock: mock.server, eleven: eleven.server, sidecar, vite };
 }
 
 export { ESTADO };
