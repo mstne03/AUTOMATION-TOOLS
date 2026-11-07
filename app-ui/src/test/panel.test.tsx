@@ -276,12 +276,12 @@ describe("recursos", () => {
   });
 
   it("un borrado que responde durante un conflicto no edita ni vacía el historial y avisa", async () => {
-    let soltar: (v: unknown) => void = () => {};
-    const borrar = vi.fn(() => new Promise((r) => { soltar = r; }));
+    let soltar: (v: Record<string, unknown>) => void = () => {};
+    const borrar = vi.fn((_id: string, _rid: string) => new Promise<Record<string, unknown>>((r) => { soltar = r; }));
     montar({ videoRecursoBorrar: borrar }, proyecto({ recursos: [recurso()] }));
     pestana("Recursos");
     fireEvent.click(g("recurso-borrar-r-0123456789abcdef"));
-    act(() => useEditor.setState({ conflicto: true, historial: [proy()] }));
+    act(() => useEditor.setState({ conflicto: true, historial: [JSON.stringify(proy())] }));
     await act(async () => { soltar({}); });
     expect((await screen.findByTestId("recursos-error")).textContent).toContain("conflicto");
     expect(proy().recursos).toHaveLength(1);
