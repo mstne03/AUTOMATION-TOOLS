@@ -170,12 +170,21 @@ describe("servidor stdio", () => {
         "video_guion_listar",
         "video_listar",
         "video_musica",
+        "video_perfil_duplicar",
+        "video_perfil_guardar",
+        "video_perfiles_listar",
         "video_proyecto_crear",
         "video_proyecto_guardar",
         "video_proyecto_leer",
         "video_proyecto_listar",
         "video_renderizar",
         "video_vista_previa",
+        "video_voces",
+        "video_voz_coste",
+        "video_voz_forma",
+        "video_voz_generar",
+        "video_voz_muestra",
+        "video_voz_quitar_silencios",
       ]);
       const guardar = lista.result.tools.find((t: { name: string }) => t.name === "video_guardar_guion");
       expect(guardar.description).toMatch(/video_ayuda/);

@@ -73,7 +73,7 @@ function contieneUrl(s: string): boolean {
 const CRECIMIENTO_NFC = 4;
 
 /** Texto libre: NFC, sin invisibles ni control ni bidi ni surrogados sueltos, y sin nada que `urlsDeRed` marcaría. */
-function textoSeguro(max: number, min = 0) {
+export function textoSeguro(max: number, min = 0) {
   return z
     .string()
     .min(min)
@@ -319,7 +319,7 @@ export class ErrorEsquema extends Error {
   }
 }
 
-function validar<T>(esquema: z.ZodType<T>, v: unknown): T {
+export function validar<T>(esquema: z.ZodType<T>, v: unknown): T {
   const r = esquema.safeParse(v);
   if (r.success) return r.data;
   const problemas = r.error.issues.slice(0, 50).map((i) => {

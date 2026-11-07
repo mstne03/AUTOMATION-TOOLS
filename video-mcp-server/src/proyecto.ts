@@ -29,7 +29,7 @@ import {
   borrarArbol,
 } from "./paths.js";
 
-export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado";
+export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_configurar" | "reintento_facturado" | "fallo_facturado";
 export interface Problema {
   ruta: string;
   codigo: string;
@@ -51,10 +51,10 @@ export const GUION_ID_RE = /^g-[0-9a-f]{16}$/;
 /** Tope de lo que se lee de disco: un proyecto de 90 escenas pesa decenas de KB. */
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 
-const esquema = (mensaje: string, codigo: string, ruta = ""): ErrorAlmacen => new ErrorAlmacen("esquema", mensaje, [{ ruta, codigo }]);
+export const esquema = (mensaje: string, codigo: string, ruta = ""): ErrorAlmacen => new ErrorAlmacen("esquema", mensaje, [{ ruta, codigo }]);
 
 /** Convierte el error de zod (que solo lleva ruta y código, nunca el valor) en un error tipado. */
-function validando<T>(f: () => T): T {
+export function validando<T>(f: () => T): T {
   try {
     return f();
   } catch (e) {
@@ -68,7 +68,7 @@ function validando<T>(f: () => T): T {
  * (ni enlace ni otra cosa que un fichero), `fstat` del descriptor (fichero normal, un solo enlace, mismo dev/ino) y
  * lectura del descriptor hasta MAX+1 bytes: un fichero que crece o cambia de nombre no se cuela. Luego se valida.
  */
-function leerJson(ruta: string): unknown {
+export function leerJson(ruta: string): unknown {
   const nombre = path.basename(ruta);
   const enlace = () => esquema(`${nombre} no es un fichero normal sin enlaces.`, "enlace_no_permitido");
   let antes: fs.BigIntStats;
@@ -103,11 +103,11 @@ function leerJson(ruta: string): unknown {
   }
 }
 
-function escribirJson(ruta: string, doc: unknown): void {
+export function escribirJson(ruta: string, doc: unknown): void {
   escribirAtomico(ruta, JSON.stringify(doc, null, 2));
 }
 
-const existe = (ruta: string): boolean => {
+export const existe = (ruta: string): boolean => {
   try {
     fs.lstatSync(ruta);
     return true;
