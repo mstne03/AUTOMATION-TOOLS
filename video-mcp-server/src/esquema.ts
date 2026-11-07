@@ -29,6 +29,8 @@ const MAX_ABS = 1e12;
 
 export const PROYECTO_ID_RE = /^video\d{3}$/;
 export const RECURSO_ID_RE = /^r-[0-9a-f]{16}$/;
+/** Identificador de voz de ElevenLabs. Vive aquí (y voz.ts lo reexporta) para que perfil.ts y voz.ts no se importen en círculo. */
+export const VOICE_ID_RE = /^[A-Za-z0-9]{10,40}$/;
 export const PERFIL_ID_RE = /^(defecto|p-[0-9a-f]{16})$/;
 /** Ids de frase, escena y pista: sin separadores, `:` ni `.`. */
 export const ID_LOCAL_RE = /^[A-Za-z0-9_-]{1,40}$/;
