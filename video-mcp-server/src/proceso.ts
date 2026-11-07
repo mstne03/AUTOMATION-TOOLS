@@ -589,10 +589,25 @@ export function filtrarProcesos(lista: ProcesoVivo[], o: ObjetivoBarrido): Proce
   });
 }
 
-/** PowerShell por ruta fija, con el script codificado (sin comillas que escapar) y salida en UTF-8. */
+/**
+ * Módulos que usan los scripts de `powershell()`: ConvertTo/From-Json, Stop-Process y Get-CimInstance. Utility va
+ * primero: al cargarse, CimCmdlets llama a Set-Alias, que está en Utility (sin autocarga no lo encontraría).
+ */
+const MODULOS_PS = ["Microsoft.PowerShell.Utility", "Microsoft.PowerShell.Management", "CimCmdlets"];
+
+/**
+ * PowerShell por ruta fija, con el script codificado (sin comillas que escapar) y salida en UTF-8.
+ * Sin autocarga y con cada módulo importado por su ruta en System32: con el entorno de I5 (sin
+ * PSModuleAnalysisCachePath) PowerShell analiza en cada arranque todos los módulos de PSModulePath, y en un
+ * equipo con muchos (el runner de CI) el listado pasaba de 0,3 s a 13-30 s y agotaba TIMEOUT_LISTAR_MS. Así
+ * tampoco carga ningún módulo plantado en otra carpeta de PSModulePath.
+ */
 function powershell(script: string): Promise<Resultado> {
-  const exe = path.join(system32(), "WindowsPowerShell", "v1.0", "powershell.exe");
-  const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${script}`, "utf16le").toString("base64");
+  const raiz = path.join(system32(), "WindowsPowerShell", "v1.0");
+  const exe = path.join(raiz, "powershell.exe");
+  const imports = MODULOS_PS.map((m) => `Import-Module '${path.join(raiz, "Modules", m, `${m}.psd1`)}' -ErrorAction Stop`).join("\n");
+  const prologo = `$ErrorActionPreference = 'Stop'\n$PSModuleAutoloadingPreference = 'None'\n${imports}\n$ErrorActionPreference = 'Continue'`;
+  const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${prologo}\n${script}`, "utf16le").toString("base64");
   // cwd fijo: sin LOCALAPPDATA (I5), PowerShell escribe su ModuleAnalysisCache relativa al cwd.
   return lanzar(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", codificado], { timeoutMs: TIMEOUT_LISTAR_MS, cwd: hfHome() }, false, false);
 }

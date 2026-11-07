@@ -180,22 +180,6 @@ jobs:
           echo "FFMPEG_DIR=$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
-      # En CI, el primer listado real del barrido (Windows PowerShell 5.1 con el entorno mínimo del motor)
-      # supera TIMEOUT_LISTAR_MS (30 s) y el motor se reinicia, como debe. Calentar WMI con pwsh (0,1 s)
-      # o PowerShell 5.1 con el entorno completo (3,2 s) no lo evita. Se mide el camino real
-      # (listarProcesos del motor compilado), lo que deja también ese camino caliente.
-      - name: Medir el listado de procesos del barrido
-        run: |
-          npm run build
-          # Diagnóstico temporal: variantes del entorno de PowerShell, con el runner aún frío.
-          VIDEO_STATE_DIR="$RUNNER_TEMP/medir-variantes/estado" node scripts/medir-listado.mjs
-          VIDEO_STATE_DIR="$RUNNER_TEMP/medir-listado/estado" node --input-type=module -e '
-            const { listarProcesos } = await import("./dist/proceso.js");
-            for (const vez of [1, 2, 3]) {
-              const t = Date.now();
-              try { const l = await listarProcesos(); console.log("vez " + vez + ": " + (Date.now() - t) + " ms, " + l.length + " procesos"); }
-              catch (e) { console.log("vez " + vez + ": " + (Date.now() - t) + " ms, error: " + e.message); }
-            }'
       - run: npm test
 
   # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
