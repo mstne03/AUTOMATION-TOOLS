@@ -680,3 +680,35 @@ async def test_real_xss_en_cada_campo_son_datos(real):
 @pytest.mark.skip(reason="Pendiente de T3: `_composicion/**` aún no se genera; aquí irá 'ningún <script> ni URL en la composición'")
 async def test_real_xss_en_la_composicion():
     ...
+
+
+# ------------------------------------------------------- R1 T1→T9 (N1, N2)
+
+
+@pytest.mark.parametrize("texto", ["\\ud800", "a\\udfffb", "\\udc00\\ud800"])
+async def test_sustituto_suelto_422_y_el_motor_sigue(api, texto):
+    # N1: un sustituto UTF-16 suelto no se puede codificar en UTF-8 y tumbaba la sesión del motor.
+    cuerpo = '{"guion": {"titulo": "' + texto + '"}}'
+    r = await api.post("/video/guiones", content=cuerpo, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+    assert "\\ud8" not in r.text.lower() and "\\udc" not in r.text.lower()
+    r = await api.post("/video/guiones", json={"guion": GUION})
+    assert r.status_code == 201
+
+
+async def test_sustituto_suelto_en_clave_422(api):
+    cuerpo = '{"guion": {"\\ud800": 1}}'
+    r = await api.post("/video/guiones", content=cuerpo, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("clase", ["MotorError", "MotorNoDisponible"])
+async def test_capacidades_sin_rutas_en_errores(api, monkeypatch, clase):
+    # N2: /video/capacidades reenviaba str(e) con rutas del usuario.
+    async def roto(*a, **k):
+        raise getattr(video, clase)("fallo en C:\\Users\\Marc Serra\\AppData\\Local\\x")
+
+    monkeypatch.setattr(api.app.state.motor, "llamar", roto)
+    r = await api.get("/video/capacidades")
+    assert r.status_code in (502, 503)
+    _sin_rutas(r.text)

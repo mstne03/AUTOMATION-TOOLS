@@ -464,10 +464,9 @@ def create_app(
             r = await app.state.motor.llamar(
                 "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
             )
-        except video.MotorNoDisponible as e:
-            raise HTTPException(status_code=503, detail=str(e)) from None
         except video.MotorError as e:
-            raise HTTPException(status_code=502, detail=str(e)) from None
+            # R1 T1→T9 (N2): mensajes fijos, como en video_rest; el detalle (con rutas) solo al log.
+            raise video_rest._http(e) from None
         if not isinstance(r.datos, dict):
             raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
         return r.datos

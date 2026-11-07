@@ -167,6 +167,22 @@ def _rechazar_no_finito(constante: str) -> None:
     raise ValueError("no finito")
 
 
+def _tiene_sustituto_suelto(v: object) -> bool:
+    """True si alguna cadena (valor o clave) lleva un sustituto UTF-16 suelto (U+D800–U+DFFF)."""
+    pila = [v]
+    while pila:
+        x = pila.pop()
+        if isinstance(x, str):
+            if any("\ud800" <= c <= "\udfff" for c in x):
+                return True
+        elif isinstance(x, dict):
+            pila.extend(x.keys())
+            pila.extend(x.values())
+        elif isinstance(x, list):
+            pila.extend(x)
+    return False
+
+
 async def leer_cuerpo[M: BaseModel](request: Request, modelo: type[M]) -> M:
     """JSON acotado (profundidad, forma del sobre) y validado sin devolver nunca el valor recibido."""
     crudo = await request.body()
@@ -176,6 +192,10 @@ async def leer_cuerpo[M: BaseModel](request: Request, modelo: type[M]) -> M:
         raise _422("El cuerpo no es JSON válido.", "json") from None
     if _profundidad_excedida(v):
         raise _422(f"El JSON se anida a más de {PROFUNDIDAD_MAXIMA} niveles.", "profundidad")
+    if _tiene_sustituto_suelto(v):
+        # R1 T1→T9 (N1): `\ud800` es JSON válido, pero no se puede codificar en UTF-8 y tumbaba la
+        # sesión MCP del motor (503) antes de validarse.
+        raise _422("El texto tiene caracteres Unicode no válidos.", "unicode")
     try:
         return modelo.model_validate(v)
     except ValidationError as e:
