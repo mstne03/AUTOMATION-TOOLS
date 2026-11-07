@@ -385,7 +385,7 @@ async def test_503_sin_rutas_con_espacios(tmp_path, fake_anthropic, monkeypatch)
             r = await c.get("/video/guiones/esquema")
             assert r.status_code == 503
             _sin_rutas(r.text)
-            assert r.json()["detail"] == video_rest.MENSAJE_503
+            assert r.json()["detail"] == {"mensaje": video_rest.MENSAJE_503, "codigo": "no_disponible"}
 
 
 @pytest.mark.parametrize("gid", ["g-dddddddddddddddd", "g-cccccccccccccccc", "g-bbbbbbbbbbbbbbbb", "g-aaaaaaaaaaaaaaaa"])
@@ -434,7 +434,7 @@ async def test_junction_es_409_enlace_y_en_uso_es_409_distinto(api, tmp_path, mo
     fuera.mkdir()
     _enlace_a_carpeta(fuera, api.raiz / "video042")
     r = await api.delete("/video/proyectos/video042")
-    assert r.status_code == 409 and "enlace" in r.json()["detail"]
+    assert r.status_code == 409 and r.json()["detail"]["codigo"] == "proyecto_enlace"
 
     pid = await _proyecto(api)
     original = os.rename
@@ -446,7 +446,7 @@ async def test_junction_es_409_enlace_y_en_uso_es_409_distinto(api, tmp_path, mo
 
     monkeypatch.setattr(video_rest.os, "rename", en_uso)
     r = await api.delete(f"/video/proyectos/{pid}")
-    assert r.status_code == 409 and "enlace" not in r.json()["detail"] and "en uso" in r.json()["detail"]
+    assert r.status_code == 409 and r.json()["detail"]["codigo"] == "proyecto_en_uso"
     assert (api.raiz / pid / "proyecto.json").is_file()  # intacto
     assert not any(p.name.startswith(".borrando") for p in api.raiz.iterdir())
 

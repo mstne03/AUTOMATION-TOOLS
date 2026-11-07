@@ -293,7 +293,7 @@ async def test_ruta_capacidades_503_si_el_modulo_no_esta_instalado(tmp_path, fak
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
         r = await c.get("/video/capacidades", headers=AUTH)
     assert r.status_code == 503
-    assert r.json()["detail"] == MENSAJE_NO_INSTALADO
+    assert r.json()["detail"] == {"mensaje": MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
 
 
 async def test_cambiar_o_borrar_la_clave_reinicia_el_motor(tmp_path, fake_anthropic, monkeypatch):
@@ -397,7 +397,7 @@ def test_entorno_del_render_no_lleva_la_clave(monkeypatch):
     [
         ("video_renderizar", "motor_render"),
         ("video_estado_render", "motor_render"),
-        ("video_estado", "motor_render"),  # lee los jobs de la memoria del proceso que los lanzó (R0 L6)
+        ("video_estado", "motor"),  # ya no existe en integrado (T11): no es del canal de render
         ("video_capacidades", "motor"),
         ("video_vista_previa", "motor"),
         ("video_generar_voz", "motor"),  # necesita la clave: nunca por el canal sin ella
@@ -515,7 +515,7 @@ async def test_ruta_capacidades_503_si_no_arranca(client_con_motor_roto):
     assert (await client_con_motor_roto.get("/video/capacidades")).status_code == 401
     r = await client_con_motor_roto.get("/video/capacidades", headers=AUTH)
     assert r.status_code == 503
-    assert "motor de vídeo" in r.json()["detail"]
+    assert "motor de vídeo" in r.json()["detail"]["mensaje"] and r.json()["detail"]["codigo"] == "no_disponible"
 
 
 @pytest.fixture
@@ -582,3 +582,23 @@ async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anth
     assert [(t, a) for t, a, _ in llamadas] == [("video_capacidades", {"reprobar": False})]
     # Peor caso del motor: 240 s de render + 30 s de fotograma + 60 s de sondas en paralelo.
     assert llamadas[0][2] == video.TIMEOUT_CAPACIDADES and video.TIMEOUT_CAPACIDADES > 330
+
+
+def test_canal_de_render_sin_video_estado():
+    assert video.TOOLS_CANAL_RENDER == frozenset({"video_renderizar", "video_estado_render"})
+
+
+def test_entorno_reenvia_tts_de_pruebas_solo_si_no_esta_congelado(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIDEO_PRUEBAS_TTS_URL", "http://127.0.0.1:9999")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    env = entorno_motor(StoreFalso())
+    assert env["VIDEO_PRUEBAS_TTS_URL"] == "http://127.0.0.1:9999"
+    assert env["ELEVENLABS_VOICE_ID"] == "21m00Tcm4TlvDq8ikWAM"
+    d = _bundle(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
+    (tmp_path / "navegador" / config.NAVEGADOR_VERSION).mkdir(parents=True)
+    monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
+    env = entorno_motor(StoreFalso())
+    assert "VIDEO_PRUEBAS_TTS_URL" not in env and "ELEVENLABS_VOICE_ID" not in env

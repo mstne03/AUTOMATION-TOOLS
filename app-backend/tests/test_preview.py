@@ -507,7 +507,7 @@ async def test_sin_puerto_libre_503_legible(api):
     pid = await _proyecto(api)
     _componer(api, pid)
     r = await api.post(f"/video/proyectos/{pid}/preview", json={})
-    assert r.status_code == 503 and r.json()["detail"] == preview.MENSAJE_SIN_PUERTO
+    assert r.status_code == 503 and r.json()["detail"] == {"mensaje": preview.MENSAJE_SIN_PUERTO, "codigo": "no_disponible"}
     assert "ocupados" in preview.MENSAJE_SIN_PUERTO
 
 

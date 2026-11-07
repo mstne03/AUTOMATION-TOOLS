@@ -214,7 +214,277 @@ def video_proyecto_guardar(id: str, revision: int, proyecto: Any) -> CallToolRes
     return _ok("Proyecto guardado", {"revision": revision + 1, "avisos": []})
 
 
+# ------------------------------------------------------------------------------------------
+# Voz, voces, perfiles, recursos y render (T11). SIMULADOR: los mensajes de error de la voz son LITERALES del
+# motor real (`voz.ts`; `test_video_t11.py::test_literales_del_simulador_son_los_del_motor` lo comprueba contra el
+# fuente). Las tools `falso_*` solo existen aquí: configuran o inspeccionan el simulador.
+# ------------------------------------------------------------------------------------------
+
+ELEVEN_ID = "21m00Tcm4TlvDq8ikWAM"
+MSG_SIN_CLAVE = "Añade tu clave de ElevenLabs en Ajustes de SEO Studio."
+MSG_SIN_VOZ = "Elige la voz de ElevenLabs en Ajustes de SEO Studio."
+MSG_COSTE = "El coste ha cambiado: ahora son {n} caracteres. Vuelve a revisarlo antes de confirmar."
+MSG_PLAN = "El contenido a generar ha cambiado desde que lo revisaste. Vuelve a revisarlo antes de confirmar."
+MSG_CONFLICTO_VOZ = "Ya se está generando la voz de este proyecto."
+MSG_SIN_FFMPEG = "Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación."
+MSG_EN_USO = "El recurso está en uso en una escena."
+
+_CFG: dict[str, Any] = {"clave": True, "voz": True, "ffmpeg": True, "fallidas": False, "fallo": False, "dormir": 0.0}
+_LLAMADAS: list[dict] = []
+_PERFILES: dict[str, dict] = {"defecto": {"id": "defecto", "nombre": "Defecto", "voz": ELEVEN_ID, "idioma": "es"}}
+_RECURSOS: dict[str, dict[str, bool]] = {}
+
+
+@mcp.tool()
+def falso_configurar(valores: dict) -> str:
+    _CFG.update(valores)
+    return "ok"
+
+
+@mcp.tool()
+def falso_llamadas() -> CallToolResult:
+    return _ok("Llamadas", _LLAMADAS)
+
+
+@mcp.tool()
+def falso_proyecto(id: str, titulo: str = "Prueba") -> CallToolResult:
+    """Da de alta un proyecto con un id concreto (en este proceso y en disco)."""
+    carpeta = Path(os.environ["VIDEO_ROOT"]) / id
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "proyecto.json").write_text("{}", encoding="utf-8")
+    _PROYECTOS[id] = {"id": id, "revision": 0, "titulo": titulo, "perfilId": "defecto"}
+    return _ok("Proyecto", {"id": id})
+
+
+def _plan() -> dict:
+    fallidas = [{"fraseId": "f1", "intentos": 1, "caracteresCobrados": 60}] if _CFG["fallidas"] else []
+    return {
+        "pendientes": ["f0", "f1"],
+        "caracteres": 120,
+        "voz": {"voiceId": ELEVEN_ID, "modelo": "eleven_multilingual_v2"},
+        "plan": "plan-" + hashlib.sha256(b"f0f1" + (b"x" if fallidas else b"")).hexdigest()[:32],
+        "fallidasFacturadas": fallidas,
+        "caracteresRefacturados": 60 if fallidas else 0,
+    }
+
+
+def _requisitos_voz() -> CallToolResult | None:
+    if not _CFG["voz"]:
+        return _error("sin_configurar", "Error en voz: " + MSG_SIN_VOZ)
+    return None
+
+
+@mcp.tool()
+def video_voz_coste(id: str, frases: list[str] | None = None) -> CallToolResult:
+    if id not in _PROYECTOS:
+        return _error("no_encontrado", "No existe ese proyecto.")
+    if (malo := _requisitos_voz()) is not None:
+        return malo
+    return _ok("Coste", _plan())
+
+
+@mcp.tool()
+async def video_voz_generar(
+    id: str,
+    caracteresConfirmados: float,
+    planConfirmado: str,
+    frases: list[str] | None = None,
+    reintentarFacturadas: bool | None = None,
+) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_voz_generar", "id": id, "frases": frases, "caracteresConfirmados": caracteresConfirmados, "planConfirmado": planConfirmado, "reintentarFacturadas": reintentarFacturadas})
+    if id not in _PROYECTOS:
+        return _error("no_encontrado", "No existe ese proyecto.")
+    if (malo := _requisitos_voz()) is not None:
+        return malo
+    p = _plan()
+    if caracteresConfirmados != p["caracteres"]:
+        return _error("coste_cambiado", MSG_COSTE.format(n=p["caracteres"]), [{"ruta": "caracteresConfirmados", "codigo": "coste_cambiado"}])
+    if planConfirmado != p["plan"]:
+        return _error("coste_cambiado", MSG_PLAN, [{"ruta": "planConfirmado", "codigo": "plan_cambiado"}])
+    if p["fallidasFacturadas"] and reintentarFacturadas is not True:
+        return _error("reintento_facturado", "1 frase(s) ya se cobraron y no se pudieron usar.", [{"ruta": "f1", "codigo": "reintento_facturado"}])
+    if not _CFG["clave"]:
+        return _error("sin_configurar", MSG_SIN_CLAVE)
+    if not _CFG["ffmpeg"]:
+        return _error_sin_tipar(MSG_SIN_FFMPEG)
+    if _CFG["dormir"]:
+        await anyio.sleep(_CFG["dormir"])
+    if _CFG["fallo"]:
+        return _ok("Parcial", {"generadas": 1, "caracteresFacturados": 60, "fallo": {"fraseId": "f1", "mensaje": "C:\\Users\\Marc Serra\\x: boom", "facturada": True}})
+    return _ok("Voz", {"generadas": 2, "caracteresFacturados": 120})
+
+
+def _error_sin_tipar(texto: str) -> CallToolResult:
+    return CallToolResult(is_error=True, content=[TextContent(type="text", text=f"Error en voz: {texto}")])
+
+
+@mcp.tool()
+def video_voz_quitar_silencios(id: str, fraseId: str) -> CallToolResult:
+    if id not in _PROYECTOS:
+        return _error("no_encontrado", "No existe ese proyecto.")
+    _LLAMADAS.append({"tool": "video_voz_quitar_silencios", "id": id, "fraseId": fraseId})
+    _PROYECTOS[id]["revision"] += 1  # el motor real guarda el proyecto
+    return _ok("Recorte", {"recorte": {"inicio": 0.1, "fin": 2.5}})
+
+
+@mcp.tool()
+def video_voces() -> CallToolResult:
+    if not _CFG["clave"]:
+        return _error("sin_configurar", "Error en video_voces: " + MSG_SIN_CLAVE)
+    return _ok("Voces", {"voces": [{"id": ELEVEN_ID, "nombre": "Lucía", "idioma": "es", "planMuestra": "m" * 64}]})
+
+
+@mcp.tool()
+def video_voz_muestra(voiceId: str, caracteresConfirmados: float, planConfirmado: str, reintentarFacturada: bool | None = None) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_voz_muestra", "voiceId": voiceId, "caracteresConfirmados": caracteresConfirmados, "planConfirmado": planConfirmado, "reintentarFacturada": reintentarFacturada})
+    if not _CFG["clave"]:
+        return _error("sin_configurar", MSG_SIN_CLAVE)
+    if caracteresConfirmados != 60 or planConfirmado != "m" * 64:
+        return _error("coste_cambiado", MSG_PLAN, [{"ruta": "planConfirmado", "codigo": "plan_cambiado"}])
+    if _CFG["fallidas"] and reintentarFacturada is not True:
+        return _error("reintento_facturado", "La muestra de esta voz ya se cobró (60 caracteres).", [{"ruta": "voiceId", "codigo": "reintento_facturado"}])
+    return _ok("Muestra", {"audioBase64": "QUJD", "caracteres": 60, "cache": False})
+
+
+@mcp.tool()
+def video_perfiles_listar() -> CallToolResult:
+    return _ok("Perfiles", {"perfiles": list(_PERFILES.values())})
+
+
+@mcp.tool()
+def video_perfil_guardar(id: str, perfil: Any) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_perfil_guardar", "id": id, "perfil": perfil})
+    if id not in _PERFILES:
+        return _error("no_encontrado", "No existe ese perfil.")
+    if isinstance(perfil, dict) and perfil.get("id", id) != id:
+        return _error("esquema", "El documento no cumple el esquema (1 problema).", [{"ruta": "id", "codigo": "id_distinto"}])
+    _PERFILES[id] = {**perfil, "id": id}
+    return _ok("Perfil guardado", {"id": id})
+
+
+@mcp.tool()
+def video_perfil_duplicar(id: str, nombre: str | None = None) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_perfil_duplicar", "id": id, "nombre": nombre})
+    if id not in _PERFILES:
+        return _error("no_encontrado", "No existe ese perfil.")
+    nuevo = "p-" + hashlib.sha256(str(len(_PERFILES)).encode()).hexdigest()[:16]
+    _PERFILES[nuevo] = {**_PERFILES[id], "id": nuevo, "nombre": nombre or "Copia"}
+    return _ok("Perfil duplicado", {"id": nuevo})
+
+
+@mcp.tool()
+def video_recurso_importar(id: str, bandejaId: str, clase: str) -> CallToolResult:
+    """SIMULADOR (T7/T13): la bandeja real es `<estado>/video/bandeja/<32hex>.bin`. `ee…` = recurso que una escena usa."""
+    _LLAMADAS.append({"tool": "video_recurso_importar", "id": id, "bandejaId": bandejaId, "clase": clase})
+    if id not in _PROYECTOS:
+        return _error("no_encontrado", "No existe ese proyecto.")
+    if bandejaId == "0" * 32:
+        return _error("no_encontrado", "No existe esa entrada de la bandeja.")
+    rid = "r-" + hashlib.sha256(bandejaId.encode()).hexdigest()[:16]
+    _RECURSOS.setdefault(id, {})[rid] = bandejaId.startswith("ee")
+    _PROYECTOS[id]["revision"] += 1
+    recurso = {"id": rid, "clase": clase, "ext": "jpg" if clase == "foto" else "mp4", "nombreOriginal": "foto.jpg", "ancho": 800, "alto": 600, "duracion": 0}
+    return _ok("Recurso importado", {"recurso": recurso, "avisos": [{"codigo": "foto_pequena"}]})
+
+
+@mcp.tool()
+def video_recurso_borrar(id: str, recursoId: str) -> CallToolResult:
+    if id not in _PROYECTOS or recursoId not in _RECURSOS.get(id, {}):
+        return _error("no_encontrado", "No existe ese recurso.")
+    if _RECURSOS[id][recursoId]:
+        return _error("en_uso", MSG_EN_USO)
+    del _RECURSOS[id][recursoId]
+    _PROYECTOS[id]["revision"] += 1
+    return _ok("Recurso borrado", {})
+
+
+# --- render (canal propio). Comportamiento por el final del id: 097 no acaba, 098 muere con hijos huérfanos, 099 falla.
+_JOBS: dict[str, dict] = {}
+
+
+def _bajo(ruta: Path, carpetas: list[Path]) -> bool:
+    return any(ruta == c or c in ruta.parents for c in carpetas)
+
+
+def _barrer() -> None:
+    """Simula el barrido al arrancar del motor (R0-6): mata lo que tenga imagen bajo el CfT o sea el ffmpeg del bundle."""
+    navegador = os.environ.get("HYPERFRAMES_BROWSER_PATH")
+    ffmpeg = os.environ.get("FFMPEG_DIR")
+    carpetas = [Path(navegador).parent] if navegador else []
+    exactos = [Path(ffmpeg) / n for n in ("ffmpeg.exe", "ffprobe.exe")] if ffmpeg else []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return
+    for d in proc.iterdir():
+        if not d.name.isdigit() or int(d.name) == os.getpid():
+            continue
+        try:
+            exe = Path(os.readlink(d / "exe").removesuffix(" (deleted)"))
+        except OSError:
+            continue
+        if _bajo(exe, carpetas) or exe in exactos:
+            try:
+                os.kill(int(d.name), 9)
+            except OSError:
+                pass
+
+
+def _lanzar_huerfanos() -> None:
+    import shutil
+    import subprocess
+
+    chrome = Path(os.environ["HYPERFRAMES_BROWSER_PATH"])
+    chrome.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(shutil.which("sleep") or "/bin/sleep", chrome)
+    os.chmod(chrome, 0o755)
+    for exe in (chrome, Path(os.environ["FFMPEG_DIR"]) / "ffmpeg.exe"):
+        subprocess.Popen([str(exe), "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+
+
+@mcp.tool()
+def video_renderizar(id: str, modo: str = "auto") -> CallToolResult:
+    if id.endswith("98") and os.environ.get("FFMPEG_DIR"):
+        _lanzar_huerfanos()
+    jid = f"j{len(_JOBS) + 1}"
+    _JOBS[jid] = {"id": id, "modo": modo, "polls": 0, "clave": os.environ.get("ELEVENLABS_API_KEY")}
+    return _ok("Render lanzado", {"job_id": jid, "id": id, "estado": "en_cola", "mp4": None, "avisos": []})
+
+
+@mcp.tool()
+def video_estado_render(job_id: str) -> CallToolResult:
+    j = _JOBS.get(job_id)
+    if j is None:
+        return _error_sin_tipar("No existe el job " + job_id)
+    j["polls"] += 1
+    base = {"job_id": job_id, "id": j["id"], "fase": None, "mp4": None, "duracion": None, "avisos": []}
+    if j["id"].endswith("97"):
+        return _ok("renderizando", {**base, "estado": "renderizando", "progreso": 10})
+    if j["id"].endswith("98"):
+        os._exit(1)
+    if j["id"].endswith("99"):
+        return _ok("error", {**base, "estado": "error", "progreso": 30, "error": "ffmpeg falló en C:\\Users\\Marc Serra\\x", "salida": ["C:\\Users\\Marc Serra\\y"]})
+    if j["polls"] < 3:
+        return _ok("renderizando", {**base, "estado": "renderizando", "progreso": 50.0 * j["polls"] / 2})
+    (Path(os.environ["VIDEO_ROOT"]) / j["id"]).mkdir(parents=True, exist_ok=True)
+    (Path(os.environ["VIDEO_ROOT"]) / j["id"] / "video.mp4").write_bytes(b"mp4")
+    return _ok(
+        "terminado",
+        {
+            **base,
+            "estado": "terminado",
+            "progreso": 100,
+            "mp4": "C:\\Users\\Marc Serra\\AppData\\video.mp4",
+            "duracion": 12.5,
+            "modo": j["modo"],
+            "codificador": "h264_mf",
+            "avisos": ["C:\\Users\\Marc Serra\\x", {"codigo": "fondo_degradado"}],
+            "reserva": ["fondo_degradado"],
+        },
+    )
+
+
 def _preparar_estado() -> None:
+    _barrer()
     estado = os.environ.get("VIDEO_STATE_DIR")
     if estado:
         Path(estado).mkdir(parents=True, exist_ok=True)
