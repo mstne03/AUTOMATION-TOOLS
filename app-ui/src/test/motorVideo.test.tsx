@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "../api/client";
 import { ClientContext } from "../api/context";
 import { useNavegadorVideo } from "../api/queries";
-import type { CapacidadesVideo, NavegadorEstado } from "../api/types";
+import type { CapacidadesVideo, NavegadorEstado, Settings } from "../api/types";
 import { MotorVideo, sinRutas } from "../screens/MotorVideo";
 import { setRenderModo, useRenderModo } from "../state/renderModo";
 import { Toaster, reiniciarToasts } from "../ui";
@@ -19,6 +19,7 @@ function montar(extra: Partial<Client> = {}) {
     videoNavegador: vi.fn(async () => estado()),
     videoNavegadorDescarga: vi.fn(async () => estado({ estado: "descargando" })),
     videoCapacidades: vi.fn(async () => GPU),
+    getSettings: vi.fn(async () => ({ has_elevenlabs_key: false })),
     ...extra,
   } as unknown as Client;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -235,6 +236,133 @@ describe("MotorVideo", () => {
     await screen.findByTestId("ajustes-video-error");
     expect(container.querySelector("input[type=file]")).toBeNull();
     expect(screen.queryAllByRole("button", { name: /otro navegador|examinar|chrome|edge/i })).toHaveLength(0);
+  });
+});
+
+describe("nota_retirada", () => {
+  it("la nota «todavía no se aplica» ya no existe: el modo se aplica al render", async () => {
+    const { container } = montar();
+    await screen.findByTestId("ajustes-render-modo");
+    expect(t("ajustes-render-modo-nota")).toBeNull();
+    expect(container.textContent).not.toMatch(/todavía no se aplica/);
+  });
+});
+
+describe("Clave de ElevenLabs", () => {
+  const CLAVE = "xi-secreta-0123456789abcdef";
+  const ajustes = (con: boolean) => ({ has_elevenlabs_key: con }) as unknown as Settings;
+  const campo = () => screen.getByTestId("ajustes-eleven-clave") as HTMLInputElement;
+  const escribir = (v: string) => fireEvent.change(campo(), { target: { value: v } });
+  /** Lo que ve la persona y lo que persiste el navegador: la clave no puede estar en ninguno. */
+  const fuga = (clave: string) =>
+    document.body.innerHTML.includes(clave) ||
+    Object.keys(localStorage).concat(Object.values(localStorage)).some((x) => x.includes(clave)) ||
+    Object.keys(sessionStorage).concat(Object.values(sessionStorage)).some((x) => x.includes(clave));
+
+  it("sin clave: «No configurada», campo password vacío y sin botón de borrar", async () => {
+    montar();
+    expect((await screen.findByTestId("ajustes-eleven-estado")).textContent).toBe("No configurada");
+    expect(campo().type).toBe("password");
+    expect(campo().value).toBe("");
+    expect(campo().autocomplete).toBe("off");
+    expect(t("ajustes-eleven-borrar")).toBeNull();
+    expect((screen.getByTestId("ajustes-eleven-guardar") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("con clave: «Configurada», campo vacío siempre y botón de borrar", async () => {
+    montar({ getSettings: vi.fn(async () => ajustes(true)) as never });
+    await waitFor(() => expect(t("ajustes-eleven-estado")?.textContent).toBe("Configurada"));
+    expect(campo().value).toBe("");
+    expect(t("ajustes-eleven-borrar")).not.toBeNull();
+  });
+
+  it("guardar valida primero, envía la clave una vez y el campo queda vacío (clave_nunca_en_dom)", async () => {
+    const validateElevenlabsKey = vi.fn(async () => ({ valida: true, detalle: null }));
+    const putSettings = vi.fn(async () => ajustes(true));
+    montar({ validateElevenlabsKey, putSettings } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir(CLAVE);
+    fireEvent.click(screen.getByTestId("ajustes-eleven-guardar"));
+    await waitFor(() => expect(t("ajustes-eleven-estado")?.textContent).toBe("Configurada"));
+    expect(validateElevenlabsKey).toHaveBeenCalledWith(CLAVE);
+    expect(putSettings).toHaveBeenCalledTimes(1);
+    expect(putSettings).toHaveBeenCalledWith({ elevenlabs_api_key: CLAVE });
+    expect(validateElevenlabsKey.mock.invocationCallOrder[0]).toBeLessThan(putSettings.mock.invocationCallOrder[0]!);
+    expect(campo().value).toBe("");
+    expect(fuga(CLAVE)).toBe(false);
+  });
+
+  it("el campo se vacía al enviar, aunque la validación tarde: la clave no se queda en el DOM", async () => {
+    let soltar: (v: { valida: boolean; detalle: string | null }) => void = () => {};
+    const validateElevenlabsKey = vi.fn(() => new Promise<{ valida: boolean; detalle: string | null }>((r) => (soltar = r)));
+    montar({ validateElevenlabsKey, putSettings: vi.fn(async () => ajustes(true)) } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir(CLAVE);
+    fireEvent.click(screen.getByTestId("ajustes-eleven-guardar"));
+    await waitFor(() => expect(validateElevenlabsKey).toHaveBeenCalled());
+    expect(campo().value).toBe("");
+    expect(fuga(CLAVE)).toBe(false);
+    expect((screen.getByTestId("ajustes-eleven-guardar") as HTMLButtonElement).disabled).toBe(true); // no se envía dos veces
+    await act(async () => soltar({ valida: true, detalle: null }));
+    await waitFor(() => expect(t("ajustes-eleven-estado")?.textContent).toBe("Configurada"));
+  });
+
+  it("una clave que ElevenLabs no reconoce no se guarda y se explica", async () => {
+    const putSettings = vi.fn(async () => ajustes(true));
+    montar({ validateElevenlabsKey: vi.fn(async () => ({ valida: false, detalle: "ElevenLabs no reconoce esta clave." })), putSettings } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir(CLAVE);
+    fireEvent.click(screen.getByTestId("ajustes-eleven-guardar"));
+    const e = await screen.findByTestId("ajustes-eleven-error");
+    expect(e.textContent).toBe("ElevenLabs no reconoce esta clave.");
+    expect(e.getAttribute("role")).toBe("alert");
+    expect(putSettings).not.toHaveBeenCalled();
+    expect(t("ajustes-eleven-estado")?.textContent).toBe("No configurada");
+    expect(fuga(CLAVE)).toBe(false);
+  });
+
+  it("un error de red que repitiera la clave no la deja en pantalla", async () => {
+    const putSettings = vi.fn();
+    montar({ validateElevenlabsKey: vi.fn(async () => { throw new ApiError(502, `No se pudo conectar con ElevenLabs (xi-api-key: ${CLAVE}) en C:\\Users\\Marc\\x`); }), putSettings } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir(CLAVE);
+    fireEvent.click(screen.getByTestId("ajustes-eleven-guardar"));
+    const e = await screen.findByTestId("ajustes-eleven-error");
+    expect(e.textContent).toContain("No se pudo conectar con ElevenLabs");
+    expect(e.textContent).not.toContain(CLAVE);
+    expect(e.textContent).not.toContain("Marc");
+    expect(putSettings).not.toHaveBeenCalled();
+    expect(fuga(CLAVE)).toBe(false);
+  });
+
+  it("si falla el guardado, tampoco queda la clave en pantalla", async () => {
+    montar({ validateElevenlabsKey: vi.fn(async () => ({ valida: true, detalle: null })), putSettings: vi.fn(async () => { throw new ApiError(500, `fallo con ${CLAVE}`); }) } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir(CLAVE);
+    fireEvent.click(screen.getByTestId("ajustes-eleven-guardar"));
+    await screen.findByTestId("ajustes-eleven-error");
+    expect(fuga(CLAVE)).toBe(false);
+    expect(t("ajustes-eleven-estado")?.textContent).toBe("No configurada");
+  });
+
+  it("borrar envía la cadena vacía y vuelve a «No configurada»", async () => {
+    let con = true;
+    const putSettings = vi.fn(async () => ajustes((con = false)));
+    montar({ getSettings: vi.fn(async () => ajustes(con)) as never, putSettings } as never);
+    await waitFor(() => expect(t("ajustes-eleven-estado")?.textContent).toBe("Configurada"));
+    fireEvent.click(screen.getByTestId("ajustes-eleven-borrar"));
+    await waitFor(() => expect(t("ajustes-eleven-estado")?.textContent).toBe("No configurada"));
+    expect(putSettings).toHaveBeenCalledWith({ elevenlabs_api_key: "" });
+    expect(t("ajustes-eleven-borrar")).toBeNull();
+  });
+
+  it("una clave solo de espacios no se envía", async () => {
+    const validateElevenlabsKey = vi.fn();
+    montar({ validateElevenlabsKey } as never);
+    await screen.findByTestId("ajustes-eleven-estado");
+    escribir("   ");
+    expect((screen.getByTestId("ajustes-eleven-guardar") as HTMLButtonElement).disabled).toBe(true);
+    expect(validateElevenlabsKey).not.toHaveBeenCalled();
   });
 });
 

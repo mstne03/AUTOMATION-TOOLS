@@ -41,6 +41,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public detail: string,
+    /** Código estable de `detail: { mensaje, codigo }`; la UI decide por él, nunca por el texto. */
+    public codigo?: string,
   ) {
     super(detail);
   }
@@ -78,6 +80,8 @@ export interface Client {
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
+  /** Sin coste: comprueba la clave con `GET /v1/user` de ElevenLabs. Nunca devuelve la clave. */
+  validateElevenlabsKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
   /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
   importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
   removeClientSecret(): Promise<SettingsTrasProyecto>;
@@ -122,7 +126,10 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
 
   async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetchFn(base + path, { ...init, headers: { ...headers, ...init.headers } });
-    if (!res.ok) throw new ApiError(res.status, await detalle(res));
+    if (!res.ok) {
+      const { mensaje, codigo } = await detalleCodigo(res);
+      throw new ApiError(res.status, mensaje, codigo);
+    }
     return (await res.json()) as T;
   }
   const q = (params: Record<string, string | number | undefined>) => {
@@ -178,6 +185,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
     validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
+    validateElevenlabsKey: (apiKey) => req("/settings/validate-elevenlabs-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
     removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
@@ -223,13 +231,22 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
   };
 }
 
-async function detalle(res: Response): Promise<string> {
+/** `detail` puede ser un texto o `{ mensaje, codigo }` (contrato de la voz: `docs/video-fase1/contrato-voz.md`). */
+async function detalleCodigo(res: Response): Promise<{ mensaje: string; codigo?: string }> {
   try {
     const j = (await res.json()) as { detail?: unknown };
-    if (typeof j.detail === "string") return j.detail;
-    if (j.detail) return JSON.stringify(j.detail);
+    if (typeof j.detail === "string") return { mensaje: j.detail };
+    if (j.detail && typeof j.detail === "object") {
+      const d = j.detail as { mensaje?: unknown; codigo?: unknown };
+      if (typeof d.mensaje === "string") return { mensaje: d.mensaje, codigo: typeof d.codigo === "string" ? d.codigo : undefined };
+    }
+    if (j.detail) return { mensaje: JSON.stringify(j.detail) };
   } catch {
     /* sin cuerpo JSON */
   }
-  return `HTTP ${res.status}`;
+  return { mensaje: `HTTP ${res.status}` };
+}
+
+async function detalle(res: Response): Promise<string> {
+  return (await detalleCodigo(res)).mensaje;
 }

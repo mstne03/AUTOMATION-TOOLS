@@ -7,7 +7,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCapacidadesVideo, useDescargarNavegador, useNavegadorVideo } from "../api/queries";
 import { ApiError } from "../api/client";
 import { FASES_ACTIVAS } from "../api/types";
-import { setRenderModo, useRenderModo, type RenderModo } from "../state/renderModo";
+import { hayGpuDe, modoEfectivo, setRenderModo, useRenderModo, type RenderModo } from "../state/renderModo";
+import { sinRutas } from "../video/render/sinRutas";
+import { ClaveElevenLabs } from "./MotorVideoClave";
 import { Button, Chip, Progress, toast } from "../ui";
 import { cx } from "../ui/cx";
 import s from "./SettingsScreen.module.css";
@@ -23,13 +25,7 @@ const MODOS: Array<[RenderModo, string, string]> = [
   ["compatible", "Compatible", "Dos pasadas; funciona en cualquier equipo"],
 ];
 
-/** Las rutas del sistema no se enseñan (los mensajes del motor pueden traerlas): `C:\…`, UNC y POSIX
- *  de dos segmentos o más. Los segmentos intermedios admiten espacios; el último acaba en el primer
- *  espacio. Se prefiere enmascarar de más: lo que sobra es texto, lo que falta es una ruta filtrada. */
-const SEG = String.raw`[^\\/:*?"<>|\r\n]+[\\/]`;
-const INICIO = String.raw`(?:\\\\\?\\)?(?:[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/]|/(?=[^\s\\/]+/))`;
-const RUTA = new RegExp(String.raw`(^|[\s"'(\[«])${INICIO}(?:${SEG})*[^\s\\/:*?"<>|»)'’]*`, "g");
-export const sinRutas = (t: string) => t.replace(RUTA, "$1…");
+export { sinRutas };
 const esNoInstalado = (e: unknown) => e instanceof ApiError && e.status === 503 && NO_INSTALADO.test(e.detail);
 
 export function MotorVideo() {
@@ -65,7 +61,7 @@ export function MotorVideo() {
 
   const mb = d ? Math.round(d.tamano / MiB) : 0;
   const progreso = estado === "descargando" && d && d.tamano > 0 ? d.descargado / d.tamano : undefined;
-  const hayGpu = !!cap.data?.codificadores?.some((c) => c.codificador !== "h264_mf"); // h264_mf (software) no cuenta como GPU (M7)
+  const hayGpu = hayGpuDe(cap.data);
   const rapidoNo = !hayGpu;
   const avisoRapido = !listo
     ? "Descarga el navegador del render para comprobar los codificadores"
@@ -75,7 +71,7 @@ export function MotorVideo() {
         ? "No se han podido comprobar los codificadores"
         : "No hay codificador de GPU: se usará Compatible";
   // «Rápido» guardado sin GPU no se marca (estaría deshabilitado y marcado): se enseña el modo efectivo.
-  const efectivo: RenderModo = modo === "rapido" && rapidoNo ? "compatible" : modo;
+  const efectivo: RenderModo = modoEfectivo(modo, hayGpu);
 
   const elegir = (m: RenderModo) => {
     if (m === modo) return;
@@ -155,10 +151,9 @@ export function MotorVideo() {
             {avisoRapido}
           </p>
         )}
-        <p className={s.ayuda} data-testid="ajustes-render-modo-nota">
-          La preferencia se guarda en este equipo; todavía no se aplica a los renders.
-        </p>
       </div>
+
+      <ClaveElevenLabs />
     </section>
   );
 }

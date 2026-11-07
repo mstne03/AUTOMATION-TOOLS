@@ -7,6 +7,7 @@
  *  además anota la petición. Cada test falla si salió un POST sin simular o si el sidecar real cambió. */
 import { expect, test, type Page } from "@playwright/test";
 import { api } from "./api";
+import type { Settings } from "../src/api/types";
 import { simularRutas } from "./sidecar-falso";
 
 const MiB = 1024 * 1024;
@@ -22,7 +23,7 @@ let sinManejar = 0;
 
 type Ctl = { nav: Record<string, unknown>; cap: [number, unknown]; onPost: () => [number, unknown]; rutaPost: boolean };
 
-async function preparar(page: Page, inicial: Partial<Ctl> = {}) {
+async function preparar(page: Page, inicial: Partial<Ctl> = {}, extra: Parameters<typeof simularRutas>[1] = {}) {
   const ctl: Ctl = {
     nav: nav("ausente"),
     cap: [200, GPU],
@@ -41,6 +42,7 @@ async function preparar(page: Page, inicial: Partial<Ctl> = {}) {
     "/video/navegador": () => [200, ctl.nav],
     "/video/navegador/descarga": (_u: URL, p: { metodo: string }) => (p.metodo === "POST" ? ctl.onPost() : [405, { detail: "x" }]),
     "/video/capacidades": () => ctl.cap,
+    ...extra,
   });
   // Registrada después, tiene prioridad: con `rutaPost = false` (simula una ruta sin simular) el POST se
   // aborta aquí y no puede alcanzar ningún sidecar; si no, cede el paso al simulador.
@@ -223,7 +225,15 @@ test.describe("Ajustes › Motor de vídeo", () => {
     expect(await page.evaluate(() => localStorage.getItem("seo-studio.render-modo"))).toBe("compatible");
     await page.reload();
     await expect(v(page, "ajustes-render-modo-compatible")).toHaveAttribute("aria-checked", "true");
-    await expect(v(page, "ajustes-render-modo-nota")).toContainText("todavía no se aplica");
+    await expect(v(page, "ajustes-render-modo-nota")).toHaveCount(0);
+  });
+
+  test("nota_retirada: el modo ya se aplica al render y la nota de «todavía no» no existe", async ({ page }) => {
+    await preparar(page);
+    await ir(page);
+    await expect(v(page, "ajustes-render-modo")).toBeVisible();
+    await expect(v(page, "ajustes-render-modo-nota")).toHaveCount(0);
+    await expect(v(page, "ajustes-video")).not.toContainText("todavía no se aplica");
   });
 
   test("modo: Rápido deshabilitado sin navegador listo, con solo h264_mf, y habilitado con GPU", async ({ page }) => {
@@ -300,3 +310,77 @@ test.describe("Ajustes › Motor de vídeo", () => {
     expect((await api<{ estado: string }>("/video/navegador")).estado).toBe("ausente");
   });
 });
+
+/** Clave de ElevenLabs. `/settings` y la validación se simulan SIEMPRE: la validación real llamaría a
+ *  api.elevenlabs.io y el PUT real escribiría en el almacén de secretos del sidecar de los E2E. */
+test.describe("Ajustes › Clave de ElevenLabs", () => {
+  const CLAVE = "xi-e2e-secreta-0123456789";
+  test.beforeEach(async ({ page }) => {
+    sinManejar = 0;
+    await page.emulateMedia({ colorScheme: "light" });
+  });
+
+  async function preparaClave(page: Page, valida: [boolean, string | null] = [true, null]) {
+    const real = await api<Settings>("/settings");
+    const est = { configurada: false, puts: [] as unknown[], validaciones: [] as unknown[] };
+    await preparar(page, {}, {
+      "/settings": (_u: URL, p: { metodo: string; cuerpo: unknown }) => {
+        if (p.metodo === "PUT") {
+          est.puts.push(p.cuerpo);
+          est.configurada = (p.cuerpo as { elevenlabs_api_key?: string }).elevenlabs_api_key !== "";
+        }
+        return [200, { ...real, has_elevenlabs_key: est.configurada }];
+      },
+      "/settings/validate-elevenlabs-key": (_u: URL, p: { cuerpo: unknown }) => {
+        est.validaciones.push(p.cuerpo);
+        return [200, { valida: valida[0], detalle: valida[1] }];
+      },
+    });
+    await page.goto("/#/ajustes");
+    await expect(page.getByTestId("ajustes-eleven-estado")).toBeVisible();
+    return est;
+  }
+  const storage = (page: Page) => page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
+
+  test("clave_nunca_en_dom: se valida, se envía una vez, el campo queda vacío y no hay rastro de la clave", async ({ page }) => {
+    const est = await preparaClave(page);
+    const campo = page.getByTestId("ajustes-eleven-clave");
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("No configurada");
+    await expect(campo).toHaveAttribute("type", "password");
+    await expect(page.getByTestId("ajustes-eleven-borrar")).toHaveCount(0);
+    await campo.fill(CLAVE);
+    await page.getByTestId("ajustes-eleven-guardar").click();
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("Configurada");
+    expect(est.validaciones).toEqual([{ api_key: CLAVE }]);
+    expect(est.puts).toEqual([{ elevenlabs_api_key: CLAVE }]);
+    await expect(campo).toHaveValue("");
+    expect(await page.content()).not.toContain(CLAVE);
+    expect(await storage(page)).not.toContain(CLAVE);
+    await page.reload();
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("Configurada");
+    await expect(campo).toHaveValue("");
+    expect(await page.content()).not.toContain(CLAVE);
+  });
+
+  test("una clave que ElevenLabs no reconoce no se guarda y se explica", async ({ page }) => {
+    const est = await preparaClave(page, [false, "ElevenLabs no reconoce esta clave."]);
+    await page.getByTestId("ajustes-eleven-clave").fill(CLAVE);
+    await page.getByTestId("ajustes-eleven-guardar").click();
+    await expect(page.getByTestId("ajustes-eleven-error")).toHaveText("ElevenLabs no reconoce esta clave.");
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("No configurada");
+    expect(est.puts).toEqual([]);
+    expect(await page.content()).not.toContain(CLAVE);
+  });
+
+  test("borrar envía la cadena vacía y vuelve a «No configurada»", async ({ page }) => {
+    const est = await preparaClave(page);
+    await page.getByTestId("ajustes-eleven-clave").fill(CLAVE);
+    await page.getByTestId("ajustes-eleven-guardar").click();
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("Configurada");
+    await page.getByTestId("ajustes-eleven-borrar").click();
+    await expect(page.getByTestId("ajustes-eleven-estado")).toHaveText("No configurada");
+    expect(est.puts.at(-1)).toEqual({ elevenlabs_api_key: "" });
+    await expect(page.getByTestId("ajustes-eleven-borrar")).toHaveCount(0);
+  });
+});
+

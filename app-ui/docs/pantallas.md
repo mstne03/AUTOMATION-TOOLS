@@ -221,13 +221,17 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
     codificador de GPU: se usará Compatible». Si «Rápido» está guardado pero no hay GPU, no se
     marca: se marca el modo efectivo (Compatible) y lo guardado no se toca. Guardado automático en
     `localStorage` (`seo-studio.render-modo`; un valor inválido vale «auto») con toast «Modo de
-    render guardado». `ajustes-render-modo-nota`: «La preferencia se guarda en este equipo; todavía
-    no se aplica a los renders.» **Se retira** en la Task 20, que quita el elemento y su E2E
-    (`motor-video.spec.ts`) en el mismo commit: el modo ya se aplica al render.
-  - **Clave de ElevenLabs** (Task 20): `ajustes-eleven-estado` (chip: con clave / sin clave),
-    `ajustes-eleven-clave` (`input` password, **vacío siempre**: la clave solo se escribe, nunca
-    se lee), `ajustes-eleven-guardar` (`PUT /settings { elevenlabs_api_key }`, tras validarla) y
-    `ajustes-eleven-borrar` (cadena vacía = borrar).
+    render guardado». El modo ya se aplica al render: el diálogo de render envía el modo efectivo
+    (Rápido sin GPU se envía como Compatible). `ajustes-render-modo-nota` se retiró en la Task 20.
+  - **Clave de ElevenLabs** (Task 20): `ajustes-eleven-estado` (chip «Configurada» success /
+    «No configurada»: es lo único que la UI sabe, por `has_elevenlabs_key`), `ajustes-eleven-clave`
+    (`input` password, **vacío siempre**: la clave solo se escribe, nunca se lee ni se pinta de
+    vuelta; se vacía al enviar, aunque la validación tarde), `ajustes-eleven-guardar` (primero
+    `POST /settings/validate-elevenlabs-key`, que no gasta; si es válida, `PUT /settings
+    { elevenlabs_api_key }`; una clave inválida no se guarda), `ajustes-eleven-borrar` (solo con clave
+    configurada; `PUT` con cadena vacía) y `ajustes-eleven-error` (`role="alert"`: texto del servidor
+    sin rutas y sin la clave). La clave nunca va a `localStorage`, al estado persistido ni a la caché
+    de consultas.
 - **Avanzado**: cuota de YouTube de hoy (`cuota-<bucket>`, "154 de 10.000"), información
   (directorio de estado y almacén de secretos con su nombre legible: "Administrador de
   credenciales de Windows") y `ajustes-asistente` ("Abrir el asistente" → Onboarding).
@@ -524,8 +528,21 @@ guardar»), `editor-conflicto`, `editor-deshacer`, `editor-rehacer`, `editor-ren
   `voz-coste`, `voz-regenerar-<fraseId>`, `voz-quitar-silencios-<fraseId>`, `voz-sin-clave`,
   `voz-confirmar`, `voz-confirmar-coste`, `voz-confirmar-ok`, `musica-elegir`, `musica-inicio`,
   `musica-volumen`, `musica-ducking`, `subtitulo-texto`.
-- **Render:** `render-dialogo`, `render-bloqueo`, `render-lanzar`, `render-progreso`,
-  `render-resultado`, `render-avisos`, `render-exportar`, `render-error`.
+- **Render** (Task 20): `editor-render` abre `render-dialogo` (se monta solo abierto: cada apertura
+  vuelve a mirar la voz). Envía `POST /video/proyectos/{id}/render { modo }` con el modo efectivo de
+  Ajustes (solo el id y el modo, nunca rutas); el progreso sale del job `video_render` del proyecto
+  (`args.id`), sigue vivo si se cierra el diálogo y se retoma al reabrirlo.
+  - `render-bloqueo` (`role="status"`, `data-motivo` = `voz` | `guardado`): hay frases sin voz
+    (`/voz/coste` con `pendientes`, o 409 `sin_voz`) o el proyecto está sin guardar o en conflicto.
+    Mientras exista, `render-lanzar` está deshabilitado.
+  - `render-lanzar` («Renderizar», «Renderizar de nuevo» o «Reintentar»): no existe mientras hay un
+    render activo.
+  - `render-progreso`: barra «Renderizando el vídeo» (indeterminada en cola).
+  - `render-resultado`: «Vídeo listo · 12,5 s», con `render-avisos` (lista: codificador y modo,
+    `reserva` si el motor tuvo que recurrir a otra vía, y los avisos) y `render-exportar` («Exportar
+    MP4» = `invoke("exportar_mp4", { id })`; cancelar el diálogo no es un error; fuera de Tauri
+    explica que solo existe en la aplicación).
+  - `render-error` (`role="alert"`): fallo del job, del POST o de la exportación; texto sin rutas.
 
 La verificación E2E de cada grupo la escribe el lane que lo implementa, en el mismo commit
 (U1 `video-guion.spec.ts`; U2 `video-editor.spec.ts` y `video-preview.spec.ts`; U5
