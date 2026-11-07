@@ -21,7 +21,10 @@ describe("entorno del sidecar en los E2E (lista blanca)", () => {
       extra,
     );
     expect(env.PATH).toBe("/bin");
-    expect(Object.keys(env)).not.toEqual(expect.arrayContaining(["ELEVENLABS_KEY", "ANTHROPIC_KEY", "AWS_SECRET_ACCESS_KEY", "GH_PAT", "X_PASS", "ELEVENLABS_API_KEY_DEV", "HTTPS_PROXY", "UV_INDEX_URL"]));
+    const claves = Object.keys(env);
+    for (const k of ["ELEVENLABS_KEY", "ANTHROPIC_KEY", "AWS_SECRET_ACCESS_KEY", "GH_PAT", "X_PASS", "ELEVENLABS_API_KEY_DEV", "HTTPS_PROXY", "UV_INDEX_URL"]) {
+      expect(claves).not.toContain(k); // ninguna, no «no todas a la vez»
+    }
     expect(JSON.stringify(env)).not.toMatch(/_real/);
   });
 

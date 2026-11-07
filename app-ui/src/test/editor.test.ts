@@ -213,6 +213,39 @@ describe("store del editor", () => {
       expect(useEditor.getState().borrador?.titulo).toBe("B");
     });
 
+    it("edicion_durante_get_de_409_misma_epoca_no_reenvia_con_revision_vieja", async () => {
+      guardar.mockRejectedValueOnce(new ApiError(409, "Revisión antigua."));
+      let servir!: (p: Proyecto) => void;
+      leer.mockImplementationOnce(() => new Promise((ok) => { servir = ok; }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      editar((p) => { p.titulo = "B"; }); // durante el GET
+      await vi.advanceTimersByTimeAsync(2000); // el autoguardado no debe lanzar un PUT con la revisión vieja
+      servir({ ...proyecto("Del servidor"), revision: 7 });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(guardar).toHaveBeenCalledTimes(1);
+      expect(guardar.mock.calls.filter((c) => c[1].revision === 3)).toHaveLength(1);
+      expect(useEditor.getState().borrador?.titulo).toBe("B");
+      expect(useEditor.getState()).toMatchObject({ conflicto: true, revision: 7 });
+    });
+
+    it("edicion_durante_get_de_409_y_cambio_de_proyecto_no_pierde_B", async () => {
+      guardar.mockRejectedValueOnce(new ApiError(409, "Revisión antigua."));
+      let servir!: (p: Proyecto) => void;
+      leer.mockImplementationOnce(() => new Promise((ok) => { servir = ok; }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      editar((p) => { p.titulo = "B"; }); // durante el GET
+      cargar(otro());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guardar).toHaveBeenCalledTimes(1); // ningún segundo PUT con la revisión vieja
+      servir({ ...proyecto("Del servidor"), revision: 7 });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(guardar).toHaveBeenCalledTimes(1);
+      cargar(proyecto());
+      expect(useEditor.getState().borrador?.titulo).toBe("B");
+    });
+
     it("guardar_sin_cliente_marca_error", async () => {
       desvincularCliente();
       editar((p) => { p.titulo = "A"; });

@@ -78,7 +78,7 @@ function salvarSaliente() {
   if (!st.proyecto) return;
   // PUT (o GET de un 409) en vuelo: no se lanza otro PUT con la misma revisión. Se anota la última
   // edición y el manejador de esa época la guarda con la revisión nueva, o la deja de borrador.
-  if (st.guardado === "guardando" || (guardando && st.guardado === "pendiente")) {
+  if (guardando || st.guardado === "guardando") {
     salientes.set(epoca, st.proyecto);
     return;
   }
@@ -234,14 +234,27 @@ export async function guardar() {
       dejarBorrador(ultima);
       return;
     }
-    guardando = false;
-    if (e instanceof ApiError && e.status === 409) await alConflicto(proyecto, mia);
-    else useEditor.setState({ guardado: "error" });
+    if (e instanceof ApiError && e.status === 409) {
+      // `guardando` sigue en true hasta que acabe el GET: ni el autoguardado ni `salvarSaliente`
+      // lanzan un PUT con la revisión vieja mientras tanto.
+      await alConflicto(proyecto, mia);
+    } else {
+      guardando = false;
+      useEditor.setState({ guardado: "error" });
+    }
   }
 }
 
 /** 409: la edición local queda como borrador y el proyecto pasa a la versión del servidor. */
 async function alConflicto(local: Proyecto, mia: number) {
+  try {
+    await resolverConflicto(local, mia);
+  } finally {
+    if (mia === epoca) guardando = false;
+  }
+}
+
+async function resolverConflicto(local: Proyecto, mia: number) {
   try {
     const remoto = await cliente!.videoProyecto(local.id);
     if (mia !== epoca) {

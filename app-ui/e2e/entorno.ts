@@ -22,7 +22,11 @@ export const VARIABLES_HEREDADAS: readonly string[] = [
  *  Después se fuerza el aislamiento y se aplica `extra`.
  *
  *  Forzadas: el directorio de estado temporal (`extra.APP_BACKEND_DIR`), almacén `file` (nunca el
- *  Credential Manager), claves de Anthropic y ElevenLabs falsas, voz de prueba y sin `.env`. */
+ *  Credential Manager), claves de Anthropic y ElevenLabs falsas, voz de prueba y sin `.env`.
+ *
+ *  Aviso: hasta que T5 (otra rama) haga que el motor lea `VIDEO_PRUEBAS_TTS_URL`, el motor sigue
+ *  llamando a `api.elevenlabs.io` (con la clave falsa, que ese servicio rechaza). No se desactiva
+ *  esa defensa ni se asume que el mock local atiende las llamadas de voz. */
 export function entornoSidecar(heredado: Readonly<Record<string, string | undefined>>, extra: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const k of VARIABLES_HEREDADAS) {
