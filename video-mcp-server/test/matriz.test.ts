@@ -193,7 +193,7 @@ async function renderizar(id: string, palabras: ResultadoAlineacion, conMusica: 
   if (fin.estado !== "terminado") throw new Error(`${id}: render fallido: ${fin.error}\n${ultimasLineasUtiles(fin).join("\n")}`);
   // urlsDeRed ya corrió dentro de encolarRender, antes de `check`. Aquí no se repite: `check` deja en
   // .hyperframes/artifacts/checks/*.json informes con URL que no son de la composición (C9), y excluirlos sería un hueco.
-  const mp4 = path.join(RAIZ, `${id}.mp4`);
+  const mp4 = path.join(RAIZ, id, "video.mp4");
   const info = await sondear(h.ffprobe, mp4);
   expect(info.ancho).toBe(1080);
   expect(info.alto).toBe(1920);

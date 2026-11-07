@@ -9,6 +9,7 @@ import { log } from "./log.js";
 import { esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
+import { registrarHerramientasProyecto, resultadoDeError } from "./herramientas-proyecto.js";
 
 // Red de seguridad: cualquier console.log accidental (también de dependencias) va a stderr.
 console.log = (...a: unknown[]) => log.info(...a);
@@ -30,67 +31,79 @@ async function envolver(nombre: string, fn: () => h.Respuesta | Promise<h.Respue
   } catch (e) {
     const mensaje = (e as Error).message ?? String(e);
     log.error(`${nombre}: ${mensaje}`);
-    return { isError: true, content: [{ type: "text", text: `Error en ${nombre}: ${mensaje}` }] };
+    return resultadoDeError(nombre, e);
   }
 }
 
 const server = new McpServer({ name: "video", version: "0.2.0" });
 
-server.registerTool(
-  "video_listar",
-  {
-    title: "Listar vídeos",
-    description: "Lista las carpetas videoNNN de VIDEO_ROOT con su estado (guion, imágenes requeridas, voz, mp4) y el siguiente id libre.",
-    inputSchema: {},
-  },
-  () => envolver("video_listar", () => h.listar(config)),
-);
+// El almacén de guiones y proyectos (T4) va siempre. En integrado no se registran las tools del formato anterior
+// (guion.md, voz suelta, estado y listado por carpeta, y música por ruta): son adaptador de tests hasta la fase 2.
+registrarHerramientasProyecto(server, config, envolver);
 
-server.registerTool(
-  "video_guardar_guion",
-  {
-    title: "Guardar guion",
-    description:
-      "Valida y guarda guion.md: frontmatter YAML y exactamente 6 bloques [1] a [6] (uno por imagen o escena), máx. 650 caracteres de narración. " +
-      `Campos: ${resumenCampos()}. Detalle completo y ejemplos en video_ayuda. ` +
-      "Sin id crea la carpeta con el siguiente id libre. No pisa un guion existente salvo con sobrescribir=true.",
-    inputSchema: {
-      id: ID.optional(),
-      contenido: z.string().describe("Contenido completo de guion.md."),
-      sobrescribir: z.boolean().optional().default(false),
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_listar",
+    {
+      title: "Listar vídeos",
+      description: "Lista las carpetas videoNNN de VIDEO_ROOT con su estado (guion, imágenes requeridas, voz, mp4) y el siguiente id libre.",
+      inputSchema: {},
     },
-  },
-  (a) => envolver("video_guardar_guion", () => h.guardarGuion(config, a)),
-);
+    () => envolver("video_listar", () => h.listar(config)),
+  );
+}
 
-server.registerTool(
-  "video_estado",
-  {
-    title: "Estado de un vídeo",
-    description: "Detalle de un vídeo: opciones del guion, imágenes requeridas con su resolución, fondo (GPU o reserva), música, voz y mp4.",
-    inputSchema: { id: ID },
-  },
-  (a) => envolver("video_estado", () => h.estado(config, a.id)),
-);
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_guardar_guion",
+    {
+      title: "Guardar guion",
+      description:
+        "Valida y guarda guion.md: frontmatter YAML y exactamente 6 bloques [1] a [6] (uno por imagen o escena), máx. 650 caracteres de narración. " +
+        `Campos: ${resumenCampos()}. Detalle completo y ejemplos en video_ayuda. ` +
+        "Sin id crea la carpeta con el siguiente id libre. No pisa un guion existente salvo con sobrescribir=true.",
+      inputSchema: {
+        id: ID.optional(),
+        contenido: z.string().describe("Contenido completo de guion.md."),
+        sobrescribir: z.boolean().optional().default(false),
+      },
+    },
+    (a) => envolver("video_guardar_guion", () => h.guardarGuion(config, a)),
+  );
+}
 
-server.registerTool(
-  "video_generar_voz",
-  {
-    title: "Generar voz con ElevenLabs",
-    description:
-      "Genera voz.mp3 con la voz clonada de ElevenLabs y los tiempos por palabra (palabras.json). " +
-      "Si voz.mp3 ya existe no llama a la API (gasta créditos) salvo con forzar=true.",
-    inputSchema: { id: ID, forzar: z.boolean().optional().default(false) },
-  },
-  (a) => envolver("video_generar_voz", () => h.generarVoz(config, a)),
-);
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_estado",
+    {
+      title: "Estado de un vídeo",
+      description: "Detalle de un vídeo: opciones del guion, imágenes requeridas con su resolución, fondo (GPU o reserva), música, voz y mp4.",
+      inputSchema: { id: ID },
+    },
+    (a) => envolver("video_estado", () => h.estado(config, a.id)),
+  );
+}
+
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_generar_voz",
+    {
+      title: "Generar voz con ElevenLabs",
+      description:
+        "Genera voz.mp3 con la voz clonada de ElevenLabs y los tiempos por palabra (palabras.json). " +
+        "Si voz.mp3 ya existe no llama a la API (gasta créditos) salvo con forzar=true.",
+      inputSchema: { id: ID, forzar: z.boolean().optional().default(false) },
+    },
+    (a) => envolver("video_generar_voz", () => h.generarVoz(config, a)),
+  );
+}
 
 server.registerTool(
   "video_renderizar",
   {
     title: "Renderizar short",
     description:
-      "Comprueba guion, imágenes requeridas y voz, monta la composición HyperFrames, pasa hyperframes check y lanza el render a VIDEO_ROOT\\videoNNN.mp4 " +
+      "Comprueba guion, imágenes requeridas y voz, monta la composición HyperFrames, pasa hyperframes check y lanza el render a VIDEO_ROOT\\videoNNN\\video.mp4 " +
       "(1080×1920, 30 fps). Devuelve un job_id al momento; consulta con video_estado_render. Un render a la vez; el resto se encola.",
     inputSchema: { id: ID, musica: z.boolean().optional().default(true).describe("Incluir la música del guion si la hay.") },
   },
@@ -150,15 +163,17 @@ server.registerTool(
   (a) => envolver("video_vista_previa", () => h.vistaPrevia(config, a)),
 );
 
-server.registerTool(
-  "video_musica",
-  {
-    title: "Biblioteca de música",
-    description: "Lista VIDEO_ROOT\\_musica con duración, BPM y sonoridad de cada pista (cacheado). Usa la ruta que devuelve en `musica:` del guion.",
-    inputSchema: {},
-  },
-  () => envolver("video_musica", () => h.musica(config)),
-);
+if (!esIntegrado()) {
+  server.registerTool(
+    "video_musica",
+    {
+      title: "Biblioteca de música",
+      description: "Lista VIDEO_ROOT\\_musica con duración, BPM y sonoridad de cada pista (cacheado). Usa la ruta que devuelve en `musica:` del guion.",
+      inputSchema: {},
+    },
+    () => envolver("video_musica", () => h.musica(config)),
+  );
+}
 
 // I14: el catálogo consulta la red de HyperFrames; en el producto integrado no existe.
 if (!esIntegrado()) {

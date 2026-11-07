@@ -1,4 +1,5 @@
 // Resolución y validación de rutas e ids: nada sale de VIDEO_ROOT.
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -41,8 +42,9 @@ export function carpetaVideo(raiz: string, id: string): string {
   return resolverDentro(raiz, validarId(id));
 }
 
+/** El MP4 vive dentro de la carpeta del proyecto: borrar el proyecto no puede dejarlo huérfano. */
 export function rutaMp4(raiz: string, id: string): string {
-  return resolverDentro(raiz, `${validarId(id)}.mp4`);
+  return resolverDentro(raiz, validarId(id), "video.mp4");
 }
 
 export function archivosVideo(raiz: string, id: string) {
@@ -80,7 +82,7 @@ export function siguienteId(raiz: string): string {
     /* raíz vacía */
   }
   for (const nombre of entradas) {
-    const m = /^video(\d{3})(\.mp4)?$/i.exec(nombre);
+    const m = /^video(\d{3})(\.mp4)?$/i.exec(nombre); // `.mp4` suelto: restos del formato anterior (el MP4 ya vive dentro)
     if (m) max = Math.max(max, Number(m[1]));
   }
   if (max >= 999) throw new ErrorVideo("No quedan ids libres (video999 ya existe).");
@@ -289,4 +291,23 @@ export function imagenesValidadas(dir: string): ReturnType<typeof buscarImagenes
     comprobarRecurso(img.ruta);
   }
   return r;
+}
+
+/**
+ * Escritura atómica: temporal único en la misma carpeta y renombrado. Si algo falla a mitad, el fichero anterior
+ * queda intacto y el temporal se borra.
+ */
+export function escribirAtomico(ruta: string, datos: string | Buffer): void {
+  const tmp = `${ruta}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  try {
+    fs.writeFileSync(tmp, datos, { flag: "wx" });
+    fs.renameSync(tmp, ruta);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* no llegó a crearse */
+    }
+    throw e;
+  }
 }

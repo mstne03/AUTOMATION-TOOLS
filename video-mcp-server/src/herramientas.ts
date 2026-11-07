@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { borrarArbol, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { borrarArbol, escribirAtomico, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -52,13 +52,6 @@ function imagenesOAviso(dir: string): { imagenes: (ImagenEncontrada | undefined)
     if (!(e instanceof ErrorVideo)) throw e;
     return { imagenes: new Array(6).fill(undefined), ignoradas: [], avisos: [], aviso: e.message };
   }
-}
-
-/** Escritura atómica: primero a un temporal y luego renombrado. */
-function escribirAtomico(ruta: string, datos: string | Buffer): void {
-  const tmp = `${ruta}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, datos);
-  fs.renameSync(tmp, ruta);
 }
 
 /** Opciones v2 activas en una línea. */
