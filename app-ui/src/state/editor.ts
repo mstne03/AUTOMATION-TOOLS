@@ -187,9 +187,14 @@ export function usarBorrador() {
   editar((p) => ({ ...borrador, revision: p.revision }));
 }
 
-/** Descarta el borrador y se queda con lo del servidor. */
+/** Descarta el borrador y se queda con lo del servidor. Si hubo ediciones durante el aviso
+ *  (el historial se vació al abrirlo), quedan sin guardar: no se marca «Guardado» y se programa
+ *  el guardado. */
 export function descartarBorrador() {
-  useEditor.setState({ conflicto: false, borrador: null, guardado: "guardado" });
+  const { historial, futuro } = useEditor.getState();
+  const sinGuardar = historial.length > 0 || futuro.length > 0;
+  useEditor.setState({ conflicto: false, borrador: null, guardado: sinGuardar ? "pendiente" : "guardado" });
+  if (sinGuardar) programar();
 }
 
 export async function guardar() {

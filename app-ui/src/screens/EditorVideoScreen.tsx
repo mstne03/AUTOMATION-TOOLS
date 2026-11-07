@@ -1,11 +1,13 @@
 /** Ruta `/video/:id`: carga el proyecto en el store del editor y monta el marco. Al salir cierra la
- *  preview (`DELETE …/preview`) y reinicia el editor, que guarda en segundo plano lo pendiente. */
+ *  preview (I8) a través de `SesionPreview` y reinicia el editor, que guarda en segundo plano lo
+ *  pendiente. */
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { useClient } from "../api/context";
 import { Spinner, Estado } from "../ui";
 import { cargar, reiniciarEditor, vincularCliente } from "../state/editor";
 import { Editor } from "../video/Editor";
+import { cerrarSesionPreview, iniciarSesionPreview } from "../video/EditorPreview";
 import { sinRutas } from "./MotorVideo";
 
 type Carga =
@@ -20,6 +22,7 @@ export function EditorVideoScreen() {
   useEffect(() => {
     let vivo = true;
     vincularCliente(client);
+    const sesion = iniciarSesionPreview(client, id);
     setCarga({ id, estado: "cargando" });
     client
       .videoProyecto(id)
@@ -41,10 +44,9 @@ export function EditorVideoScreen() {
     return () => {
       vivo = false;
       reiniciarEditor();
-      // La preview es un recurso del sidecar: si no se cierra, no pasa nada grave (caduca al cerrar la app).
-      void Promise.resolve(client.videoPreviewCerrar(id)).catch(
-        () => undefined,
-      );
+      // I8: la clave de preview no puede sobrevivir al editor; la sesión espera al POST en vuelo
+      // antes del DELETE y registra sus errores.
+      void cerrarSesionPreview(sesion);
     };
   }, [id, client]);
 

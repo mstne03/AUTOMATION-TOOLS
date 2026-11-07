@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "../api/client";
-import { cargar, deshacer, desvincularCliente, editar, guardar as guardarAhora, rehacer, reiniciarEditor, useEditor, vincularCliente } from "../state/editor";
+import { cargar, descartarBorrador, deshacer, desvincularCliente, editar, guardar as guardarAhora, rehacer, reiniciarEditor, useEditor, vincularCliente } from "../state/editor";
 import { aGuionVideo, aPreviewUrl, type Proyecto } from "../video/modelo";
 
 const proyecto = (titulo = "Cocina"): Proyecto => ({
@@ -99,6 +99,19 @@ describe("store del editor", () => {
     // Con conflicto no se reintenta solo.
     await vi.advanceTimersByTimeAsync(5000);
     expect(guardar).toHaveBeenCalledTimes(1);
+  });
+
+  it("descartar con ediciones hechas durante el conflicto no marca «guardado» y las guarda", async () => {
+    guardar.mockRejectedValueOnce(new ApiError(409, "Revisión antigua."));
+    leer.mockResolvedValueOnce({ ...proyecto("Del servidor"), revision: 7 });
+    editar((p) => { p.titulo = "Mía"; });
+    await vi.advanceTimersByTimeAsync(800);
+    editar((p) => { p.titulo = "Durante el aviso"; });
+    descartarBorrador();
+    expect(useEditor.getState()).toMatchObject({ conflicto: false, borrador: null, guardado: "pendiente" });
+    await vi.advanceTimersByTimeAsync(800);
+    expect(guardar).toHaveBeenCalledTimes(2);
+    expect(guardar.mock.calls[1][1]).toMatchObject({ revision: 7, proyecto: { titulo: "Durante el aviso" } });
   });
 
   it("un fallo distinto de 409 marca error y no pierde la edición", async () => {
