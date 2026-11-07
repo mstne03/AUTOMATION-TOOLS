@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -659,7 +660,7 @@ def _procesos_con_imagen_bajo(carpetas: list[Path], exactos: list[Path]) -> list
     return salida
 
 
-@pytest.mark.skipif(not Path("/proc").is_dir(), reason="enumera procesos por /proc (Linux); en Windows lo cubre el test real")
+@pytest.mark.skipif(sys.platform == "win32" or not Path("/proc").is_dir(), reason="enumera procesos por /proc (Linux); en Windows lo cubre el test real")
 async def test_motor_muere_en_render(api, tmp_path, monkeypatch):
     """El motor muere a media ejecución: job fallido legible, cerrojo suelto y, tras relanzar, ningún proceso con
     imagen bajo el CfT ni el ffmpeg del bundle (el barrido al arrancar lo hace el SIMULADOR; el motor real, en T6)."""
