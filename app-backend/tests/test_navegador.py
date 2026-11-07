@@ -1085,7 +1085,8 @@ async def test_post_mientras_descarga_409(cft_falso, tmp_path, fake_anthropic):
     async with _app(tmp_path, fake_anthropic, t) as (_, c):
         assert (await c.post("/video/navegador/descarga", headers=AUTH)).status_code == 202
         r = await c.post("/video/navegador/descarga", headers=AUTH)
-        assert r.status_code == 409 and "en curso" in r.json()["detail"]
+        assert r.status_code == 409 and r.json()["detail"]["codigo"] == "descarga_en_curso"
+        assert "en curso" in r.json()["detail"]["mensaje"]
         soltar.set()
         assert (await _hasta_fin(c))["estado"] == "listo"
     assert len(t.peticiones) == 1
@@ -1140,7 +1141,8 @@ async def test_post_sin_modulo_instalado_503(cft_falso, tmp_path, fake_anthropic
     t = _sirve(b"")
     async with _app(tmp_path, fake_anthropic, t) as (_, c):
         r = await c.post("/video/navegador/descarga", headers=AUTH)
-        assert r.status_code == 503 and r.json()["detail"] == video.MENSAJE_NO_INSTALADO
+        assert r.status_code == 503
+        assert r.json()["detail"] == {"mensaje": video.MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
         assert (await c.get("/video/navegador", headers=AUTH)).json()["estado"] == "ausente"
     assert t.peticiones == []
 

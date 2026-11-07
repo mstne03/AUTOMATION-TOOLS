@@ -222,14 +222,14 @@ def video_proyecto_guardar(id: str, revision: int, proyecto: Any) -> CallToolRes
 
 ELEVEN_ID = "21m00Tcm4TlvDq8ikWAM"
 MSG_SIN_CLAVE = "Añade tu clave de ElevenLabs en Ajustes de SEO Studio."
-MSG_SIN_VOZ = "Elige la voz de ElevenLabs en Ajustes de SEO Studio."
+MSG_SIN_VOZ = "El perfil no tiene una voz válida. Elige la voz en el perfil."
 MSG_COSTE = "El coste ha cambiado: ahora son {n} caracteres. Vuelve a revisarlo antes de confirmar."
 MSG_PLAN = "El contenido a generar ha cambiado desde que lo revisaste. Vuelve a revisarlo antes de confirmar."
 MSG_CONFLICTO_VOZ = "Ya se está generando la voz de este proyecto."
 MSG_SIN_FFMPEG = "Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación."
 MSG_EN_USO = "El recurso está en uso en una escena."
 
-_CFG: dict[str, Any] = {"clave": True, "voz": True, "ffmpeg": True, "fallidas": False, "fallo": False, "dormir": 0.0}
+_CFG: dict[str, Any] = {"clave": True, "voz": True, "ffmpeg": True, "fallidas": False, "fallo": False, "dormir": 0.0, "dormir_voces": 0.0}
 _LLAMADAS: list[dict] = []
 _PERFILES: dict[str, dict] = {"defecto": {"id": "defecto", "nombre": "Defecto", "voz": ELEVEN_ID, "idioma": "es"}}
 _RECURSOS: dict[str, dict[str, bool]] = {}
@@ -270,7 +270,7 @@ def _plan() -> dict:
 
 def _requisitos_voz() -> CallToolResult | None:
     if not _CFG["voz"]:
-        return _error("sin_configurar", "Error en voz: " + MSG_SIN_VOZ)
+        return _error("sin_voz", "Error en voz: " + MSG_SIN_VOZ, [{"ruta": "voz", "codigo": "sin_voz"}])
     return None
 
 
@@ -304,7 +304,7 @@ async def video_voz_generar(
     if p["fallidasFacturadas"] and reintentarFacturadas is not True:
         return _error("reintento_facturado", "1 frase(s) ya se cobraron y no se pudieron usar.", [{"ruta": "f1", "codigo": "reintento_facturado"}])
     if not _CFG["clave"]:
-        return _error("sin_configurar", MSG_SIN_CLAVE)
+        return _error("sin_clave", MSG_SIN_CLAVE)
     if not _CFG["ffmpeg"]:
         return _error_sin_tipar(MSG_SIN_FFMPEG)
     if _CFG["dormir"]:
@@ -328,17 +328,19 @@ def video_voz_quitar_silencios(id: str, fraseId: str) -> CallToolResult:
 
 
 @mcp.tool()
-def video_voces() -> CallToolResult:
+async def video_voces() -> CallToolResult:
+    if _CFG["dormir_voces"]:
+        await anyio.sleep(_CFG["dormir_voces"])
     if not _CFG["clave"]:
-        return _error("sin_configurar", "Error en video_voces: " + MSG_SIN_CLAVE)
+        return _error("sin_clave", "Error en video_voces: " + MSG_SIN_CLAVE)
     return _ok("Voces", {"voces": [{"id": ELEVEN_ID, "nombre": "Lucía", "idioma": "es", "planMuestra": "m" * 64}]})
 
 
 @mcp.tool()
-def video_voz_muestra(voiceId: str, caracteresConfirmados: float, planConfirmado: str, reintentarFacturada: bool | None = None) -> CallToolResult:
-    _LLAMADAS.append({"tool": "video_voz_muestra", "voiceId": voiceId, "caracteresConfirmados": caracteresConfirmados, "planConfirmado": planConfirmado, "reintentarFacturada": reintentarFacturada})
+def video_voz_muestra(caracteresConfirmados: float, planConfirmado: str, voiceId: str | None = None, perfilId: str | None = None, reintentarFacturada: bool | None = None) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_voz_muestra", "voiceId": voiceId, "perfilId": perfilId, "caracteresConfirmados": caracteresConfirmados, "planConfirmado": planConfirmado, "reintentarFacturada": reintentarFacturada})
     if not _CFG["clave"]:
-        return _error("sin_configurar", MSG_SIN_CLAVE)
+        return _error("sin_clave", MSG_SIN_CLAVE)
     if caracteresConfirmados != 60 or planConfirmado != "m" * 64:
         return _error("coste_cambiado", MSG_PLAN, [{"ruta": "planConfirmado", "codigo": "plan_cambiado"}])
     if _CFG["fallidas"] and reintentarFacturada is not True:
@@ -398,7 +400,8 @@ def video_recurso_borrar(id: str, recursoId: str) -> CallToolResult:
     return _ok("Recurso borrado", {})
 
 
-# --- render (canal propio). Comportamiento por el final del id: 097 no acaba, 098 muere con hijos huérfanos, 099 falla.
+# --- render (canal propio). Comportamiento por el final del id: 097 no acaba, 098 muere con hijos huérfanos, 099 falla,
+# 096 devuelve un job_id con forma inesperada (con el render lanzado) y 095 responde al sondeo con un error tipado.
 _JOBS: dict[str, dict] = {}
 
 
@@ -446,6 +449,9 @@ def video_renderizar(id: str, modo: str = "auto") -> CallToolResult:
     if id.endswith("98") and os.environ.get("FFMPEG_DIR"):
         _lanzar_huerfanos()
     jid = f"j{len(_JOBS) + 1}"
+    if id.endswith("96"):
+        _JOBS[jid] = {"id": id, "modo": modo, "polls": 0, "clave": None}
+        return _ok("Render lanzado", {"job_id": "../" + jid, "id": id, "estado": "en_cola", "mp4": None, "avisos": []})
     _JOBS[jid] = {"id": id, "modo": modo, "polls": 0, "clave": os.environ.get("ELEVENLABS_API_KEY")}
     return _ok("Render lanzado", {"job_id": jid, "id": id, "estado": "en_cola", "mp4": None, "avisos": []})
 
@@ -456,6 +462,8 @@ def video_estado_render(job_id: str) -> CallToolResult:
     if j is None:
         return _error_sin_tipar("No existe el job " + job_id)
     j["polls"] += 1
+    if j["id"].endswith("95"):
+        return _error("conflicto", "El render se descolgó.")
     base = {"job_id": job_id, "id": j["id"], "fase": None, "mp4": None, "duracion": None, "avisos": []}
     if j["id"].endswith("97"):
         return _ok("renderizando", {**base, "estado": "renderizando", "progreso": 10})

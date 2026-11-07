@@ -25,12 +25,13 @@ from anthropic import (
 )
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi import Path as RutaPath
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
@@ -132,7 +133,10 @@ def create_app(
         )
         # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
         argv, cwd = video.comando_motor()
-        app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
+        # `actividad`: con una voz o un render en curso, el timeout de una llamada ajena no reinicia este proceso.
+        app.state.motor = video.MotorVideo(
+            argv, cwd, lambda: video.entorno_motor(yt_auth.store), actividad=app.state.cerrojos.alguno
+        )
         # Segundo proceso para las tools de video.TOOLS_CANAL_RENDER, sin la clave de ElevenLabs.
         app.state.motor_render = video.MotorVideo(
             argv, cwd, lambda: video.entorno_motor(yt_auth.store, con_clave=False)
@@ -185,24 +189,52 @@ def create_app(
     )
     app.add_middleware(video_rest.CabeceraCSP)
 
+    def _es_video(request: Request) -> bool:
+        return request.url.path.startswith("/video/")
+
     @app.exception_handler(Exception)
     async def error_inesperado(request: Request, exc: Exception):
         # `ServerErrorMiddleware` envuelve a los middleware de usuario: la CSP se pone aquí.
         log.exception("Error no controlado en %s", request.url.path, exc_info=exc)
-        return JSONResponse(
-            {"detail": "Error interno."}, status_code=500, headers={"Content-Security-Policy": video_rest.CSP}
-        )
+        detalle = {"mensaje": "Error interno.", "codigo": "interno"} if _es_video(request) else "Error interno."
+        return JSONResponse({"detail": detalle}, status_code=500, headers={"Content-Security-Policy": video_rest.CSP})
 
     @app.exception_handler(RequestValidationError)
     async def validacion(request: Request, exc: RequestValidationError):
         # Un id de ruta con forma mala es "no encontrado", no un error de formulario.
         if all(e["loc"][:1] == ("path",) for e in exc.errors()):
+            if _es_video(request):
+                return JSONResponse({"detail": {"mensaje": "No encontrado.", "codigo": "no_encontrado"}}, status_code=404)
             return JSONResponse({"detail": "No encontrado."}, status_code=404)
-        if request.url.path.startswith("/video/"):  # sin `input`: es texto del cliente o del modelo
-            return JSONResponse(
-                {"detail": [{"loc": list(e["loc"]), "type": e["type"]} for e in exc.errors()]}, status_code=422
-            )
+        if _es_video(request):  # sin `input`: es texto del cliente o del modelo
+            problemas = [{"ruta": ".".join(str(x) for x in e["loc"][1:]), "codigo": e["type"]} for e in exc.errors()]
+            detalle = {
+                "mensaje": "La petición no tiene la forma esperada.",
+                "codigo": "esquema",
+                "problemas": video_rest._problemas_seguros(problemas),
+            }
+            return JSONResponse({"detail": detalle}, status_code=422)
         return await request_validation_exception_handler(request, exc)
+
+    _CODIGOS_HTTP_VIDEO = {
+        401: ("no_autorizado", "Token inválido o ausente."),
+        404: ("no_encontrado", "No encontrado."),
+        405: ("metodo_no_permitido", "Método no permitido."),
+        413: ("demasiado_grande", "El cuerpo es demasiado grande."),
+    }
+
+    @app.exception_handler(StarletteHTTPException)
+    async def error_http(request: Request, exc: StarletteHTTPException):
+        # Desde T11 todo error de /video/** lleva `detail: {mensaje, codigo}`; los de las rutas ya lo traen, los de
+        # FastAPI/Starlette (401, ruta o método inexistentes) se convierten aquí. Fuera de /video/ no cambia nada.
+        if _es_video(request) and not isinstance(exc.detail, dict):
+            codigo, mensaje = _CODIGOS_HTTP_VIDEO.get(exc.status_code, ("error", "La petición no se pudo completar."))
+            return JSONResponse(
+                {"detail": {"mensaje": mensaje, "codigo": codigo}},
+                status_code=exc.status_code,
+                headers=getattr(exc, "headers", None),
+            )
+        return await http_exception_handler(request, exc)
 
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:  # noqa: B008
         if creds is None or not secrets.compare_digest(creds.credentials, token):
@@ -496,10 +528,15 @@ def create_app(
     async def video_navegador_descarga():
         # Instalación sin motor de vídeo: bajar ~120 MB no serviría de nada.
         if config.FROZEN and not (config.VIDEO_ENGINE_DIR / "node" / "node.exe").is_file():
-            raise HTTPException(status_code=503, detail=video.MENSAJE_NO_INSTALADO)
+            raise HTTPException(
+                status_code=503, detail={"mensaje": video.MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
+            )
         d: navegador.Descargador = app.state.navegador
         if not d.reservar():
-            raise HTTPException(status_code=409, detail="Ya hay una descarga del navegador en curso.")
+            raise HTTPException(
+                status_code=409,
+                detail={"mensaje": "Ya hay una descarga del navegador en curso.", "codigo": "descarga_en_curso"},
+            )
         tarea = asyncio.create_task(asyncio.to_thread(d.ejecutar))
         tareas_navegador.add(tarea)  # que el GC no recoja la tarea
         tarea.add_done_callback(tareas_navegador.discard)
@@ -594,6 +631,21 @@ def create_app(
 
     @app.put("/settings", dependencies=protegido)
     async def put_settings(body: SettingsIn):
+        # Cambiar la clave de ElevenLabs reinicia el motor (la recibe por su entorno). Con una generación de voz o un
+        # render en curso eso los cortaría (ElevenLabs ya cobró la frase en vuelo): se rechaza ANTES de tocar nada, con
+        # un 409 de mensaje fijo, y la persona repite el cambio cuando acabe. (Se eligió el 409 y no aplazar el
+        # reinicio: aplazar deja la clave guardada pero sin efecto, justo el estado confuso que se quiere evitar.)
+        clave_cambia = body.elevenlabs_api_key is not None and (body.elevenlabs_api_key or None) != (
+            yt_auth.store.get(config.ELEVENLABS_KEY) or None
+        )
+        if clave_cambia and app.state.motor.en_actividad():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "mensaje": "Hay una generación en curso: espera a que termine para cambiar la clave.",
+                    "codigo": "generacion_en_curso",
+                },
+            )
         s = config.load_settings()
         if body.model is not None:
             if body.model not in config.MODELS:
@@ -623,7 +675,8 @@ def create_app(
                 yt_auth.store.delete(config.ELEVENLABS_KEY)
             # El motor recibe la clave por su entorno al arrancar: se para y la siguiente llamada lo
             # relanza con la nueva (o sin ninguna). Si no, seguiría usando y ocultando la revocada.
-            await app.state.motor.cerrar()
+            if clave_cambia:
+                await app.state.motor.cerrar()
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()

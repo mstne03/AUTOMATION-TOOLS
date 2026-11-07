@@ -82,7 +82,7 @@ def test_literales_del_simulador_son_los_del_motor():
     for literal in (mf.MSG_SIN_CLAVE, mf.MSG_SIN_VOZ, mf.MSG_PLAN, mf.MSG_CONFLICTO_VOZ, mf.MSG_COSTE.split("{n}")[0]):
         assert literal in voz, literal
     assert mf.MSG_SIN_FFMPEG in proceso
-    for codigo in ("sin_configurar", "coste_cambiado", "reintento_facturado", "conflicto", "fallo_facturado", "voz_pendiente"):
+    for codigo in ("sin_clave", "sin_voz", "coste_cambiado", "reintento_facturado", "conflicto", "fallo_facturado", "voz_pendiente"):
         assert f'"{codigo}"' in voz, codigo
 
 
@@ -237,14 +237,14 @@ async def test_generar_usa_el_timeout_de_voz(api, monkeypatch):
     visto = {}
     original = api.app.state.motor.llamar
 
-    async def espia(tool, args=None, timeout=None):
+    async def espia(tool, args=None, timeout=None, protegida=False):
         if tool == "video_voz_generar":
-            visto["t"] = timeout
-        return await original(tool, args, timeout)
+            visto["t"], visto["protegida"] = timeout, protegida
+        return await original(tool, args, timeout, protegida)
 
     monkeypatch.setattr(api.app.state.motor, "llamar", espia)
     assert (await api.post(f"/video/proyectos/{pid}/voz", json=_cuerpo_voz(c, frases=["f0", "f1"]))).status_code == 200
-    assert visto["t"] == 60 + 200 * 2
+    assert visto["t"] == 60 + 200 * 2 and visto["protegida"] is True  # la voz es una llamada larga protegida
     await api.post(f"/video/proyectos/{pid}/voz", json=_cuerpo_voz(c))  # sin ámbito: acotado por los caracteres
     assert visto["t"] == 60 + 200 * 120
 
@@ -475,7 +475,7 @@ async def test_borrar_invalida_clave(api):
     ("codigo_motor", "estado", "codigo"),
     [("esquema", 422, "esquema"), ("conflicto", 409, "conflicto"), ("no_encontrado", 404, "no_encontrado"),
      ("coste_cambiado", 409, "coste_cambiado"), ("reintento_facturado", 409, "reintento_facturado"),
-     ("sin_configurar", 409, "sin_clave"), ("en_uso", 409, "recurso_en_uso"), ("voz_pendiente", 409, "voz_pendiente"),
+     ("sin_clave", 409, "sin_clave"), ("sin_voz", 409, "sin_voz"), ("en_uso", 409, "recurso_en_uso"), ("voz_pendiente", 409, "voz_pendiente"),
      ("fallo_facturado", 502, "fallo_facturado")],
 )
 def test_http_todo_error_lleva_mensaje_y_codigo(codigo_motor, estado, codigo):
@@ -496,12 +496,19 @@ def test_http_503_y_502_tambien_con_codigo():
         _sin_rutas_t11(json.dumps(e.detail))
 
 
-def test_http_sin_configurar_distingue_clave_de_voz_con_el_texto_real():
+def test_http_sin_clave_y_sin_voz_se_distinguen_por_codigo_y_no_por_texto():
+    """El motor da `sin_clave` o `sin_voz` (códigos de `voz.ts`); el texto del motor no decide nada."""
     voz = (SRC_MOTOR / "voz.ts").read_text(encoding="utf-8")
-    sin_clave = re.search(r'"sin_configurar", "(Añade tu clave[^"]+)"', voz).group(1)
-    sin_voz = re.search(r'"sin_configurar", "(Elige la voz[^"]+)"', voz).group(1)
-    assert video_rest._http(video.MotorError("Error en x: " + sin_clave, "sin_configurar")).detail["codigo"] == "sin_clave"
-    assert video_rest._http(video.MotorError("Error en x: " + sin_voz, "sin_configurar")).detail["codigo"] == "sin_voz"
+    for codigo in ("sin_clave", "sin_voz"):
+        assert f'"{codigo}"' in voz
+    for texto in ("Añade tu clave de ElevenLabs", "Elige la voz en el perfil", "cualquier otro texto"):
+        a = video_rest._http(video.MotorError("Error en x: " + texto, "sin_clave"))
+        b = video_rest._http(video.MotorError("Error en x: " + texto, "sin_voz"))
+        assert a.detail["codigo"] == "sin_clave" and b.detail["codigo"] == "sin_voz"
+        assert a.status_code == b.status_code == 409
+        assert "voz" not in a.detail["mensaje"].lower() and "clave" not in b.detail["mensaje"].lower()
+    # El código viejo ya no existe en el motor: sin tipar, nunca «adivinado» por el texto.
+    assert video_rest._http(video.MotorError("Elige la voz", "sin_configurar")).detail["codigo"] == "error_motor"
 
 
 async def test_todo_error_de_video_lleva_detail_dict(api):
@@ -704,40 +711,52 @@ def test_real_render_de_extremo_a_extremo():
 # ================================================================== motor real: mensajes y códigos reales
 
 
-@pytest.fixture
-def sin_clave_guardada(monkeypatch):
-    """Otros tests dejan una clave en el almacén de secretos compartido (fuga previa a T11): aquí no hay ninguna."""
-    monkeypatch.setattr(config, "elevenlabs_api_key", lambda store: None)
-
-
-async def test_real_sin_clave_en_voces_es_409_sin_clave(real, sin_clave_guardada):
+async def test_real_sin_clave_en_voces_es_409_sin_clave(real):
     r = await real.get("/video/voces")
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "sin_clave", r.text
     assert "Añade tu clave" not in r.text
 
 
-async def _proyecto_real(real) -> str:
+async def _proyecto_real(real, perfil_id: str = "defecto") -> str:
     gid = (await real.post("/video/guiones", json={"guion": _guion_real()})).json()["id"]
-    r = await real.post("/video/proyectos", json={"guion_id": gid, "perfil_id": "defecto"})
+    r = await real.post("/video/proyectos", json={"guion_id": gid, "perfil_id": perfil_id})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
-async def test_real_sin_voz_es_otro_codigo_que_sin_clave(real, monkeypatch, sin_clave_guardada):
-    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
-    pid = await _proyecto_real(real)
+async def _perfil_sin_voz_valida(real) -> str:
+    """Un perfil real (duplicado de «defecto») al que se le estropea la voz en disco: el motor lo lee y dice `sin_voz`."""
+    pid = (await real.post("/video/perfiles/defecto/duplicar", json={"nombre": "Sin voz"})).json()["id"]
+    fichero = real.raiz.parent / "video" / "perfiles" / f"{pid}.json"
+    doc = json.loads(fichero.read_text(encoding="utf-8"))
+    doc["voz"] = "no vale"
+    fichero.write_text(json.dumps(doc), encoding="utf-8")
+    return pid
+
+
+async def test_real_sin_voz_es_otro_codigo_que_sin_clave(real, monkeypatch):
+    """La voz sale del perfil del proyecto: `ELEVENLABS_VOICE_ID` ni se mira. Perfil sin voz válida: `sin_voz`."""
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    pid = await _proyecto_real(real, await _perfil_sin_voz_valida(real))
     r = await real.post(f"/video/proyectos/{pid}/voz/coste", json={})
+    assert r.status_code == 409 and r.json()["detail"]["codigo"] == "sin_voz", r.text
+    assert "clave" not in r.json()["detail"]["mensaje"].lower()
+
+
+async def test_real_muestra_con_perfil_sin_voz_es_sin_voz(real):
+    perfil = await _perfil_sin_voz_valida(real)
+    cuerpo = {"perfil_id": perfil, "plan_confirmado": "x", "caracteres_confirmados": 60}
+    r = await real.post("/video/voces/muestra", json=cuerpo)
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "sin_voz", r.text
 
 
-async def test_real_coste_plan_y_errores_del_motor(real, monkeypatch, sin_clave_guardada):
-    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+async def test_real_coste_plan_y_errores_del_motor(real):
     pid = await _proyecto_real(real)
     r = await real.post(f"/video/proyectos/{pid}/voz/coste", json={})
     assert r.status_code == 200, r.text
     c = r.json()
     assert c["caracteres"] > 0 and isinstance(c["plan"], str) and c["fallidasFacturadas"] == []
-    assert c["voz"]["id"] == "21m00Tcm4TlvDq8ikWAM" and c["voz"]["nombre"] == c["voz"]["id"]  # sin clave no hay nombres
+    assert c["voz"]["id"] == "21m00Tcm4TlvDq8ikWAM" and c["voz"]["nombre"] == c["voz"]["id"]  # la del perfil «defecto»; sin clave no hay nombres
     # El coste cambiado y el plan cambiado salen del motor real con el mismo código.
     r = await real.post(f"/video/proyectos/{pid}/voz", json={"plan_confirmado": c["plan"], "caracteres_confirmados": c["caracteres"] + 1})
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "coste_cambiado", r.text
@@ -755,3 +774,435 @@ async def test_real_perfiles(real):
     assert r.status_code == 201 and re.fullmatch(r"p-[0-9a-f]{16}", r.json()["id"])
     r = await real.put("/video/perfiles/defecto", json={"perfil": {"id": "p-0123456789abcdef"}})
     assert r.status_code == 422
+
+
+# ================================================================== la voz en curso no se corta (revisión T11, Medium 1)
+
+
+async def _voz_en_vuelo(api, pid: str, dormir: float = 1.5) -> asyncio.Task:
+    """Lanza `POST /voz` con el motor tardando `dormir` s y espera a que el motor ya la tenga en curso."""
+    c = await _coste(api, pid)
+    await _config(api, dormir=dormir)
+    tarea = asyncio.create_task(api.post(f"/video/proyectos/{pid}/voz", json=_cuerpo_voz(c)))
+    for _ in range(100):
+        if api.app.state.cerrojos.de(pid) == "voz" and any(x["tool"] == "video_voz_generar" for x in await _llamadas(api)):
+            return tarea
+        await asyncio.sleep(0.02)
+    tarea.cancel()
+    raise AssertionError("la generación no llegó al motor")
+
+
+async def test_timeout_ajeno_no_mata_la_voz_en_curso(api):
+    """Una llamada ajena que vence su timeout NO reinicia el motor mientras hay una voz generándose: falla ella, no la voz."""
+    pid = await _proyecto(api)
+    motor = api.app.state.motor
+    tarea = await _voz_en_vuelo(api, pid)
+    pid_motor = motor.pid
+    with pytest.raises(video.MotorTimeout):
+        await motor.llamar("dormir", {"segundos": 5}, timeout=0.2)
+    assert motor.pid == pid_motor, "el timeout ajeno reinició el motor y cortó la voz"
+    r = await tarea
+    assert r.status_code == 200 and r.json() == {"generadas": 2, "caracteresFacturados": 120}, r.text
+
+
+async def test_coste_de_otro_proyecto_con_voces_lento_no_mata_la_voz(api, monkeypatch):
+    """`/voz/coste` de B llama a `video_voces` (ElevenLabs): si tarda, 200 con el id (sin nombre) y la voz de A sigue."""
+    a, b = await _proyecto(api), await _alta(api, "video050")
+    motor = api.app.state.motor
+    tarea = await _voz_en_vuelo(api, a)
+    pid_motor = motor.pid
+    monkeypatch.setattr(video_rest, "TIMEOUT_VOCES", 0.2, raising=False)
+    await _config(api, dormir_voces=5.0)
+    r = await api.post(f"/video/proyectos/{b}/voz/coste", json={})
+    assert r.status_code == 200 and r.json()["voz"]["nombre"] == r.json()["voz"]["id"], r.text
+    assert motor.pid == pid_motor
+    r = await tarea
+    assert r.status_code == 200, r.text
+
+
+async def test_voces_lento_con_voz_en_curso_es_503_fijo_y_el_motor_sigue(api, monkeypatch):
+    pid = await _proyecto(api)
+    motor = api.app.state.motor
+    tarea = await _voz_en_vuelo(api, pid)
+    pid_motor = motor.pid
+    monkeypatch.setattr(video_rest, "TIMEOUT_VOCES", 0.2, raising=False)
+    await _config(api, dormir_voces=5.0)
+    r = await api.get("/video/voces")
+    assert r.status_code == 503 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    assert r.json()["detail"]["mensaje"] == video_rest.MENSAJE_TIMEOUT_OCUPADO  # no dice «se ha reiniciado»: no lo hizo
+    assert motor.pid == pid_motor
+    assert (await tarea).status_code == 200
+
+
+async def test_timeout_con_render_en_curso_tampoco_reinicia_el_motor_principal(api):
+    pid = await _proyecto(api)
+    motor = api.app.state.motor
+    await motor.llamar("pid")
+    antes = motor.pid
+    api.app.state.cerrojos.tomar(pid, "render")
+    try:
+        with pytest.raises(video.MotorTimeout):
+            await motor.llamar("dormir", {"segundos": 5}, timeout=0.2)
+        assert motor.pid == antes
+    finally:
+        api.app.state.cerrojos.soltar(pid, "render")
+    with pytest.raises(video.MotorTimeout):  # sin actividad el comportamiento de siempre: se reinicia
+        await motor.llamar("dormir", {"segundos": 5}, timeout=0.2)
+    assert motor.pid is None
+
+
+async def test_llamada_protegida_ajena_protege_a_las_demas(api):
+    """Nivel `MotorVideo`: una llamada marcada `protegida` (voz, muestra) impide el reinicio por el timeout de otra."""
+    motor = api.app.state.motor
+    await motor.llamar("pid")
+    antes = motor.pid
+    larga = asyncio.create_task(motor.llamar("dormir", {"segundos": 1.0}, timeout=10, protegida=True))
+    await asyncio.sleep(0.2)
+    with pytest.raises(video.MotorTimeout):
+        await motor.llamar("dormir", {"segundos": 5}, timeout=0.2)
+    assert motor.pid == antes
+    assert (await larga).texto
+    assert not motor.en_actividad()
+
+
+async def test_cambiar_la_clave_con_voz_en_curso_es_409_y_no_reinicia(api):
+    """`PUT /settings` con una clave distinta no reinicia en caliente (opción robusta: 409 y nada cambia)."""
+    from app_backend.main import yt_auth
+
+    pid = await _proyecto(api)
+    motor = api.app.state.motor
+    tarea = await _voz_en_vuelo(api, pid)
+    pid_motor = motor.pid
+    antes = config.elevenlabs_api_key(yt_auth.store)
+    r = await api.put("/settings", json={"elevenlabs_api_key": "xi-nueva-clave"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == {"mensaje": "Hay una generación en curso: espera a que termine para cambiar la clave.", "codigo": "generacion_en_curso"}
+    assert motor.pid == pid_motor
+    assert config.elevenlabs_api_key(yt_auth.store) == antes, "la clave no debe guardarse si se rechaza el cambio"
+    # Repetir la misma clave que ya hay no reinicia nada y no es un cambio.
+    if antes:
+        assert (await api.put("/settings", json={"elevenlabs_api_key": antes})).status_code == 200
+        assert motor.pid == pid_motor
+    assert (await tarea).status_code == 200
+    # Terminada la generación, el cambio se aplica y el motor se relanza con la clave nueva.
+    assert (await api.put("/settings", json={"elevenlabs_api_key": "xi-nueva-clave"})).status_code == 200
+    assert motor.pid is None
+    assert config.elevenlabs_api_key(yt_auth.store) == "xi-nueva-clave"
+
+
+async def test_cambiar_la_clave_con_render_en_curso_tambien_es_409(api):
+    pid = await _proyecto(api)
+    api.app.state.cerrojos.tomar(pid, "render")
+    try:
+        r = await api.put("/settings", json={"elevenlabs_api_key": "xi-otra-mas"})
+        assert r.status_code == 409 and r.json()["detail"]["codigo"] == "generacion_en_curso"
+        # Lo que no toca la clave de ElevenLabs sigue permitido.
+        assert (await api.put("/settings", json={"model": config.MODELS[0]})).status_code == 200
+    finally:
+        api.app.state.cerrojos.soltar(pid, "render")
+
+
+async def test_almacen_de_secretos_empieza_limpio_en_cada_test():
+    """Aislamiento por test (fixture autouse de conftest): ninguna clave de un test anterior sobrevive."""
+    from app_backend.main import yt_auth
+
+    assert yt_auth.store.get(config.ELEVENLABS_KEY) is None
+    assert yt_auth.store.get(config.ANTHROPIC_KEY) is None
+
+
+# ================================================================== R0-6: reinicio por deadline (revisión T11, Medium 2)
+
+
+class _MotorDeFicha:
+    """Motor mínimo para probar `reiniciar_motor_render` sin procesos."""
+
+    def __init__(self, tools: list[str], falla_barrido: bool = False) -> None:
+        self.tools, self.falla_barrido, self.eventos = tools, falla_barrido, []
+
+    def pids_conocidos(self) -> list[int]:
+        return [4321, 4322]
+
+    async def cerrar(self) -> None:
+        self.eventos.append("cerrar")
+
+    async def herramientas(self) -> list[str]:
+        self.eventos.append("herramientas")
+        return self.tools
+
+    async def llamar(self, tool, args=None, timeout=None):
+        self.eventos.append(tool)
+        if self.falla_barrido:
+            raise video.MotorTimeout("x")
+        return video.RespuestaMotor(texto="barrido", datos={"matados": 2}, imagen=None)
+
+
+async def test_deadline_registra_los_pid_y_pide_el_barrido_al_motor_nuevo(caplog):
+    caplog.set_level("WARNING", logger="app_backend.video")
+    m = _MotorDeFicha(["video_renderizar", video_rest.TOOL_BARRIDO])
+    assert await video_rest.reiniciar_motor_render(m) is True
+    assert m.eventos == ["cerrar", "herramientas", video_rest.TOOL_BARRIDO]  # primero parar, luego barrer con el nuevo
+    assert "4321" in caplog.text and "4322" in caplog.text
+
+
+async def test_deadline_sin_tool_de_barrido_lo_deja_dicho_y_no_falla(caplog):
+    caplog.set_level("WARNING", logger="app_backend.video")
+    m = _MotorDeFicha(["video_renderizar"])
+    assert await video_rest.reiniciar_motor_render(m) is False
+    assert m.eventos == ["cerrar", "herramientas"]
+    assert "TODO(T6)" in caplog.text and "4321" in caplog.text
+
+
+async def test_deadline_con_barrido_que_falla_no_impide_el_reinicio(caplog):
+    m = _MotorDeFicha([video_rest.TOOL_BARRIDO], falla_barrido=True)
+    assert await video_rest.reiniciar_motor_render(m) is False
+
+
+async def test_motor_render_conoce_sus_pid(api):
+    motor = api.app.state.motor_render
+    assert motor.pids_conocidos() == []
+    await motor.llamar("pid")
+    assert motor.pid in motor.pids_conocidos()
+
+
+@pytest.mark.skip(reason="TODO(T6): el motor real aún no expone `video_barrer_procesos` ni barre al arrancar (proceso.ts solo barre tras un timeout o un fallo de la CLI). "
+                         "Cuando T6 lo registre, este test debe pasar: es la condición de cierre de R0-6 en el backend.")
+async def test_real_el_motor_expone_el_barrido(real):
+    tools = await real.app.state.motor_render.herramientas()
+    assert video_rest.TOOL_BARRIDO in tools
+
+
+# ================================================================== el cerrojo del render solo se suelta con el render parado
+
+
+async def test_job_id_raro_con_render_lanzado_para_el_motor_antes_de_soltar(api):
+    pid = await _alta(api, "video096")
+    r = await api.post(f"/video/proyectos/{pid}/render", json={"modo": "auto"})
+    j = await _esperar(api, r.json()["id"])
+    assert j["status"] == "failed" and j["error"] == video_rest.MENSAJE_RENDER_FALLIDO
+    assert api.app.state.motor_render.pid is None, "el render del motor seguía vivo al soltar el cerrojo"
+    assert api.app.state.cerrojos.de(pid) is None
+
+
+async def test_error_tipado_en_el_sondeo_para_el_motor_antes_de_soltar(api):
+    pid = await _alta(api, "video095")
+    r = await api.post(f"/video/proyectos/{pid}/render", json={"modo": "auto"})
+    j = await _esperar(api, r.json()["id"])
+    assert j["status"] == "failed" and j["error"] == video_rest.MENSAJE_RENDER_FALLIDO
+    assert api.app.state.motor_render.pid is None
+    assert api.app.state.cerrojos.de(pid) is None
+
+
+async def test_si_no_se_puede_parar_el_render_el_cerrojo_se_queda(api, monkeypatch):
+    """Sin garantía de que el render paró (el cierre falló), el proyecto sigue «renderizando»: no se borra ni se toca."""
+    pid = await _alta(api, "video095")
+
+    async def no_cierra():
+        raise OSError("no se pudo")
+
+    with monkeypatch.context() as m:  # se deshace antes de que el lifespan cierre los motores
+        m.setattr(api.app.state.motor_render, "cerrar", no_cierra)
+        r = await api.post(f"/video/proyectos/{pid}/render", json={"modo": "auto"})
+        j = await _esperar(api, r.json()["id"])
+        assert j["status"] == "failed" and j["error"] == video_rest.MENSAJE_RENDER_FALLIDO
+        assert api.app.state.cerrojos.de(pid) == "render"
+        assert (await api.delete(f"/video/proyectos/{pid}")).json()["detail"]["codigo"] == "render_en_curso"
+    api.app.state.cerrojos.soltar(pid, "render")
+
+
+async def test_render_terminado_o_con_error_del_motor_suelta_sin_parar_el_motor(api):
+    """Si el motor mismo dice `terminado` o `error`, el render ya paró: no hace falta reiniciar nada."""
+    bueno = await _alta(api, "video001")
+    r = await api.post(f"/video/proyectos/{bueno}/render", json={"modo": "auto"})
+    assert (await _esperar(api, r.json()["id"]))["status"] == "done"
+    assert api.app.state.motor_render.pid is not None
+    malo = await _alta(api, "video099")
+    antes = api.app.state.motor_render.pid
+    r = await api.post(f"/video/proyectos/{malo}/render", json={"modo": "auto"})
+    assert (await _esperar(api, r.json()["id"]))["status"] == "failed"
+    assert api.app.state.motor_render.pid == antes
+    assert api.app.state.cerrojos.de(malo) is None
+
+
+async def test_excepcion_inesperada_en_el_render_es_mensaje_fijo(api, monkeypatch):
+    def rompe(*a, **k):
+        raise KeyError("C:\\Users\\Marc Serra\\secreto")
+
+    monkeypatch.setattr(video_rest, "_resultado_render", rompe)
+    pid = await _alta(api, "video001")
+    r = await api.post(f"/video/proyectos/{pid}/render", json={"modo": "auto"})
+    j = await _esperar(api, r.json()["id"])
+    assert j["status"] == "failed" and j["error"] == video_rest.MENSAJE_RENDER_FALLIDO
+    _sin_rutas_t11(json.dumps(j))
+    assert api.app.state.cerrojos.de(pid) is None
+
+
+# ================================================================== recursos sin tools en el motor: no_disponible, nunca 502
+
+
+@pytest.fixture
+def motor_sin_recursos(monkeypatch):
+    original = video.MotorVideo.herramientas
+
+    async def sin_recursos(self):
+        return [t for t in await original(self) if not t.startswith("video_recurso_")]
+
+    monkeypatch.setattr(video.MotorVideo, "herramientas", sin_recursos)
+
+
+async def test_recursos_sin_tools_son_501_no_disponible(api, motor_sin_recursos):
+    pid = await _proyecto(api)
+    r = await api.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})
+    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    assert r.json()["detail"]["mensaje"] == video_rest.MENSAJE_SIN_RECURSOS
+    r = await api.delete(f"/video/proyectos/{pid}/recursos/r-0123456789abcdef")
+    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    assert [x for x in await _llamadas(api) if x["tool"].startswith("video_recurso_")] == []
+
+
+async def test_real_recursos_sin_tools_del_motor_no_son_502(real):
+    """Mientras T7 no registre las tools, el motor real da 501 `no_disponible` y nunca un 502 con texto."""
+    if "video_recurso_importar" in await real.app.state.motor.herramientas():
+        pytest.skip("T7 ya registró las tools: este caso lo sustituye el test de recurso_en_uso contra el motor real")
+    pid = await _proyecto_real(real)
+    r = await real.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})
+    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    r = await real.delete(f"/video/proyectos/{pid}/recursos/r-0123456789abcdef")
+    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+
+
+@pytest.mark.skip(reason="TODO(T7): cuando el motor registre video_recurso_borrar con `en_uso`, comprobar el 409 `recurso_en_uso` contra el motor real (hoy solo contra el simulador).")
+async def test_real_recurso_en_uso_409(real):
+    ...
+
+
+@pytest.mark.parametrize("nombre", ["../../etc/passwd", "a/b.jpg", "a\\b.jpg", "C:x.jpg", "a\x00b.jpg", "..", "x\n.jpg"])
+def test_recurso_seguro_vacia_nombres_con_separadores(nombre):
+    base = {"id": "r-0123456789abcdef", "clase": "foto", "ext": "jpg", "ancho": 1, "alto": 1, "duracion": 0}
+    assert video_rest.recurso_seguro({**base, "nombreOriginal": nombre})["nombreOriginal"] == ""
+    assert video_rest.recurso_seguro({**base, "nombreOriginal": "foto de gol.jpg"})["nombreOriginal"] == "foto de gol.jpg"
+
+
+async def test_guardar_perfil_con_respuesta_que_no_es_un_dict_es_502_fijo(api, monkeypatch):
+    original = video_rest._llamar
+
+    async def devuelve_none(estado, tool, args=None, **kw):
+        return None if tool == "video_perfil_guardar" else await original(estado, tool, args, **kw)
+
+    monkeypatch.setattr(video_rest, "_llamar", devuelve_none)
+    r = await api.put("/video/perfiles/defecto", json={"perfil": {"id": "defecto"}})
+    assert r.status_code == 502 and r.json()["detail"]["codigo"] == "error_motor"
+
+
+# ================================================================== muestra: voiceId o perfilId
+
+
+async def test_muestra_con_perfil_id_reenvia_el_perfil(api):
+    cuerpo = {"perfil_id": "defecto", "plan_confirmado": "m" * 64, "caracteres_confirmados": 60}
+    r = await api.post("/video/voces/muestra", json=cuerpo)
+    assert r.status_code == 200, r.text
+    ultimo = [x for x in await _llamadas(api) if x["tool"] == "video_voz_muestra"][-1]
+    assert ultimo["perfilId"] == "defecto" and ultimo["voiceId"] is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"voiceId": "21m00Tcm4TlvDq8ikWAM", "perfil_id": "defecto"}, {"perfil_id": "p-xyz"}, {"perfil_id": "../x"}],
+)
+async def test_muestra_exige_exactamente_una_voz_o_perfil_valido(api, extra):
+    r = await api.post("/video/voces/muestra", json={"plan_confirmado": "m" * 64, "caracteres_confirmados": 60, **extra})
+    assert r.status_code == 422, r.text
+    assert [x for x in await _llamadas(api) if x["tool"] == "video_voz_muestra"] == []
+
+
+# ================================================================== todo error de /video/** lleva {mensaje, codigo}
+
+
+def _rutas_video(app):
+    """Todas las rutas `/video/**`: las del router de `video_rest` (que `app.routes` no aplana) y las que declara `main.py`."""
+    rutas = [*video_rest.crear_router(app.state, []).routes, *app.routes]
+    vistas = set()
+    for ruta in rutas:
+        path = getattr(ruta, "path", "")
+        if path.startswith("/video/"):
+            for metodo in sorted(ruta.methods - {"HEAD", "OPTIONS"}):
+                if (metodo, path) not in vistas:
+                    vistas.add((metodo, path))
+                    yield metodo, path
+
+
+_IDS_BUENOS = {"id": "video001", "gid": "g-0123456789abcdef", "pid": "defecto", "rid": "r-0123456789abcdef"}
+
+
+def _llena(path: str, valor: str | None = None) -> str:
+    """Rellena los parámetros de ruta: con `valor` todos iguales; sin él, un id válido para cada uno."""
+    return re.sub(r"\{([^}]+)\}", lambda m: valor if valor is not None else _IDS_BUENOS[m.group(1)], path)
+
+
+def _detail_ok(r, estado: int | None = None) -> dict:
+    d = r.json()["detail"]
+    assert isinstance(d, dict) and isinstance(d.get("mensaje"), str) and isinstance(d.get("codigo"), str), (r.status_code, r.text)
+    assert r.status_code >= 400 and (estado is None or r.status_code == estado), (r.status_code, r.text)
+    _sin_rutas_t11(r.text)
+    return d
+
+
+async def test_todas_las_rutas_de_video_dan_detail_dict_sin_token(api):
+    rutas = list(_rutas_video(api.app))
+    assert len(rutas) >= 25  # si baja, el recorrido dejó de ver las rutas del router
+    for metodo, path in rutas:
+        r = await api.request(metodo, _llena(path), headers={"Authorization": ""})
+        assert _detail_ok(r, 401)["codigo"] == "no_autorizado", (metodo, path)
+
+
+async def test_todas_las_rutas_de_video_dan_detail_dict_con_id_de_ruta_malo(api):
+    for metodo, path in _rutas_video(api.app):
+        if "{" not in path:
+            continue
+        r = await api.request(metodo, _llena(path, "!!"), json={} if metodo in ("POST", "PUT") else None)
+        assert _detail_ok(r, 404)["codigo"] == "no_encontrado", (metodo, path)
+
+
+async def test_todas_las_rutas_de_video_dan_detail_dict_con_cuerpo_malo(api):
+    for metodo, path in _rutas_video(api.app):
+        if metodo not in ("POST", "PUT"):
+            continue
+        r = await api.request(metodo, _llena(path), content=b"[1, 2", headers={"content-type": "application/json"})
+        if r.status_code < 400:
+            continue  # rutas sin cuerpo (preview, render con cuerpo opcional vacío...) que no lo leen
+        assert _detail_ok(r)["codigo"] in ("json", "cuerpo", "esquema"), (metodo, path, r.text)
+
+
+async def test_todas_las_rutas_de_video_dan_detail_dict_con_cuerpo_gigante(api):
+    grande = b'{"a": "' + b"x" * (video_rest.LIMITE_CUERPO + 10) + b'"}'
+    for metodo, path in _rutas_video(api.app):
+        if metodo not in ("POST", "PUT"):
+            continue
+        r = await api.request(metodo, _llena(path), content=grande, headers={"content-type": "application/json"})
+        assert _detail_ok(r, 413)["codigo"] == "demasiado_grande", (metodo, path)
+
+
+async def test_todas_las_rutas_de_video_dan_detail_dict_con_metodo_o_ruta_inexistente(api):
+    for metodo, path in _rutas_video(api.app):
+        r = await api.request("PATCH", _llena(path))
+        assert _detail_ok(r, 405)["codigo"] == "metodo_no_permitido", (metodo, path)
+    assert _detail_ok(await api.get("/video/no-existe"), 404)["codigo"] == "no_encontrado"
+    assert _detail_ok(await api.get("/video/proyectos/video001/nada"), 404)["codigo"] == "no_encontrado"
+
+
+async def test_error_interno_de_video_tambien_lleva_detail_dict(api, monkeypatch):
+    import httpx
+
+    async def rompe(*a, **k):
+        raise RuntimeError("C:\\Users\\Marc Serra\\fuga")
+
+    monkeypatch.setattr(video_rest, "_llamar", rompe)
+    transporte = httpx.ASGITransport(app=api.app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://test", headers=api.headers) as c:
+        r = await c.get("/video/guiones")
+    assert _detail_ok(r, 500)["codigo"] == "interno"
+    assert r.headers["content-security-policy"] == video_rest.CSP
+
+
+async def test_fuera_de_video_los_errores_siguen_como_estaban(api):
+    r = await api.get("/jobs/no-existe-ni-de-lejos")
+    assert r.status_code == 404 and not isinstance(r.json()["detail"], dict)

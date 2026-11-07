@@ -19,7 +19,14 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi import Path as RutaPath
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 from youtube_mcp.utils import progress
@@ -44,6 +51,8 @@ ID_URL = r"^[A-Za-z0-9_-]{1,64}$"  # ids de servidor de las rutas anteriores al 
 LIMITE_CUERPO = 1024 * 1024  # 1 MiB
 DEADLINE_RENDER = 6 * 3600.0  # sobre el peor caso de 180 s de vídeo (T11); los tests lo acortan
 SONDEO_RENDER = 1.0  # segundos entre sondeos de `video_estado_render`
+TIMEOUT_VOCES = 20.0  # `video_voces` va a ElevenLabs: corto y propio, para que un catálogo lento no ate al motor
+TOOL_BARRIDO = "video_barrer_procesos"  # TODO(T6): nombre que el backend espera del motor para el barrido (R0-6)
 MAX_FRASES = 540  # 90 escenas × 6 frases
 PROFUNDIDAD_MAXIMA = 16
 CSP = "sandbox; default-src 'none'"
@@ -108,7 +117,9 @@ class LimiteCuerpo:
             await self._rechazar(scope, receive, send)
 
     async def _rechazar(self, scope, receive, send) -> None:
-        r = JSONResponse({"detail": "El cuerpo supera el máximo de 1 MiB."}, status_code=413)
+        r = JSONResponse(
+            {"detail": {"mensaje": "El cuerpo supera el máximo de 1 MiB.", "codigo": "demasiado_grande"}}, status_code=413
+        )
         await r(scope, receive, send)
 
 
@@ -181,11 +192,20 @@ class QuitarSilenciosIn(BaseModel):
 
 
 class MuestraIn(BaseModel):
+    """Muestra de una voz: la que se prueba (`voiceId`, al elegir en el catálogo) o la de un perfil (`perfil_id`)."""
+
     model_config = ConfigDict(extra="forbid")
-    voiceId: str = Field(pattern=VOZ_ID)
+    voiceId: str | None = Field(default=None, pattern=VOZ_ID)
+    perfil_id: str | None = Field(default=None, pattern=PERFIL)
     plan_confirmado: str = Field(min_length=1, max_length=100)
     caracteres_confirmados: int = Field(strict=True, ge=0, le=10**6)
     reintentar_facturada: Any = None
+
+    @model_validator(mode="after")
+    def _una_sola_voz(self):
+        if (self.voiceId is None) == (self.perfil_id is None):
+            raise ValueError("indica voiceId o perfil_id, uno solo")
+        return self
 
 
 class PerfilPutIn(BaseModel):
@@ -298,6 +318,8 @@ MENSAJE_RENDER_FALLIDO = "El render no se pudo completar. Vuelve a intentarlo; s
 MENSAJE_RENDER_TIMEOUT = "El render tardó demasiado y se ha dado por fallido; vuelve a intentarlo."
 MENSAJE_RENDER_CERRADO = "La aplicación se cerró durante el render."
 MENSAJE_FALLO_VOZ = "La generación de la voz se detuvo en una frase; lo ya generado se conserva."
+MENSAJE_TIMEOUT_OCUPADO = "El motor de vídeo está ocupado con otra tarea y no respondió a tiempo; vuelve a intentarlo cuando termine."
+MENSAJE_SIN_RECURSOS = "La gestión de recursos de vídeo todavía no está disponible en esta versión."
 MENSAJES_503_FIJOS = {video.MENSAJE_DETENIDO, video.MENSAJE_NO_INSTALADO}
 # código del motor -> (HTTP, mensaje fijo, código público). La voz (contrato-voz.md) y los recursos añaden los suyos.
 MENSAJES_POR_CODIGO = {
@@ -306,14 +328,14 @@ MENSAJES_POR_CODIGO = {
     "coste_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo.", "coste_cambiado"),
     "plan_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo.", "coste_cambiado"),
     "reintento_facturado": (409, "Hay frases ya cobradas que no se pudieron usar; reintentarlas se cobra otra vez.", "reintento_facturado"),
-    "sin_configurar": (409, "Falta la clave de ElevenLabs: añádela en Ajustes.", "sin_clave"),
+    "sin_clave": (409, "Falta la clave de ElevenLabs: añádela en Ajustes.", "sin_clave"),
+    "sin_voz": (409, "Falta elegir la voz: hazlo en el perfil.", "sin_voz"),
     "voz_pendiente": (409, "Faltan voces por generar.", "voz_pendiente"),
     "fallo_facturado": (502, "ElevenLabs cobró la muestra, pero no se pudo usar; reintentarla se cobra otra vez.", "fallo_facturado"),
     "en_uso": (409, "El recurso está en uso en una escena; quítalo de ahí antes de borrarlo.", "recurso_en_uso"),
     "demasiado_grande": (413, "El archivo supera el tamaño máximo admitido.", "demasiado_grande"),
     "no_encontrado": (404, "No encontrado.", "no_encontrado"),
 }
-MENSAJE_SIN_VOZ = "Falta elegir la voz: hazlo en el perfil o en Ajustes."
 
 
 def _error(estado: int, mensaje: str, codigo: str, problemas: list | None = None) -> HTTPException:
@@ -344,11 +366,12 @@ def _http(e: video.MotorError) -> HTTPException:
     if isinstance(e, video.MotorNoDisponible):
         log.warning("Motor de vídeo no disponible: %s", e)
         return _error(503, str(e) if str(e) in MENSAJES_503_FIJOS else MENSAJE_503, "no_disponible")
+    if isinstance(e, video.MotorOcupado):
+        log.warning("Motor de vídeo: timeout sin reinicio (trabajo en curso): %s", e)
+        return _error(503, MENSAJE_TIMEOUT_OCUPADO, "no_disponible")
     if isinstance(e, video.MotorTimeout):
         log.warning("Motor de vídeo: timeout: %s", e)
         return _error(503, MENSAJE_TIMEOUT, "no_disponible")
-    if e.codigo == "sin_configurar" and "Elige la voz" in str(e):
-        return _error(409, MENSAJE_SIN_VOZ, "sin_voz")  # la clave y la voz faltan por motivos distintos
     if e.codigo in MENSAJES_POR_CODIGO:
         estado, mensaje, codigo = MENSAJES_POR_CODIGO[e.codigo]
         if estado == 422:
@@ -361,9 +384,9 @@ def _http(e: video.MotorError) -> HTTPException:
     return _error(502, MENSAJE_502, "error_motor")
 
 
-async def _llamar(estado, tool: str, args: dict | None = None, timeout: float | None = None) -> Any:
+async def _llamar(estado, tool: str, args: dict | None = None, timeout: float | None = None, protegida: bool = False) -> Any:
     try:
-        r = await video.motor_de(estado, tool).llamar(tool, args, timeout)
+        r = await video.motor_de(estado, tool).llamar(tool, args, timeout, protegida)
     except video.MotorError as e:
         raise _http(e) from None
     return r.datos
@@ -395,6 +418,11 @@ class Cerrojos:
     def __init__(self) -> None:
         self._m: dict[str, str] = {}
         self._l = threading.Lock()  # el runner del render suelta desde un hilo
+
+    def alguno(self) -> bool:
+        """¿Algún proyecto tiene una voz o un render en curso?"""
+        with self._l:
+            return bool(self._m)
 
     def tomar(self, id: str, tipo: str) -> None:
         with self._l:
@@ -447,8 +475,22 @@ def _avisos_seguros(avisos: Any) -> list[dict]:
     return salida
 
 
+async def _exigir_tool(estado, tool: str) -> None:
+    """501 `no_disponible` si el motor aún no registra `tool` (los recursos llegan con T7): nunca un 502 con texto."""
+    try:
+        tools = await video.motor_de(estado, tool).herramientas()
+    except video.MotorError as e:
+        raise _http(e) from None
+    if tool not in tools:
+        log.warning("El motor no tiene la tool %s todavía.", tool)
+        raise _error(501, MENSAJE_SIN_RECURSOS, "no_disponible")
+
+
 def _inesperada() -> HTTPException:
     return _error(502, "El motor de vídeo devolvió una respuesta inesperada.", "error_motor")
+
+
+_NOMBRE_PELIGROSO = re.compile(r"[\\/:\x00-\x1f\x7f]|\.\.")
 
 
 def recurso_seguro(r: Any) -> dict:
@@ -462,7 +504,8 @@ def recurso_seguro(r: Any) -> dict:
         "id": r["id"],
         "clase": r["clase"],
         "ext": r["ext"],
-        "nombreOriginal": nombre[:120] if isinstance(nombre, str) else "",
+        # Defensa en profundidad: un nombre con separadores, `..` o caracteres de control no llega a la UI.
+        "nombreOriginal": nombre[:120] if isinstance(nombre, str) and not _NOMBRE_PELIGROSO.search(nombre) else "",
         "ancho": _entero(r.get("ancho"), 8192),
         "alto": _entero(r.get("alto"), 8192),
         "duracion": _numero_seguro(r.get("duracion"), 3600) or 0,
@@ -496,11 +539,39 @@ def _estado_proyecto(estado, id: Any, jobs: list[dict]) -> str:
     return "error" if ultimo is not None and ultimo["status"] == "failed" else "borrador"
 
 
+async def reiniciar_motor_render(motor) -> bool:
+    """Reinicio del motor del render al vencer el deadline (R0-6). `True` si el motor nuevo barrió los procesos huérfanos.
+
+    Los Chrome y ffmpeg del render cuelgan del Job Object del sidecar y no mueren con el motor. Antes de parar se
+    registran los PID conocidos (para poder rastrearlos) y, ya con el motor nuevo, se le pide el barrido si tiene la
+    tool. El barrido real al arrancar es de T6 (ver `docs/video-fase1/pendientes-T11.md`).
+    """
+    pids = motor.pids_conocidos()
+    log.warning("Render: se reinicia el motor del render; PID conocidos antes de pararlo: %s.", pids)
+    await motor.cerrar()
+    try:
+        if TOOL_BARRIDO not in await motor.herramientas():
+            log.warning(
+                "TODO(T6): el motor no tiene %s; los procesos hijos %s (Chrome, ffmpeg) pueden quedar huérfanos hasta el "
+                "próximo barrido del motor.",
+                TOOL_BARRIDO,
+                pids,
+            )
+            return False
+        await motor.llamar(TOOL_BARRIDO, {}, 120.0)
+    except video.MotorError as e:
+        log.warning("No se pudo pedir el barrido al motor del render: %s", e)
+        return False
+    return True
+
+
 def crear_runner_render(estado, loop: asyncio.AbstractEventLoop):
     """Runner `render_job(id, titulo, modo)` del carril `video`: lanza `video_renderizar` y sondea cada segundo.
 
-    Corre en el hilo del job; llama al motor con `run_coroutine_threadsafe`. Suelta el cerrojo del proyecto al acabar,
-    pase lo que pase. Si el motor muere, no responde o supera el deadline, el job falla con un mensaje fijo.
+    Corre en el hilo del job; llama al motor con `run_coroutine_threadsafe`. Si el motor muere, no responde o supera el
+    deadline, el job falla con un mensaje fijo. El cerrojo del proyecto solo se suelta cuando el render ha parado de
+    verdad: porque el motor dijo `terminado` o `error`, o porque se paró el motor del render. Si no se pudo parar, el
+    cerrojo se queda (el proyecto sigue «renderizando») y se deja en el log.
     """
 
     def en_el_bucle(coro, espera: float = 600.0):
@@ -512,10 +583,29 @@ def crear_runner_render(estado, loop: asyncio.AbstractEventLoop):
             raise video.MotorError("respuesta sin datos")
         return d
 
-    def render_job(id: str, titulo: str, modo: str) -> dict:
+    def parar_motor() -> bool:
         try:
-            lanzado = llamar("video_renderizar", {"id": id, "modo": modo})
-            job_id = lanzado.get("job_id")
+            en_el_bucle(estado.motor_render.cerrar(), 60.0)
+        except Exception as e:  # noqa: BLE001 - se informa abajo: el cerrojo se queda
+            log.warning("No se pudo parar el motor del render: %s", e)
+            return False
+        return True
+
+    def render_job(id: str, titulo: str, modo: str) -> dict:
+        lanzado = False  # el motor pudo empezar a renderizar
+        parado = False  # y se sabe que ya no corre
+        try:
+            try:
+                en_marcha = en_el_bucle(video.motor_de(estado, "video_renderizar").llamar("video_renderizar", {"id": id, "modo": modo}))
+            except video.MotorError:
+                raise  # el motor respondió con un error o se reinició: no hay render en marcha
+            except BaseException:
+                lanzado = True  # sin respuesta que lo descarte (p. ej. se agotó la espera): puede haber empezado
+                raise
+            lanzado = True
+            if not isinstance(en_marcha.datos, dict):
+                raise video.MotorError("respuesta sin datos")
+            job_id = en_marcha.datos.get("job_id")
             if not isinstance(job_id, str) or not _TEXTO_CORTO.fullmatch(job_id):
                 raise video.MotorError("job_id inválido")
             limite = time.monotonic() + DEADLINE_RENDER
@@ -525,25 +615,38 @@ def crear_runner_render(estado, loop: asyncio.AbstractEventLoop):
                 if time.monotonic() > limite:
                     log.warning("Render de %s: deadline superado; se reinicia el motor del render.", id)
                     try:
-                        en_el_bucle(estado.motor_render.cerrar(), 60.0)
-                    except Exception as e:  # noqa: BLE001 - el job falla igual
+                        en_el_bucle(reiniciar_motor_render(estado.motor_render), 300.0)
+                        parado = True
+                    except Exception as e:  # noqa: BLE001 - el job falla igual; el `finally` reintenta la parada
                         log.warning("No se pudo reiniciar el motor del render: %s", e)
                     raise ErrorPublico(MENSAJE_RENDER_TIMEOUT)
                 d = llamar("video_estado_render", {"job_id": job_id})
                 if d.get("estado") == "terminado":
+                    parado = True
                     return _resultado_render(id, modo, d)
                 if d.get("estado") == "error":
+                    parado = True
                     log.warning("Render de %s fallido: %s", id, str(d.get("error"))[:300])
                     raise ErrorPublico(MENSAJE_RENDER_FALLIDO)
                 p = _numero_seguro(d.get("progreso"), 100)
                 if p is not None:
                     progress.report(p / 100)
                 estado.cierre.wait(SONDEO_RENDER)
+        except ErrorPublico:
+            raise
         except (video.MotorError, TimeoutError, OSError, RuntimeError) as e:
             log.warning("Render de %s: %s", id, e)
             raise ErrorPublico(MENSAJE_RENDER_FALLIDO) from None
+        except Exception:
+            log.exception("Render de %s: error inesperado", id)
+            raise ErrorPublico(MENSAJE_RENDER_FALLIDO) from None
         finally:
-            estado.cerrojos.soltar(id, "render")
+            if lanzado and not parado:
+                parado = parar_motor()
+            if parado or not lanzado:
+                estado.cerrojos.soltar(id, "render")
+            else:
+                log.error("Render de %s: no se pudo parar; el proyecto sigue marcado como renderizando.", id)
 
     return render_job
 
@@ -753,7 +856,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
             raise _inesperada()
         nombre = vid
         try:  # el nombre se cruza con el catálogo; sin catálogo (sin clave, sin red) se queda el id
-            catalogo = await _llamar(estado, "video_voces")
+            catalogo = await _llamar(estado, "video_voces", timeout=TIMEOUT_VOCES)
             for v in catalogo.get("voces", []) if isinstance(catalogo, dict) else []:
                 if isinstance(v, dict) and v.get("id") == vid and isinstance(v.get("nombre"), str) and v["nombre"]:
                     nombre = v["nombre"][:80]
@@ -788,7 +891,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
                 args["frases"] = cuerpo.frases
             # Cada frase tiene al menos un carácter: sin ámbito, el tope de frases lo da lo confirmado.
             n = len(cuerpo.frases) if cuerpo.frases is not None else min(MAX_FRASES, max(1, cuerpo.caracteres_confirmados))
-            d = await _llamar(estado, "video_voz_generar", args, timeout=timeout_voz(n))
+            d = await _llamar(estado, "video_voz_generar", args, timeout=timeout_voz(n), protegida=True)
         finally:
             estado.cerrojos.soltar(id, "voz")
         if not isinstance(d, dict):
@@ -814,7 +917,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
         await _tomar(estado, id, "voz")
         try:
             async with cerrojo_de(id):
-                d = await _llamar(estado, "video_voz_quitar_silencios", {"id": id, "fraseId": cuerpo.frase_id})
+                d = await _llamar(estado, "video_voz_quitar_silencios", {"id": id, "fraseId": cuerpo.frase_id}, protegida=True)
         finally:
             estado.cerrojos.soltar(id, "voz")
         rec = d.get("recorte") if isinstance(d, dict) else None
@@ -826,7 +929,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.get("/voces")
     async def listar_voces():
-        d = await _llamar(estado, "video_voces")
+        d = await _llamar(estado, "video_voces", timeout=TIMEOUT_VOCES)
         salida = []
         for v in (d.get("voces") if isinstance(d, dict) else None) or []:
             if isinstance(v, dict) and isinstance(v.get("id"), str) and re.fullmatch(VOZ_ID, v["id"]):
@@ -843,16 +946,16 @@ def crear_router(estado, protegido: list) -> APIRouter:
     @r.post("/voces/muestra")
     async def muestra_voz(request: Request):
         cuerpo = await leer_cuerpo(request, MuestraIn)
-        d = await _llamar(
-            estado,
-            "video_voz_muestra",
-            {
-                "voiceId": cuerpo.voiceId,
-                "caracteresConfirmados": cuerpo.caracteres_confirmados,
-                "planConfirmado": cuerpo.plan_confirmado,
-                "reintentarFacturada": cuerpo.reintentar_facturada is True,
-            },
-        )
+        args: dict[str, Any] = {
+            "caracteresConfirmados": cuerpo.caracteres_confirmados,
+            "planConfirmado": cuerpo.plan_confirmado,
+            "reintentarFacturada": cuerpo.reintentar_facturada is True,
+        }
+        if cuerpo.voiceId is not None:
+            args["voiceId"] = cuerpo.voiceId
+        else:
+            args["perfilId"] = cuerpo.perfil_id
+        d = await _llamar(estado, "video_voz_muestra", args, protegida=True)
         audio = d.get("audioBase64") if isinstance(d, dict) else None
         if not isinstance(audio, str) or len(audio) > 4_000_000 or not _BASE64.fullmatch(audio):
             raise _inesperada()
@@ -885,7 +988,9 @@ def crear_router(estado, protegido: list) -> APIRouter:
         if cuerpo.perfil.get("id", pid) != pid:
             raise _422("El id del perfil no coincide con el de la ruta.", "id_distinto")
         d = await _llamar(estado, "video_perfil_guardar", {"id": pid, "perfil": cuerpo.perfil})
-        return {"id": pid} if isinstance(d, dict) else d
+        if not isinstance(d, dict):
+            raise _inesperada()
+        return {"id": pid}
 
     # --------------------------------------------------------------- recursos
 
@@ -897,6 +1002,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
         lleva, así que la UI vuelve a pedir `GET /video/proyectos/{id}` antes de seguir editando.
         """
         cuerpo = await leer_cuerpo(request, RecursoIn)
+        await _exigir_tool(estado, "video_recurso_importar")
         async with cerrojo_de(id):
             d = await _llamar(estado, "video_recurso_importar", {"id": id, "bandejaId": cuerpo.bandeja_id, "clase": cuerpo.clase})
         try:
@@ -908,6 +1014,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.delete("/proyectos/{id}/recursos/{rid}")
     async def borrar_recurso(id: IdProyecto, rid: IdRecurso):
+        await _exigir_tool(estado, "video_recurso_borrar")
         async with cerrojo_de(id):
             await _llamar(estado, "video_recurso_borrar", {"id": id, "recursoId": rid})
         return {}
