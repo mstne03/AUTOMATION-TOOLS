@@ -2,8 +2,8 @@
 <!--
   Gancho: adaptación vertical de headline-slam (catálogo HyperFrames).
   Cambios: texto y palabra de acento generados en el servidor (escapados), tamaño en px calculado por
-  composicion.ts, contorno de 4 px, entrada 1.12 → 1 y temblor de aterrizaje con fromTo explícitos
-  (los .to() encadenados daban overlapping_gsap_tweens), salida hacia arriba.
+  composicion.ts, contorno de 4 px, entrada 1.12 → 1 y temblor de aterrizaje con tweens explícitos
+  de hf-tiempo (WAAPI), salida hacia arriba.
   Host: top 200 px, 1080×620 px, 2,3 s.
 -->
 <html lang="en">
@@ -37,19 +37,17 @@
           var D = {{DURACION}};
           var IN = 0.72, OUT = 0.46, LAND = 0.58, F = 1 / 30;
           if (D < IN + OUT) { var k = D / (IN + OUT); IN *= k; OUT *= k; LAND *= k; F *= k; }
-          var tl = gsap.timeline({ paused: true });
-          tl.fromTo("#gancho-titular", { scale: 1.12, y: 0 }, { scale: 1, y: 0, duration: LAND, ease: "expo.out" }, 0);
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
+          hf.tween("#gancho-titular", { scale: 1.12 }, { scale: 1 }, 0, LAND, "expo.out");
           var pasos = [[0, 0], [6, -6], [-4, 4], [0, 0]];
           for (var i = 0; i < 3; i++) {
-            tl.fromTo("#gancho-stage", { x: pasos[i][0], y: pasos[i][1] }, { x: pasos[i + 1][0], y: pasos[i + 1][1], duration: F, ease: "power2.out", immediateRender: false }, LAND + i * F);
+            hf.tween("#gancho-stage", { x: pasos[i][0], y: pasos[i][1] }, { x: pasos[i + 1][0], y: pasos[i + 1][1] }, LAND + i * F, F, "power2.out", { antes: false });
           }
           var hold = Math.max(0, D - IN - OUT);
-          if (hold > 0) {
-            tl.fromTo("#gancho-titular", { y: 0 }, { y: -6, duration: hold, ease: "sine.inOut", immediateRender: false }, IN);
-          }
-          tl.fromTo("#gancho-titular", { y: hold > 0 ? -6 : 0 }, { y: -900, duration: OUT, ease: "power4.in", immediateRender: false }, IN + hold);
-          window.__timelines = window.__timelines || {};
-          window.__timelines["gancho"] = tl;
+          // Tres animaciones de y sobre el titular y gana la última creada: la de espera fija y: 0 antes de IN y la
+          // salida solo pinta su valor inicial si no hay espera.
+          if (hold > 0) hf.tween("#gancho-titular", { y: 0 }, { y: -6 }, IN, hold, "sine.inOut");
+          hf.tween("#gancho-titular", { y: hold > 0 ? -6 : 0 }, { y: -900 }, IN + hold, OUT, "power4.in", { antes: hold === 0 });
         })();
       </script>
     </div>

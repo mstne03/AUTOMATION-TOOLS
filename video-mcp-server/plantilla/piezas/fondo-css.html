@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Fondo sin WebGPU: dos radial-gradient con los colores del tema que se desplazan con GSAP.
+  Fondo sin WebGPU: dos radial-gradient con los colores del tema que se desplazan con hf-tiempo.
   Sirve para `fondo: gradiente` y como sustituto de los shaders cuando no hay GPU. Con `fondo: ninguno`
   queda liso (sin movimiento).
 -->
@@ -24,13 +24,11 @@
       <script>
         (function () {
           var D = {{DURACION}};
-          var tl = gsap.timeline({ paused: true });
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
           if ({{ANIMADO}}) {
-            tl.fromTo("#{{ID}}-a", { x: 0, y: 0, scale: 1 }, { x: 420, y: 520, scale: 1.15, duration: D, ease: "sine.inOut" }, 0);
-            tl.fromTo("#{{ID}}-b", { x: 0, y: 0, scale: 1.1 }, { x: -480, y: -620, scale: 0.95, duration: D, ease: "sine.inOut" }, 0);
+            hf.tween("#{{ID}}-a", { x: 0, y: 0, scale: 1 }, { x: 420, y: 520, scale: 1.15 }, 0, D, "sine.inOut");
+            hf.tween("#{{ID}}-b", { x: 0, y: 0, scale: 1.1 }, { x: -480, y: -620, scale: 0.95 }, 0, D, "sine.inOut");
           }
-          window.__timelines = window.__timelines || {};
-          window.__timelines["{{ID}}"] = tl;
         })();
       </script>
     </div>

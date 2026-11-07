@@ -1,7 +1,7 @@
 /** Queries compartidas (TanStack Query) sobre el cliente del sidecar. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClient } from "./context";
-import type { SettingsPatch } from "./types";
+import { FASES_ACTIVAS, type SettingsPatch } from "./types";
 
 export function useSettings() {
   const client = useClient();
@@ -41,4 +41,30 @@ export function usePutSettings() {
       void qc.invalidateQueries({ queryKey: ["youtube", "status"] });
     },
   });
+}
+
+/** Estado del navegador del render: sondeo cada segundo solo mientras descarga, verifica o instala. */
+export function useNavegadorVideo() {
+  const client = useClient();
+  return useQuery({
+    queryKey: ["video", "navegador"],
+    queryFn: () => client.videoNavegador(),
+    refetchInterval: (q) => (q.state.data && FASES_ACTIVAS.includes(q.state.data.estado) ? 1000 : false),
+  });
+}
+
+/** Inicia la descarga; con éxito o con 409 (ya en curso) se vuelve a leer el estado real. */
+export function useDescargarNavegador() {
+  const client = useClient();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.videoNavegadorDescarga(),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["video", "navegador"] }),
+  });
+}
+
+/** Con el estado vacío el motor hace una prueba de GPU (minutos): solo se pide con el navegador listo. */
+export function useCapacidadesVideo(habilitado: boolean) {
+  const client = useClient();
+  return useQuery({ queryKey: ["video", "capacidades"], queryFn: () => client.videoCapacidades(), enabled: habilitado, staleTime: Infinity, retry: false });
 }

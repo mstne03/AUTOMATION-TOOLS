@@ -4,7 +4,7 @@ import path from "node:path";
 import { SERVER_ROOT } from "./raiz.js";
 import { STATE_DIR } from "./estado.js";
 import type { Palabra, Segmento } from "./alineacion.js";
-import { ejecutar, entornoConFfmpeg, sondear, type Herramientas } from "./proceso.js";
+import { argsEntrada, ejecutar, sondear, type Herramientas } from "./proceso.js";
 import { log } from "./log.js";
 
 /**
@@ -18,7 +18,7 @@ export function resolverHyperframesBin(env: NodeJS.ProcessEnv = process.env): st
   return sustituto || path.join(SERVER_ROOT, "node_modules", "hyperframes", "bin", "hyperframes.mjs");
 }
 export const HYPERFRAMES_BIN = resolverHyperframesBin();
-export const EXTENSIONES_AUDIO = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"];
+export const EXTENSIONES_AUDIO = [".mp3", ".wav", ".m4a", ".ogg", ".flac"];
 
 /** Sonoridad objetivo de la voz (LUFS integrados). La música se normaliza igual y luego baja a su volumen. */
 export const LUFS_VOZ = -14;
@@ -35,12 +35,8 @@ export interface AnalisisAudio {
 }
 
 /** `hyperframes audio --only beats,bpm,loudness --json` sobre un archivo. */
-export async function analizarAudio(h: Herramientas, archivo: string): Promise<AnalisisAudio> {
-  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "audio", archivo, "--only", "beats,bpm,loudness", "--json"], {
-    env: entornoConFfmpeg(h),
-    cwd: path.dirname(archivo),
-    timeoutMs: 180000,
-  });
+export async function analizarAudio(archivo: string): Promise<AnalisisAudio> {
+  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "audio", archivo, "--only", "beats,bpm,loudness", "--json"], { timeoutMs: 180000 });
   if (r.code !== 0) throw new Error(`hyperframes audio falló con ${path.basename(archivo)}: ${(r.stderr || r.stdout).trim().slice(-300)}`);
   const j = JSON.parse(r.stdout.slice(r.stdout.indexOf("{"))) as {
     items?: { duration?: number; beats?: { times?: number[] }; bpm?: { value?: number }; loudness?: { lufsIntegrated?: number } }[];
@@ -53,7 +49,7 @@ export async function analizarAudio(h: Herramientas, archivo: string): Promise<A
 export async function normalizarVoz(h: Herramientas, origen: string, destino: string): Promise<void> {
   const r = await ejecutar(
     h.ffmpeg,
-    ["-y", "-v", "error", "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "192k", destino],
+    ["-y", "-v", "error", ...argsEntrada(origen), "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "192k", destino],
     { timeoutMs: 120000 },
   );
   if (r.code !== 0) throw new Error(`ffmpeg no pudo normalizar la voz: ${r.stderr.trim().slice(0, 300)}`);
@@ -63,7 +59,7 @@ export async function normalizarVoz(h: Herramientas, origen: string, destino: st
 export async function prepararMusica(h: Herramientas, origen: string, destino: string, desde: number, duracion: number): Promise<void> {
   const args = ["-y", "-v", "error"];
   if (desde > 0) args.push("-ss", desde.toFixed(3));
-  args.push("-stream_loop", "-1", "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-q:a", "2", destino);
+  args.push("-stream_loop", "-1", ...argsEntrada(origen), "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-q:a", "2", destino);
   const r = await ejecutar(h.ffmpeg, args, { timeoutMs: 180000 });
   if (r.code !== 0) throw new Error(`ffmpeg no pudo preparar la música (${path.basename(origen)}): ${r.stderr.trim().slice(0, 300)}`);
 }
@@ -159,8 +155,10 @@ export async function listarMusica(h: Herramientas, carpeta: string): Promise<Pi
     }
     const p: Pista = { archivo: nombre, ruta };
     try {
-      const a = await analizarAudio(h, ruta);
-      p.duracion = a.duracion ?? (await sondear(h.ffprobe, ruta)).duracion;
+      // sondear antes: `hyperframes audio` abre el fichero sin lista blanca ni demuxer. Lo sustituirá la normalización de I15.
+      const { duracion } = await sondear(h.ffprobe, ruta);
+      const a = await analizarAudio(ruta);
+      p.duracion = a.duracion ?? duracion;
       p.bpm = a.bpm;
       p.lufs = a.lufs;
     } catch (e) {

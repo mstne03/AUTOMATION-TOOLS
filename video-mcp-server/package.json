@@ -9,10 +9,12 @@
     "node": ">=22"
   },
   "scripts": {
+    "postinstall": "node scripts/aplicar-parche.mjs",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "npm run build && vitest run --exclude test/e2e-mock.test.ts --exclude test/matriz.test.ts",
+    "test": "npm run build && vitest run --exclude test/e2e-mock.test.ts --exclude test/matriz.test.ts --exclude test/sandbox-render.test.ts",
     "render:mock": "vitest run test/e2e-mock.test.ts",
+    "render:sandbox": "vitest run test/sandbox-render.test.ts",
     "render:matriz": "vitest run test/matriz.test.ts"
   },
   "dependencies": {
@@ -23,7 +25,6 @@
     "d3-geo": "3.1.1",
     "dotenv": "18.0.9",
     "es-atlas": "0.6.0",
-    "gsap": "3.15.0",
     "hyperframes": "0.8.206",
     "three": "0.184.0",
     "three147": "npm:three@0.147.0",

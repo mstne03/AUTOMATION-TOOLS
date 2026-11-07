@@ -8,11 +8,11 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 
 ## Veredicto
 
-**Dos piezas BLOQUEANTES. No se avanza a la fase 1 hasta que Marc decida su sustitución.**
+**Una pieza BLOQUEANTE (Chrome for Testing). GSAP quedó resuelto: ya no viaja en el producto.**
 
 | Pieza | Veredicto | Alternativa recomendada |
 |---|---|---|
-| **GSAP 3.15.0** | **BLOQUEANTE** — la licencia prohíbe su uso en herramientas que permiten crear animaciones visuales sin código, que es lo que es el producto (no solo el editor). | Plantillas con **Web Animations API** (nativa) a través del adaptador `waapi` del runtime de HyperFrames, **más un motor de tiempo propio** para las cinco piezas que animan objetos JS (contadores, three.js); empieza por un spike. anime.js como plan B. |
+| GSAP | **Resuelto (SEO-112, SEO-113).** Fuera de `plantilla/`, `catalogo/`, `src/` y de las dependencias; las piezas usan WAAPI con `hf-tiempo.js`. | — |
 | **chrome-headless-shell 152 (Chrome for Testing, Google)** | **BLOQUEANTE (dudosa / redistribución no concedida)** — binario de Google con marca «Google Chrome», «All rights reserved» y sujeto a los términos de Google, que prohíben distribuir su software; ninguna fuente concede redistribución. | Spike con un **snapshot de Chromium** (código abierto, BSD, precompilado; versión y SHA-256 fijados) vía `HYPERFRAMES_BROWSER_PATH`; si pasa, va en el instalador. Si no, **descarga del CfT en el primer uso** con el SHA-256 ya fijado. |
 | ffmpeg LGPL 7.1 (BtbN) | Sí, **con condiciones pendientes** antes de publicar (código fuente correspondiente y avisos de las bibliotecas estáticas). Riesgo de patentes a decidir. | Build LGPL propia y mínima (también reduce tamaño). |
 | Resto (HyperFrames, Node, three, d3, topojson, atlas, fuentes, shaders, dependencias de npm) | Sí, con aviso (ya incluido) o atribución. | — |
@@ -22,7 +22,6 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 | Pieza | Versión | Licencia | ¿Redistribuible en .exe cerrado? | Condiciones | Fuente del texto |
 |---|---|---|---|---|---|
 | hyperframes | 0.8.206 | Apache-2.0 | Sí | Incluir la licencia (hecho: `LICENSES/hyperframes-LICENSE.txt`); conservar avisos. El repo no tiene `NOTICE` en la raíz (sí `CREDITS.md`, que no es un NOTICE de Apache §4d). | `app-ui/scripts/licencias/hyperframes-0.8.206-LICENSE.txt` (repo, etiqueta v0.8.206; el paquete npm no lo trae) |
-| **gsap** | 3.15.0 | «Standard 'no charge' license» de GreenSock/Webflow | **No para este producto → BLOQUEANTE** | Ver sección GSAP. | `node_modules/gsap/package.json` (`license`), cabecera de `gsap-core.js` y `README.md` remiten a https://gsap.com/standard-license (leída el 2026-10-28; versión con fecha efectiva 30-04-2025, actualizada 30-05-2025). El paquete no incluye el texto. |
 | three | 0.184.0 | MIT | Sí | Aviso (hecho: `three-LICENSE.txt`) | `node_modules/three/LICENSE` |
 | three147 (`three@0.147.0`) | 0.147.0 | MIT | Sí | Aviso (hecho: `three-0.147-LICENSE.txt`) | `node_modules/three147/LICENSE` |
 | d3-geo / d3-array | 3.1.1 / 3.2.4 | ISC | Sí | Aviso (viaja en `app/node_modules/<paquete>/LICENSE`) | `node_modules/d3-geo/LICENSE` |
@@ -30,84 +29,26 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 | world-atlas | 2.0.2 | ISC (código); datos de Natural Earth 4.1.0, dominio público | Sí | Aviso (en `node_modules`) | `node_modules/world-atlas/LICENSE` y `README.md` |
 | es-atlas | 0.6.0 | MIT (código); **datos del IGN bajo CC BY 4.0** | Sí | **Atribución al IGN**: añadida a `LICENSES/LEEME.txt` en esta tarea. Los vídeos con el mapa de España son obra derivada que el usuario publica: la fase 1 debe sugerir «Mapa: © Instituto Geográfico Nacional» en la descripción cuando se use. | `node_modules/es-atlas/LICENSE` y `README.md` («Data license») |
 | Fuentes Anton, Inter Tight, JetBrains Mono (@fontsource) | 5.3.0 | OFL-1.1 | Sí | La licencia acompaña a la fuente (hecho); no vender la fuente sola; no usar el nombre reservado en versiones modificadas. | `node_modules/@fontsource/*/LICENSE` |
-| Geist (catálogo) | — | OFL-1.1 | Sí | Igual (hecho: `fuente-geist-OFL.txt`) | `catalogo/compositions/assets/fonts/Geist-OFL.txt` |
-| Recursive (catálogo) | — | OFL-1.1 | Sí | Igual. Viajaba junto a la fuente pero no en `LICENSES/`: **añadida en esta tarea** (`fuente-recursive-OFL.txt`). | `catalogo/compositions/assets/fonts/OFL.txt` |
-| Shaders vendorizados (`shaders` 4.0.0, typegpu 0.12.3, tinyest 0.3.4, typed-binary 4.3.3, tsover-runtime 0.0.7) | ver col. | MIT (los cuatro primeros), Apache-2.0 (tsover-runtime) | Sí | Avisos (hecho: `shaders-THIRD-PARTY-LICENSES.txt`; la copia del catálogo lleva el suyo al lado) | `plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt` y cabecera de `shaders.iife.js` |
+| Geist (`plantilla/fuentes/3d`) | — | OFL-1.1 | Sí | Igual (hecho: `fuente-geist-OFL.txt`) | `catalogo/compositions/assets/fonts/Geist-OFL.txt` |
+| Recursive | — | OFL-1.1 | Sí | Igual. El catálogo que la usaba ya no viaja (SEO-113); su licencia sigue en `LICENSES/` (`fuente-recursive-OFL.txt`). | `catalogo/compositions/assets/fonts/OFL.txt` |
+| Shaders vendorizados (`shaders` 4.0.0, typegpu 0.12.3, tinyest 0.3.4, typed-binary 4.3.3, tsover-runtime 0.0.7) | ver col. | MIT (los cuatro primeros), Apache-2.0 (tsover-runtime) | Sí | Avisos (hecho: `shaders-THIRD-PARTY-LICENSES.txt`). **Modificado respecto al upstream** (SEO-114): se sustituye una sentencia del glue de `renderSyntheticFrame` por una variante «el último gana»; el diff está en `plantilla/vendor/shaders.iife.patch` y el hash upstream sigue en `catalogo/hyperframes.lock.json`. Las licencias MIT/Apache permiten modificar; se conservan los avisos. | `plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt` y cabecera de `shaders.iife.js` |
 | Node.js | v22.23.4 win-x64 | MIT + licencias de sus dependencias (OpenSSL Apache-2.0, ICU, etc.) | Sí | Aviso (hecho: `node-LICENSE.txt`, 148 KB, incluye las de terceros) | `LICENSE` del zip oficial |
 | **ffmpeg / ffprobe** | `ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1` (BtbN, autobuild-2026-07-31-14-10) | **LGPL-3.0** (`--enable-version3`, sin `--enable-gpl` ni `--enable-nonfree`, `--disable-libx264/x265`) | Sí, invocado como proceso aparte (nuestro código no enlaza con él) | Ver sección ffmpeg: **pendiente** el código fuente correspondiente y los avisos de las bibliotecas enlazadas estáticamente. | `LICENSE.txt` del zip; `configuration:` en `LICENSES/ffmpeg-version.txt` |
 | **chrome-headless-shell** | 152.0.7977.30 win64 (Chrome for Testing) | Binario de Google bajo los términos de Google; contiene código Chromium (BSD-3) y terceros | **Dudoso → BLOQUEANTE** | Ver sección Chrome. | `ABOUT` y `LICENSE.headless_shell` del zip; https://policies.google.com/terms; https://www.google.com/chrome/terms/ |
-| Dependencias de producción de npm (`npm ci --omit=dev`, 178 paquetes) | lockfile | 138 MIT, 19 ISC, 8 Apache-2.0, 4 BSD-3, 2 BSD-2, 3 OFL, 1 CC0, 1 0BSD, 1 Apache-2.0 AND LGPL-3.0-or-later (`@img/sharp-win32-x64`, libvips en DLL), gsap | Sí (salvo gsap) | Cada paquete lleva su licencia en `app/node_modules/<paquete>/`. `puppeteer-core` (Apache-2.0) no trae fichero `LICENSE` en el paquete: añadir el texto Apache a `LICENSES/` (menor). libvips (LGPL, enlazada dinámicamente): misma condición de código fuente que ffmpeg. Ninguna GPL. | `package.json` de cada paquete del árbol de producción del bundle local |
+| Dependencias de producción de npm (`npm ci --omit=dev`, 178 paquetes) | lockfile | 138 MIT, 19 ISC, 8 Apache-2.0, 4 BSD-3, 2 BSD-2, 3 OFL, 1 CC0, 1 0BSD, 1 Apache-2.0 AND LGPL-3.0-or-later (`@img/sharp-win32-x64`, libvips en DLL) | Sí | Cada paquete lleva su licencia en `app/node_modules/<paquete>/`. `puppeteer-core` (Apache-2.0) no trae fichero `LICENSE` en el paquete: añadir el texto Apache a `LICENSES/` (menor). libvips (LGPL, enlazada dinámicamente): misma condición de código fuente que ffmpeg. Ninguna GPL. | `package.json` de cada paquete del árbol de producción del bundle local |
 
-## GSAP: por qué es bloqueante
+## GSAP: resuelto (SEO-112, SEO-113)
 
-Texto leído: https://gsap.com/standard-license (Webflow, fecha efectiva 30-04-2025). El paquete
-npm no incluye el texto completo, así que no se copia al bundle: `LICENSES/gsap-LICENSE.txt` sigue
-apuntando a la URL, y la cabecera de `gsap.min.js` («Subject to the terms at …») se conserva, como
-exige la restricción III.3 (no quitar avisos).
+La licencia estándar de GSAP prohíbe usarlo en herramientas que crean animaciones visuales sin código, y eso es este
+producto. Se sustituyó por WAAPI y un motor de tiempo propio (`plantilla/vendor/hf-tiempo.js`), y se retiró el catálogo
+que lo cargaba de jsDelivr. Las copias de `hyperframes/dist/vendor/npm/gsap@3.15.0` y `dist/studio` quedan excluidas
+del bundle por W2.8.
 
-Cláusulas en las que me apoyo:
-
-- **Definición «Prohibited Uses»** (sección I): el uso de GSAP «in tools that allow users to build
-  visual animations without code», además de los usos que ayudan a crear una solución que compita con
-  las herramientas de animación de Webflow.
-- **Definición «Competitive Products»** (sección I): software que permite a los usuarios crear, editar
-  o gestionar animaciones mediante una interfaz visual.
-- **Restricción III.1**: no usar GSAP para un Prohibited Use sin consentimiento previo por escrito.
-  La licencia (II) se concede *solo* para «Permitted Uses» (uso en webs, apps web o interfaces).
-- **V (terminación)**: «Webflow may terminate this GSAP License and revoke your access in its
-  discretion» (a su discreción, no solo por incumplimiento) y «Upon termination, you must cease all
-  use of GSAP Products and destroy all copies in your possession».
-- **VI.2 (modificaciones)**: Webflow puede cambiar la licencia en cualquier momento, aunque «you may
-  continue using previous versions of GSAP Products under the applicable terms». El riesgo no es
-  quedarse congelado: es que las versiones futuras lleguen con condiciones peores.
-
-Aplicación a SEO Studio: el creador **construye un vídeo animado sin escribir código**: elige escenas
-del catálogo, rellena datos desde el guion y, en la fase 1, mueve, recorta y reordena escenas en una
-línea de tiempo visual (G3, D6). Eso encaja en la letra de las dos definiciones, y ya desde la fase 0
-(el guion → vídeo animado sin código) aunque no hubiera editor. Argumentos en contra (que no bastan):
-no exponemos keyframes ni curvas (no objetivo de la v1), la salida es un MP4 y no una animación web,
-y el FAQ dice que el código generado por IA no es Prohibited Use — pero aquí el modelo no escribe
-código (D5), y el FAQ invita a preguntar en los casos dudosos, lo que confirma que no hay permiso
-implícito. Con un producto de pago construido encima, el riesgo (terminación + destruir copias) es
-inaceptable sin consentimiento escrito.
-
-**Alternativas (recomendación primero):**
-
-1. **Web Animations API (WAAPI) + motor de tiempo propio para lo que no es CSS.** HyperFrames 0.8.206
-   no depende de gsap (no está en sus `dependencies`) y su runtime trae adaptadores `waapi`, `css`,
-   `animejs`, `lottie`, `three`, `typegpu` y `frame-source` además de `gsap`. WAAPI es estándar del
-   navegador, sin licencia de terceros, y el mismo motor (Chromium) la ejecuta en la preview (WebView2)
-   y en el render.
-   - **Lo que WAAPI cubre:** propiedades CSS de elementos, que es la mayoría de las ~110 llamadas de
-     `plantilla/` (`fromTo` 48, `add` 45, `set` 7, `to` 6, `from` 3, `call` 1, sobre 14 `gsap.timeline`)
-     y la sonda de `src/capacidades.ts`. Hay que traducir `xPercent`/`yPercent` (a `translate` en %),
-     `scale`/`rotation` (a las propiedades individuales `scale`/`rotate`, sin componer un `transform`),
-     las curvas `expo.out`, `sine.*` y `back.out(2)` con rebote (a `linear()` o `cubic-bezier`),
-     `filter: blur()` y los escalonados (en `escena-cartel` son desfases manuales `i · 0,067 s`, no
-     `stagger`).
-   - **Lo que WAAPI no cubre: cinco piezas animan objetos JS con un setter de GSAP**: el contador del
-     HUD de `capas.html` (líneas 73–87), el reloj de carrera de `escena-barras`, la cuenta de
-     `escena-cifra`, y el render de three.js de `escena-titulo3d` y de `escena-tunel` (línea 418).
-     Necesitan **otro motor de tiempo**: candidatos, **sin verificar**, el evento `hf-seek` que el
-     runtime despacha en `window` con `{time, waitUntil}` (visto en `hyperframe.runtime.iife.js`; no
-     sé si se emite en cada fotograma de la reproducción y del render, o solo en seeks), un adaptador
-     propio, o el adaptador `three` del runtime (fija `window.__hfThreeTime` en el seek).
-   - **Esfuerzo revisado:** no es un retoque, es una tarea propia de la fase 1: reescribir 14 piezas,
-     construir el motor de tiempo de las cinco y comparar cada pieza fotograma a fotograma contra su
-     render actual con GSAP. Sacrifica ese trabajo y reutilizar tal cual los bloques del registro de
-     HyperFrames, que suelen usar GSAP.
-   - **Primer paso: un spike** con una pieza CSS (`escena-cifra` sin la cuenta) y una JS (el HUD de
-     `capas`) que pruebe (a) que el seek con WAAPI es determinista en preview y render (fotograma contra
-     MP4), (b) que el motor de tiempo de las piezas JS avanza igual reproduciendo, buscando y
-     renderizando, y (c) que `hf-seek` (o el adaptador elegido) se emite en el render.
-   - Ojo: el propio paquete `hyperframes` trae copias de gsap 3.15.0 (`dist/vendor/npm/gsap@3.15.0/`
-     y el bundle de `dist/studio/`). Aunque no las usemos, viajan en el instalador: al adoptar esta
-     alternativa, excluirlas del bundle tras comprobar que el render no las carga.
-2. **anime.js** si WAAPI + motor de tiempo se quedan cortos. Licencia a verificar al adoptarla (se
-   publica como MIT; no está instalada y no la he leído).
-3. **Pedir consentimiento escrito a Webflow.** Da seguridad jurídica si lo conceden, pero deja el
-   producto a merced de un tercero que puede terminarla a su discreción (V) y cambiar las condiciones
-   de las versiones futuras (VI.2). No recomendado como base.
+**Origen de las curvas de `hf-tiempo.js` (duda para Marc; esto no es asesoría jurídica):** `expo`, `sine`, `power` y
+`back.out`, y la derivación de `out` e `inOut` desde `in`, se escribieron a partir de las fórmulas de `gsap-core.js`
+3.15, y `test/curvas.test.ts` conserva una tabla de valores generada con esa versión. Salvo `expo`, son fórmulas de uso
+común; `expo` tiene una forma particular de GSAP. Hay que decidir si basta con esta nota o si se reescribe `expo` con
+otra fórmula, aceptando una comparación SSIM nueva.
 
 ## Chrome for Testing: por qué es dudoso
 

@@ -21,7 +21,7 @@ const dist = (f) => import(new URL(`../dist/${f}`, import.meta.url).href);
 const { parsearGuion } = await dist("guion.js");
 const { procesarAlineacion } = await dist("alineacion.js");
 const { prepararRender, montarComposicion, HYPERFRAMES_BIN } = await dist("render.js");
-const { ejecutar, herramientasFfmpeg, entornoConFfmpeg } = await dist("proceso.js");
+const { ejecutar, herramientasFfmpeg, entornoHijo } = await dist("proceso.js");
 
 const FF = path.join(LGPL, "ffmpeg.exe");
 const DUR_VOZ = 50;

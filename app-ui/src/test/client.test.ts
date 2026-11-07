@@ -63,6 +63,24 @@ describe("createClient", () => {
     await expect(it.next()).rejects.toBeInstanceOf(ApiError);
   });
 
+  it("navegador del render: GET con token, POST de descarga y 409 con el detail del sidecar", async () => {
+    const estado = { version: "1", tamano: 10, estado: "ausente", descargado: 0, error: null };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(estado)));
+    expect(await client.videoNavegador()).toEqual(estado);
+    let [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe("http://127.0.0.1:5000/video/navegador");
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(estado), { status: 202 }));
+    await client.videoNavegadorDescarga();
+    [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe("http://127.0.0.1:5000/video/navegador/descarga");
+    expect(init?.method).toBe("POST");
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Ya hay una descarga del navegador en curso." }), { status: 409 }));
+    await expect(client.videoNavegadorDescarga()).rejects.toMatchObject({ status: 409, detail: "Ya hay una descarga del navegador en curso." });
+  });
+
   it("resolveApproval envía decision y confirm_id", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ...fx.approvalDelete, status: "approved" })));
     const r = await client.resolveApproval("ap_del", "approve", "abc123XYZ");

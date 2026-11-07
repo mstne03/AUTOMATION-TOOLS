@@ -129,12 +129,152 @@ export function buscarImagenes(dir: string): { imagenes: (ImagenEncontrada | und
   return { imagenes, avisos, ignoradas };
 }
 
+/** Tope de tamaño de un recurso del usuario (I15: 50 MB). */
+export const MAX_RECURSO_BYTES = 50 * 1024 * 1024;
+
+const nombreDe = (ruta: string) => path.basename(ruta);
+
 /**
- * Como `buscarImagenes`, pero cada imagen pasa por `resolverDentro` (realpath): un `img1.jpg` que sea un
- * enlace simbólico a un fichero fuera de la carpeta del vídeo se rechaza con ErrorVideo en vez de copiarse
- * a la composición.
+ * Un recurso del usuario tiene que ser un fichero normal, sin enlaces simbólicos, junctions ni hardlinks (I6).
+ * Se comprueba el propio nombre (`lstat`, que no sigue enlaces); `nlink > 1` delata un hardlink a un fichero ajeno.
+ * Solo para recursos del usuario: en `node_modules` pnpm enlaza y `nlink > 1` es normal.
+ */
+export function comprobarRecurso(ruta: string): void {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(ruta);
+  } catch {
+    throw new ErrorVideo(`No puedo leer ${nombreDe(ruta)}.`);
+  }
+  if (st.isSymbolicLink()) throw new ErrorVideo(`${nombreDe(ruta)} es un enlace simbólico. Copia el fichero real en la carpeta del vídeo.`);
+  if (!st.isFile()) throw new ErrorVideo(`${nombreDe(ruta)} no es un fichero normal.`);
+  if (st.nlink > 1) {
+    throw new ErrorVideo(`${nombreDe(ruta)} es un enlace duro (hardlink) a otro fichero. Copia el fichero real en la carpeta del vídeo.`);
+  }
+}
+
+/**
+ * Copia un recurso del usuario abriéndolo una sola vez: `lstat` con bigint, abre, `fstat` del descriptor (mismo
+ * fichero, normal, un solo enlace, bajo el tope) y lee **del descriptor**, de modo que un cambio posterior del
+ * nombre no se cuela. El destino se crea con `wx`: nunca pisa un fichero existente.
+ */
+export function copiarRecurso(origen: string, destino: string): void {
+  const nombre = nombreDe(origen);
+  const antes = fs.lstatSync(origen, { bigint: true });
+  if (antes.isSymbolicLink() || !antes.isFile()) throw new ErrorVideo(`${nombre} no es un fichero normal.`);
+  const fd = fs.openSync(origen, "r");
+  try {
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile()) throw new ErrorVideo(`${nombre} no es un fichero normal.`);
+    if (st.nlink !== 1n) throw new ErrorVideo(`${nombre} es un enlace duro (hardlink) a otro fichero. Copia el fichero real en la carpeta del vídeo.`);
+    if (st.dev !== antes.dev || st.ino !== antes.ino) throw new ErrorVideo(`${nombre} ha cambiado mientras se abría; vuelve a intentarlo.`);
+    if (st.size > BigInt(MAX_RECURSO_BYTES)) throw new ErrorVideo(`${nombre} pesa más de ${MAX_RECURSO_BYTES / 1024 / 1024} MB.`);
+    const datos = Buffer.alloc(Number(st.size));
+    let leidos = 0;
+    while (leidos < datos.length) {
+      const n = fs.readSync(fd, datos, leidos, datos.length - leidos, leidos);
+      if (n === 0) break;
+      leidos += n;
+    }
+    fs.writeFileSync(destino, datos.subarray(0, leidos), { flag: "wx" });
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const igualRuta = (a: string, b: string) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+const REINTENTABLES = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
+/** Reintenta una operación de borrado ante bloqueos breves de Windows (un ffmpeg que acaba de soltar el fichero); ENOENT no es fallo. */
+function conReintentos(op: () => void): void {
+  for (let intento = 0; ; intento++) {
+    try {
+      return op();
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? "";
+      if (code === "ENOENT") return;
+      if (!REINTENTABLES.has(code) || intento >= 10) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    }
+  }
+}
+
+/** Quita un enlace o junction (de fichero o de carpeta) sin tocar su destino. */
+function quitarEnlace(ruta: string): void {
+  conReintentos(() => {
+    try {
+      fs.unlinkSync(ruta);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+      fs.rmdirSync(ruta); // junction o symlink de carpeta en Windows
+    }
+  });
+}
+
+/**
+ * Borra una carpeta y su contenido sin atravesar enlaces. `fs.rmSync({ recursive })` mira cada entrada con lstat, que
+ * no marca las junctions a `\??\Volume{GUID}\…` (las crea `mklink /J` sin privilegios): entraría en ellas y borraría
+ * su destino, esté donde esté. Aquí cada entrada se mira por su Dirent, que sí las marca; un enlace se quita sin
+ * entrar, y si la propia carpeta es un enlace, solo se quita el enlace. Si no existe, no hace nada.
+ */
+export function borrarArbol(dir: string): void {
+  const raiz = path.resolve(dir);
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(raiz);
+  } catch {
+    return;
+  }
+  const padre = path.dirname(raiz);
+  const enPadre = padre === raiz ? undefined : leerEntradas(padre).find((e) => igualRuta(e.name, path.basename(raiz)));
+  if (st.isSymbolicLink() || enPadre?.isSymbolicLink()) return quitarEnlace(raiz);
+  if (!st.isDirectory()) return conReintentos(() => fs.unlinkSync(raiz));
+  vaciar(raiz);
+  conReintentos(() => fs.rmdirSync(raiz));
+}
+
+function leerEntradas(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function vaciar(dir: string): void {
+  for (const e of leerEntradas(dir)) {
+    const ruta = path.join(dir, e.name);
+    if (e.isSymbolicLink()) quitarEnlace(ruta);
+    else if (e.isDirectory()) {
+      vaciar(ruta);
+      conReintentos(() => fs.rmdirSync(ruta));
+    } else conReintentos(() => fs.unlinkSync(ruta));
+  }
+}
+
+/** La carpeta del vídeo no puede ser un enlace, una junction ni colgar de un padre enlazado: nada de lo de dentro sería «suyo». */
+export function comprobarCarpeta(dir: string): void {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch {
+    return; // no existe todavía: lo dirá quien la necesite
+  }
+  const ruta = path.resolve(dir);
+  const real = fs.realpathSync.native(ruta);
+  const esperada = path.join(fs.realpathSync.native(path.dirname(ruta)), path.basename(ruta));
+  if (st.isSymbolicLink() || !igualRuta(real, esperada)) {
+    throw new ErrorVideo(`La carpeta ${nombreDe(dir)} es un enlace o una junction a otro sitio. Usa una carpeta real dentro de VIDEO_ROOT.`);
+  }
+}
+
+/**
+ * Como `buscarImagenes`, pero la carpeta y cada imagen se validan (I6): la carpeta no puede ser un enlace o
+ * junction, cada foto es un fichero normal sin hardlinks ni enlaces, y además pasa por `resolverDentro` (realpath).
+ * Si no, ErrorVideo en vez de copiarla a la composición.
  */
 export function imagenesValidadas(dir: string): ReturnType<typeof buscarImagenes> {
+  comprobarCarpeta(dir);
   const r = buscarImagenes(dir);
   for (const img of r.imagenes) {
     if (!img) continue;
@@ -142,10 +282,11 @@ export function imagenesValidadas(dir: string): ReturnType<typeof buscarImagenes
       resolverDentro(dir, img.nombre);
     } catch (e) {
       if (e instanceof ErrorVideo) {
-        throw new ErrorVideo(`La imagen ${img.nombre} es un enlace que apunta fuera de la carpeta del vídeo (${dir}). Copia el fichero real en esa carpeta.`);
+        throw new ErrorVideo(`La imagen ${img.nombre} es un enlace que apunta fuera de la carpeta del vídeo. Copia el fichero real en esa carpeta.`);
       }
       throw e;
     }
+    comprobarRecurso(img.ruta);
   }
   return r;
 }

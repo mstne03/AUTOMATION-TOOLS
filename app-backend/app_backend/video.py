@@ -15,6 +15,8 @@ Ciclo de vida:
   del sidecar: muere con la app aunque el backend no llegue a llamar a `cerrar()`.
 - El hijo hereda solo el entorno mínimo de `get_default_environment()` más `entorno_motor()`:
   ningún secreto del backend llega al motor salvo la clave de ElevenLabs, y solo si existe.
+- Navegador del render: siempre la ruta fija de `navegador` (el CfT que el backend descarga en el
+  primer uso) y su manifiesto, exista o no; nunca uno del bundle, del entorno ni de una caché.
 - `stderr` del hijo → logger `app_backend.video`, con la clave de ElevenLabs ocultada.
 """
 
@@ -34,7 +36,7 @@ import mcp.client.stdio as _stdio
 from mcp import ClientSession, MCPError, StdioServerParameters, stdio_client
 from mcp_types import CONNECTION_CLOSED, ImageContent, TextContent
 
-from app_backend import config
+from app_backend import config, navegador
 
 log = logging.getLogger("app_backend.video")
 
@@ -47,6 +49,9 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 # guardar la prueba y la ruta fallaría siempre en máquinas lentas.
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
+# Por el segundo proceso del motor: un render largo no tapa la vista previa ni la voz, y su timeout no
+# los tumba. `video_estado` va aquí porque lee los jobs de la memoria del proceso que los lanzó.
+TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render", "video_estado"})
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -124,6 +129,28 @@ class _Sesion:
         if self.listo.done() and self.listo.exception() is not None:
             return False
         return self.proceso is None or self.proceso.returncode is None
+
+
+async def _esperar_parada_o_muerte(s: _Sesion) -> None:
+    """Espera `parar` o la muerte del motor, lo que llegue antes.
+
+    Sin esto el Job Object (la salida del `async with`) no se cerraba hasta la siguiente llamada, aunque el
+    motor ya hubiera muerto. Si murió solo (nadie pidió parar), se avisa una sola vez y se marca la sesión como
+    parada: la siguiente llamada relanza. Un cierre normal (`parar` ya puesto) no avisa.
+    """
+    esperas = {asyncio.ensure_future(s.parar.wait())}
+    if s.proceso is not None:
+        esperas.add(asyncio.ensure_future(s.proceso.wait()))
+    try:
+        await asyncio.wait(esperas, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for e in esperas:
+            e.cancel()
+        await asyncio.gather(*esperas, return_exceptions=True)
+    if not s.parar.is_set():
+        codigo = s.proceso.returncode if s.proceso is not None else None
+        log.warning("El motor de vídeo terminó por su cuenta (código %s); se relanzará en la siguiente llamada.", codigo)
+        s.parar.set()
 
 
 class MotorVideo:
@@ -209,7 +236,9 @@ class MotorVideo:
                 if s is None or not s.viva():
                     if s is not None:
                         await self._descartar(s)
-                    s = self._lanzar()
+                    # El entorno verifica el navegador (hashea ~295 MB): fuera del bucle de eventos.
+                    env = await asyncio.to_thread(self._env)
+                    s = self._lanzar(env)
                     self._sesion = s
                 # Escudo: si la petición que arranca se cancela, el arranque sigue en la tarea
                 # propietaria y queda registrado para la siguiente llamada o para cerrar().
@@ -224,9 +253,8 @@ class MotorVideo:
                     ) from None
         return s, s.listo.result()
 
-    def _lanzar(self) -> _Sesion:
+    def _lanzar(self, env: dict[str, str]) -> _Sesion:
         s = _Sesion()
-        env = self._env()
         s.clave = env.get("ELEVENLABS_API_KEY") or None
         params = StdioServerParameters(
             command=self._comando[0], args=self._comando[1:], env=env, cwd=self._cwd
@@ -259,7 +287,7 @@ class MotorVideo:
                     await sesion.initialize()
                 log.info("Motor de vídeo arrancado (pid %s).", s.proceso.pid if s.proceso else "?")
                 s.listo.set_result(sesion)
-                await s.parar.wait()
+                await _esperar_parada_o_muerte(s)
         except BaseException as e:
             if not s.listo.done():
                 s.listo.set_exception(e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO))
@@ -322,19 +350,17 @@ def comando_motor() -> tuple[list[str], Path]:
     return ["node", str(d / "dist" / "index.js")], d
 
 
-def _navegador_bundle(d: Path) -> Path | None:
-    carpeta = d / "browser"
-    if not carpeta.is_dir():
-        return None
-    for nombre in ("chrome-headless-shell.exe", "chrome.exe"):
-        encontrados = sorted(carpeta.rglob(nombre))
-        if encontrados:
-            return encontrados[0]
-    return None
+def motor_de(estado, tool: str) -> MotorVideo:
+    """Canal de `tool`: los jobs viven en la memoria del proceso del canal de render."""
+    return estado.motor_render if tool in TOOLS_CANAL_RENDER else estado.motor
 
 
-def entorno_motor(store) -> dict[str, str]:
-    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado)."""
+def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
+    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado).
+
+    `con_clave=False`: el canal de render no usa ElevenLabs. Así la clave no llega a ese proceso
+    (I5) y cambiarla no lo reinicia ni mata un render en curso.
+    """
     estado = config.STATE_DIR / "video"
     env = {
         "VIDEO_ENGINE_EMBEDDED": "1",
@@ -345,32 +371,28 @@ def entorno_motor(store) -> dict[str, str]:
     }
     d = config.VIDEO_ENGINE_DIR
     ffmpeg = d / "ffmpeg"
-    navegador = _navegador_bundle(d)
     if config.FROZEN:
         # Instalado: solo las piezas del bundle, siempre. Sin ellas el motor caería en un ffmpeg del
-        # PATH (quizá GPL, con libx264) o en un Chrome de ~/.cache (escribible, no verificado).
+        # PATH (quizá GPL, con libx264).
         if not (d / "node" / "node.exe").is_file():
             raise MotorNoDisponible(MENSAJE_NO_INSTALADO)
-        faltan = [
-            nombre
-            for nombre, ok in (
-                ("ffmpeg", (ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()),
-                ("navegador", navegador is not None),
-            )
-            if not ok
-        ]
-        if faltan:
-            raise MotorNoDisponible(
-                f"A la instalación del motor de vídeo le falta {' y '.join(faltan)}: reinstala SEO Studio."
-            )
+        if not ((ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()):
+            raise MotorNoDisponible("A la instalación del motor de vídeo le falta ffmpeg: reinstala SEO Studio.")
         env["FFMPEG_DIR"] = str(ffmpeg)
-        env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
-    else:
-        if (ffmpeg / "ffmpeg.exe").exists():
-            env["FFMPEG_DIR"] = str(ffmpeg)
-        if navegador is not None:
-            env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
-    clave = config.elevenlabs_api_key(store)
+    elif (ffmpeg / "ffmpeg.exe").exists():
+        env["FFMPEG_DIR"] = str(ffmpeg)
+    # Navegador: siempre la ruta fija y su manifiesto, nunca otro Chrome (I11/I13/I14). Si la carpeta
+    # existe, tiene que verificar entera (manifiesto anclado, sin enlaces ni ficheros de más).
+    carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
+    env["HYPERFRAMES_BROWSER_PATH"] = str(carpeta / config.NAVEGADOR_EXE)
+    env["VIDEO_NAVEGADOR_MANIFIESTO"] = str(carpeta / config.NAVEGADOR_MANIFIESTO)
+    try:
+        navegador.comprobar_ancestros()
+        if os.path.lexists(carpeta):
+            navegador.verificar(carpeta)
+    except navegador.NavegadorError as e:
+        raise MotorNoDisponible(str(e)) from None
+    clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave
     return env

@@ -14,6 +14,7 @@ import { setTema, useTema, type Tema } from "../state/tema";
 import { Button, Chip, ConfirmDialog, Dialog, Estado, Field, IconButton, Input, Mono, SegmentedControl, Select, toast } from "../ui";
 import { cx } from "../ui/cx";
 import { CuotaLista } from "./CuotaLista";
+import { MotorVideo } from "./MotorVideo";
 import { avisarCanalAutorizado, CREDENCIALES, ImportarClientSecret, PUBLICO } from "./ProyectoGoogle";
 import s from "./SettingsScreen.module.css";
 
@@ -22,6 +23,7 @@ const SECCIONES = [
   ["canales", "Canales de YouTube"],
   ["carpetas", "Carpetas permitidas"],
   ["clave", "Clave de Anthropic"],
+  ["video", "Motor de vídeo"],
   ["avanzado", "Avanzado"],
 ] as const;
 
@@ -418,6 +420,8 @@ function Ajustes() {
               </div>
             )}
           </section>
+
+          <MotorVideo />
 
           <section id="ajustes-avanzado" className={s.seccion} aria-labelledby="s-avanzado">
             <h2 id="s-avanzado" className={s.h2}>

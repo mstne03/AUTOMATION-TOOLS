@@ -80,13 +80,39 @@ def anthropic_api_key(store) -> str | None:
 
 
 # Motor de vídeo (video-mcp-server, Node): en el instalador va junto al ejecutable, en
-# `video-engine/` (node/node.exe, app/dist/index.js, browser/, ffmpeg/); en desarrollo es la
-# carpeta del paquete en el repo.
+# `video-engine/` (node/node.exe, app/dist/index.js, ffmpeg/); en desarrollo es la carpeta del
+# paquete en el repo. El navegador del render NO va en el instalador: ver NAVEGADOR_*.
 VIDEO_ENGINE_DIR = (
     Path(sys.executable).parent / "video-engine"
     if FROZEN
     else Path(__file__).resolve().parent.parent.parent / "video-mcp-server"
 )
+
+# Navegador del render: chrome-headless-shell de Chrome for Testing, descargado por el backend en
+# el primer uso, a petición del usuario (SEO-108, spec D10, I4, I14). Versión, URL, hashes y topes
+# fijados aquí: ninguno lee el entorno (Ruling 6). Subir de versión = cambiar estas constantes
+# repitiendo la comparación de `video-mcp-server/spikes/INFORME-chromium.md`.
+NAVEGADOR_VERSION = "156.0.8078.73"
+NAVEGADOR_URL = (
+    "https://storage.googleapis.com/chrome-for-testing-public/"
+    f"{NAVEGADOR_VERSION}/win64/chrome-headless-shell-win64.zip"
+)
+NAVEGADOR_SHA256 = "e6d26810df71efd0a3dfd0f7246d75d279ebdf8a8ec153d1ac44069657298628"
+# Medido sobre el zip verificado: 125 506 562 bytes, 288 ficheros, 294 930 633 bytes extraído.
+# Topes = esperado + 10 %.
+NAVEGADOR_TAMANO = 125_506_562
+NAVEGADOR_MAX_DESCARGA = 138_057_218
+NAVEGADOR_MAX_EXTRAIDO = 324_423_696
+NAVEGADOR_MAX_FICHEROS = 320
+# SHA-256 de la serialización canónica del manifiesto de esa versión
+# (`navegador.serializar_manifiesto`), calculado una vez con el zip de arriba: un manifiesto
+# regenerado a mano tras añadir una .dll no casa con él.
+NAVEGADOR_MANIFIESTO_SHA256 = "51085c8fa3f8c022a832617bab007a5099bb9c1b519c88893c73a28276011ccb"
+NAVEGADOR_DIR = STATE_DIR / "video" / "navegador"  # fuera de video/proyectos y de la preview
+NAVEGADOR_EXE = "chrome-headless-shell-win64/chrome-headless-shell.exe"
+NAVEGADOR_MANIFIESTO = "MANIFIESTO-SHA256.json"
+# Chrome lo escribe junto a su exe y ninguna bandera lo evita: única excepción a I4 (decisión M-2).
+NAVEGADOR_LOG = "chrome-headless-shell-win64/debug.log"
 
 ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
 

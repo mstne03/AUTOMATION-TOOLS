@@ -4,8 +4,8 @@ import path from "node:path";
 import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
-import { procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { archivosVideo, imagenesValidadas, ErrorVideo, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
+import { borrarArbol, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -15,8 +15,7 @@ import { bloquesConFoto, fondoUsaWebgpu, textoAyuda } from "./formato.js";
 import { capacidades, gpuForzadaApagada, leerPruebaGpu } from "./capacidades.js";
 import { HYPERFRAMES_BIN, listarMusica } from "./musica.js";
 import { montarComposicion, prepararRender } from "./render.js";
-import { ejecutar, entornoConFfmpeg } from "./proceso.js";
-import { PIEZAS_DIR } from "./composicion.js";
+import { argsEntrada, ejecutar } from "./proceso.js";
 
 export interface Respuesta {
   texto: string;
@@ -38,9 +37,20 @@ function leerGuion(ruta: string): { guion?: Guion; problemas?: string[] } {
 
 function leerPalabras(ruta: string): ResultadoAlineacion | undefined {
   try {
-    return JSON.parse(fs.readFileSync(ruta, "utf8")) as ResultadoAlineacion;
+    return cargarPalabras(ruta);
   } catch {
-    return undefined;
+    return undefined; // ausente, dañado o con otro formato: cuenta como «sin voz coherente»
+  }
+}
+
+/** Imágenes de la carpeta; si alguna es un recurso rechazado (I6), no lanza: devuelve el motivo en `aviso` y ninguna imagen. */
+function imagenesOAviso(dir: string): { imagenes: (ImagenEncontrada | undefined)[]; ignoradas: string[]; avisos: string[]; aviso?: string } {
+  try {
+    const { imagenes, ignoradas, avisos } = imagenesValidadas(dir);
+    return { imagenes, ignoradas, avisos };
+  } catch (e) {
+    if (!(e instanceof ErrorVideo)) throw e;
+    return { imagenes: new Array(6).fill(undefined), ignoradas: [], avisos: [], aviso: e.message };
   }
 }
 
@@ -74,16 +84,8 @@ export function listar(cfg: Config): Respuesta {
   const ids = listarIds(cfg.videoRoot);
   const videos = ids.map((id) => {
     const r = archivosVideo(cfg.videoRoot, id);
-    // Un enlace simbólico sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
-    let imagenes: ReturnType<typeof imagenesValidadas>["imagenes"] = [];
-    let ignoradas: string[] = [];
-    let aviso: string | undefined;
-    try {
-      ({ imagenes, ignoradas } = imagenesValidadas(r.dir));
-    } catch (e) {
-      if (!(e instanceof ErrorVideo)) throw e;
-      aviso = e.message;
-    }
+    // Un recurso sospechoso en un vídeo no debe impedir listar los demás: ese vídeo cuenta como sin imágenes.
+    const { imagenes, ignoradas, aviso } = imagenesOAviso(r.dir);
     const { guion } = leerGuion(r.guion);
     // Imágenes requeridas = bloques sin escena (sin guion válido, las 6).
     const requeridas = guion ? bloquesConFoto(guion.opciones.escenas) : [1, 2, 3, 4, 5, 6];
@@ -158,8 +160,10 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   const avisos: string[] = [];
   const { guion, problemas } = leerGuion(r.guion);
 
-  const { imagenes, avisos: avisosImg } = imagenesValidadas(r.dir);
+  // Un recurso rechazado (enlace, hardlink) se informa como aviso: solo el render lo rechaza (I6).
+  const { imagenes, avisos: avisosImg, aviso: avisoImagenes } = imagenesOAviso(r.dir);
   avisos.push(...avisosImg);
+  if (avisoImagenes) avisos.push(`No he podido leer las imágenes: ${avisoImagenes}`);
   const infoImagenes: { n: number; encontrada: boolean; nombre?: string; ancho?: number; alto?: number; avisoResolucion?: boolean }[] = [];
   for (const [i, img] of imagenes.entries()) {
     if (!img) {
@@ -190,7 +194,7 @@ export async function estado(cfg: Config, idArg: string): Promise<Respuesta> {
   }
   let mp4: { ruta: string; duracion?: number } | undefined;
   if (fs.existsSync(r.mp4)) {
-    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4).catch(() => undefined))?.duracion : undefined };
+    mp4 = { ruta: r.mp4, duracion: h ? (await sondear(h.ffprobe, r.mp4, { soloMp4: true }).catch(() => undefined))?.duracion : undefined };
   }
   if (!h) avisos.push(mensajeSinFfmpeg());
   const jobs = listarJobs()
@@ -336,6 +340,8 @@ export async function generarVoz(
 
   const faltan = faltanParaVoz(cfg);
   if (faltan.length) throw new ErrorVideo(mensajeFaltanParaVoz(faltan));
+  // D7: el audio se sondea antes de guardarlo. Sin ffprobe se avisa ya, antes de gastar créditos.
+  if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
 
   log.info(`Generando voz de ${id} (${guion.caracteres} caracteres, modelo ${cfg.elevenModelId}).`);
   const tts = await sintetizarConTimestamps({
@@ -346,7 +352,36 @@ export async function generarVoz(
     fetchImpl,
   });
 
-  escribirAtomico(r.voz, tts.audio);
+  // Fichero no confiable (I15): se sondea sobre un temporal con lista blanca mp3 y solo entonces pasa a voz.mp3.
+  const temporal = `${r.voz}.tmp-${process.pid}.mp3`;
+  let duracionAudio: number;
+  try {
+    fs.writeFileSync(temporal, tts.audio);
+    const info = await sondear(h.ffprobe, temporal).catch((e: Error) => {
+      throw new ErrorVideo(`El audio que devolvió ElevenLabs no es un MP3 válido; no guardo nada (${e.message.slice(0, 200)}).`);
+    });
+    if (!info.tieneAudio || !info.duracion || !(info.duracion > 0)) {
+      throw new ErrorVideo("El audio que devolvió ElevenLabs no tiene pista de audio o no tiene duración; no guardo nada.");
+    }
+    duracionAudio = info.duracion;
+    const finAlineacion = tts.alineacion.character_end_times_seconds.at(-1) ?? 0;
+    if (finAlineacion > duracionAudio + 1) {
+      throw new ErrorVideo(
+        `La alineación de ElevenLabs acaba en ${finAlineacion.toFixed(1)} s y el audio dura ${duracionAudio.toFixed(1)} s; no guardo nada.`,
+      );
+    }
+  } catch (e) {
+    fs.rmSync(temporal, { force: true });
+    throw e;
+  }
+  const palabras = procesarAlineacion({
+    narracion: guion.narracion,
+    bloques: guion.bloques,
+    alineacion: tts.alineacion,
+    duracionAudio,
+    hashNarracion: guion.hash,
+  });
+  fs.renameSync(temporal, r.voz);
   escribirAtomico(
     r.alineacion,
     JSON.stringify(
@@ -355,15 +390,6 @@ export async function generarVoz(
       2,
     ),
   );
-  let duracionAudio: number | undefined;
-  if (h) duracionAudio = (await sondear(h.ffprobe, r.voz).catch(() => undefined))?.duracion;
-  const palabras = procesarAlineacion({
-    narracion: guion.narracion,
-    bloques: guion.bloques,
-    alineacion: tts.alineacion,
-    duracionAudio,
-    hashNarracion: guion.hash,
-  });
   escribirAtomico(r.palabras, JSON.stringify(palabras, null, 2));
 
   const avisos = [...palabras.avisos];
@@ -400,7 +426,6 @@ export async function renderizar(cfg: Config, args: { id: string; musica?: boole
     musica: args.musica ?? true,
     musicaVolumen: cfg.musicaVolumen,
     ffmpegDir: cfg.ffmpegDir,
-    browserPath: cfg.browserPath,
   });
   const pos = posicionEnCola(job.job_id);
   return {
@@ -463,7 +488,7 @@ export async function fotograma(cfg: Config, args: { id: string; segundo: number
   if (!fs.existsSync(r.mp4)) throw new ErrorVideo(`No existe ${r.mp4}. Renderiza primero con video_renderizar("${id}").`);
   const h = herramientasFfmpeg(cfg.ffmpegDir);
   if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
-  const info = await sondear(h.ffprobe, r.mp4);
+  const info = await sondear(h.ffprobe, r.mp4, { soloMp4: true });
   const dur = info.duracion ?? 0;
   if (!Number.isFinite(args.segundo) || args.segundo < 0 || args.segundo > dur) {
     throw new ErrorVideo(`El segundo tiene que estar entre 0 y ${dur.toFixed(2)} (duración del mp4).`);
@@ -485,16 +510,26 @@ export function ayuda(): Respuesta {
 
 // ---------- video_capacidades ----------
 
+/**
+ * Sin navegador no se sugiere ningún comando al modelo: HyperFrames no descarga nada (I14) y no se cae
+ * a otro navegador (I11). Integrado, lo descarga el usuario desde Ajustes.
+ */
+export function mensajeSinNavegador(): string {
+  return esIntegrado()
+    ? "no descargado: descárgalo desde Ajustes de SEO Studio."
+    : "no configurado: pon en el .env del servidor HYPERFRAMES_BROWSER_PATH=<ruta de chrome-headless-shell.exe>.";
+}
+
 export async function capacidadesHerramienta(cfg: Config, args: { reprobar?: boolean }): Promise<Respuesta> {
   const h = herramientasFfmpeg(cfg.ffmpegDir);
-  const c = await capacidades(h, !!args.reprobar, cfg.browserPath);
+  const c = await capacidades(h, !!args.reprobar);
   const gpu = c.gpu
     ? `${c.gpu.webgpu ? "sí" : "no"} (prueba del ${c.gpu.fecha.slice(0, 16).replace("T", " ")}: ${c.gpu.detalle})`
     : "sin comprobar (falta ffmpeg)";
   const texto = [
     `WebGPU: ${c.gpuForzadaApagada ? "desactivado a la fuerza (VIDEO_FORZAR_SIN_GPU=1)" : gpu}`,
     `HyperFrames ${c.hyperframes} · ${c.ffmpeg ?? "ffmpeg NO encontrado"}`,
-    `Chrome: ${c.chrome ?? "no encontrado (npx hyperframes browser ensure)"}`,
+    `Chrome: ${c.chrome ?? mensajeSinNavegador()}`,
     `Telemetría: ${c.telemetria ?? "desconocida"}`,
     `Fondos: ${c.fondos.disponibles.join(", ")}. Con WebGPU: ${c.fondos.conWebgpu.join(", ")}${c.fondos.usaranFallback.length ? ` (aquí saldrán con el degradado de reserva)` : ""}.`,
   ].join("\n");
@@ -509,7 +544,7 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
   const id = validarId(args.id);
   if (!args.segundos.length) throw new ErrorVideo("Pasa al menos un segundo en `segundos`, por ejemplo [0.5, 3, 8].");
   if (args.segundos.length > MAX_FOTOGRAMAS) throw new ErrorVideo(`Como mucho ${MAX_FOTOGRAMAS} fotogramas por vista previa.`);
-  const o = { raiz: cfg.videoRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir, browserPath: cfg.browserPath };
+  const o = { raiz: cfg.videoRoot, musica: false, musicaVolumen: cfg.musicaVolumen, ffmpegDir: cfg.ffmpegDir };
   const prep = await prepararRender(id, o);
   const h = prep.herramientas;
   const dir = path.join(prep.rutas.dir, "_vista_previa");
@@ -517,15 +552,14 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
   try {
     const m = await montarComposicion(prep, dir, o);
     const segundos = args.segundos.map((s) => Math.min(Math.max(0, s), m.duracion - 0.05));
-    fs.rmSync(fotos, { recursive: true, force: true });
-    const env = { ...entornoConFfmpeg(h, cfg.browserPath ? { HYPERFRAMES_BROWSER_PATH: cfg.browserPath } : {}), CI: "1" };
+    borrarArbol(fotos);
     const snap = [HYPERFRAMES_BIN, "snapshot", dir, "--at", segundos.map((s) => s.toFixed(2)).join(","), "--no-end", "-o", fotos];
     if (m.usaWebgpu) snap.push("--browser-gpu");
-    const r = await ejecutar(process.execPath, snap, { cwd: prep.rutas.dir, env, timeoutMs: 300000 });
+    const r = await ejecutar(process.execPath, snap, { timeoutMs: 300000 });
     const pngs = fs.existsSync(fotos) ? fs.readdirSync(fotos).filter((n) => /^frame-.*\.png$/.test(n)).sort() : [];
     if (!pngs.length) throw new Error(`hyperframes snapshot no sacó fotogramas: ${(r.stderr || r.stdout).replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-400)}`);
     // Hoja de contacto: los fotogramas en fila a 270×480.
-    const entradas = pngs.flatMap((n) => ["-i", path.join(fotos, n)]);
+    const entradas = pngs.flatMap((n) => [...argsEntrada(path.join(fotos, n)), "-i", path.join(fotos, n)]);
     const escalas = pngs.map((_, i) => `[${i}:v]scale=270:480[e${i}]`).join(";");
     const pila = pngs.length > 1 ? `${escalas};${pngs.map((_, i) => `[e${i}]`).join("")}hstack=inputs=${pngs.length}[out]` : `${escalas.replace("[e0]", "[out]")}`;
     const hoja = path.join(fotos, "hoja.png");
@@ -538,8 +572,8 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
       imagen: { base64: png.toString("base64"), mimeType: "image/png" },
     };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
-    fs.rmSync(fotos, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    borrarArbol(dir);
+    borrarArbol(fotos);
   }
 }
 
@@ -591,12 +625,9 @@ export const ADAPTADAS: Record<string, string> = {
 const TIMEOUT_CATALOGO_MS = 120_000;
 
 export async function catalogo(cfg: Config, args: { consulta: string }): Promise<Respuesta> {
-  const h = herramientasFfmpeg(cfg.ffmpegDir);
-  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], {
-    env: { ...entornoConFfmpeg(h), CI: "1" },
-    cwd: PIEZAS_DIR,
-    timeoutMs: TIMEOUT_CATALOGO_MS,
-  });
+  // I14: la tool no se registra en integrado (index.ts); esto cierra también la llamada directa.
+  if (esIntegrado()) throw new ErrorVideo("El catálogo de HyperFrames no está disponible en SEO Studio.");
+  const r = await ejecutar(process.execPath, [HYPERFRAMES_BIN, "catalog", `--query=${args.consulta}`, "--json"], { timeoutMs: TIMEOUT_CATALOGO_MS });
   if (r.timeout) throw new ErrorVideo(`La CLI de HyperFrames no respondió al buscar en el catálogo (${TIMEOUT_CATALOGO_MS / 1000} s).`);
   let j: { total?: number; results?: { name: string; type?: string; title?: string; description?: string; tags?: string[] }[] };
   try {

@@ -16,11 +16,11 @@ process.env.FFMPEG_DIR = LGPL;
 
 const dist = (f) => import(new URL(`../dist/${f}`, import.meta.url).href);
 const { HYPERFRAMES_BIN } = await dist("render.js");
-const { ejecutar, herramientasFfmpeg, entornoConFfmpeg } = await dist("proceso.js");
+const { ejecutar, entornoHijo } = await dist("proceso.js");
 
 const comp = path.join(AQUI, "salidas", "preview", nombre, "footy999", "_composicion");
 const salida = path.join(AQUI, "salidas", "preview", `${nombre}.mp4`);
-const env = entornoConFfmpeg(herramientasFfmpeg(LGPL));
+const env = entornoHijo();
 const args = [HYPERFRAMES_BIN, "render", comp, "-o", salida, "--fps", "30", "--format", "mp4", "--quality", "delivery"];
 if (nombre === "aurora") args.push("--browser-gpu");
 const t0 = Date.now();

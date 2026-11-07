@@ -52,41 +52,40 @@
         (function () {
           var d = JSON.parse(document.getElementById("subtitulos-datos").textContent);
           var c = d.colores;
-          var tl = gsap.timeline({ paused: true });
-          var una = { ease: "none", immediateRender: false, lazy: false };
-          function de(a, b) { var o = {}; for (var k in a) o[k] = a[k]; for (var j in b) o[j] = b[j]; return o; }
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
+          // Los ids forman selectores: si no cumplen el patrón, se lanza (I1, I11).
+          var id = hf.id;
+          var SIN_ANTES = { antes: false };
 
           d.grupos.forEach(function (g, gi) {
-            var txt = "#" + g.id + "-txt";
+            var txt = "#" + id(g.id) + "-txt";
             if (d.estilo === "impacto") {
               var modo = gi % 4;
               var desde = modo === 0 ? { y: -120, opacity: 0 } : modo === 1 ? { x: -300, opacity: 0 } : modo === 2 ? { x: 300, opacity: 0 } : { scale: 0.4, opacity: 0 };
               var hasta = modo === 0 ? { y: 0, opacity: 1 } : modo === 1 ? { x: 0, opacity: 1 } : modo === 2 ? { x: 0, opacity: 1 } : { scale: 1, opacity: 1 };
-              tl.fromTo(txt, desde, de(hasta, { duration: modo === 3 ? 0.24 : 0.2, ease: modo === 0 ? "back.out(1.7)" : modo === 3 ? "back.out(2.2)" : "expo.out" }), g.inicio);
+              hf.tween(txt, desde, hasta, g.inicio, modo === 3 ? 0.24 : 0.2, modo === 0 ? "back.out(1.7)" : modo === 3 ? "back.out(2.2)" : "expo.out");
             } else {
-              tl.fromTo(txt, { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.1, ease: "power2.out" }, g.inicio);
+              hf.tween(txt, { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1 }, g.inicio, 0.1, "power2.out");
             }
             g.palabras.forEach(function (p) {
-              var s = "#" + p.id;
+              var s = "#" + id(p.id);
               if (d.estilo === "karaoke") {
-                tl.fromTo(s, { color: c.texto }, de(una, { color: c.acento, duration: 0.04 }), p.inicio);
-                tl.fromTo(s, { color: c.acento }, de(una, { color: c.texto, duration: 0.04 }), p.fin);
+                hf.tween(s, { color: c.texto }, { color: c.acento }, p.inicio, 0.04, "none", SIN_ANTES);
+                hf.tween(s, { color: c.acento }, { color: c.texto }, p.fin, 0.04, "none", SIN_ANTES);
               } else if (d.estilo === "pildora") {
-                tl.fromTo(s, { color: "#a6a6a6" }, de(una, { color: "#1c1e1d", duration: 0.1 }), Math.max(g.inicio, p.inicio - 0.05));
+                hf.tween(s, { color: "#a6a6a6" }, { color: "#1c1e1d" }, Math.max(g.inicio, p.inicio - 0.05), 0.1, "none", SIN_ANTES);
               } else if (d.estilo === "neon") {
                 var brillo = p.enfasis ? c.acento : "#00fff0";
                 var sombra = "0 0 10px " + brillo + ", 0 0 35px " + brillo + ", 0 0 90px " + brillo;
-                tl.fromTo(s, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)" }, de(una, { color: brillo, textShadow: sombra, duration: 0.06 }), p.inicio);
-                tl.fromTo(s, { color: brillo, textShadow: sombra }, de(una, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)", duration: 0.06 }), p.fin);
+                hf.tween(s, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)" }, { color: brillo, textShadow: sombra }, p.inicio, 0.06, "none", SIN_ANTES);
+                hf.tween(s, { color: brillo, textShadow: sombra }, { color: "rgba(190, 255, 250, 0.55)", textShadow: "0 0 0px rgba(0,0,0,0)" }, p.fin, 0.06, "none", SIN_ANTES);
               }
               if (p.enfasis && d.estilo !== "impacto") {
-                tl.fromTo(s, { scale: 1 }, { scale: 1.12, duration: 0.12, ease: "back.out(3)", immediateRender: false }, p.inicio);
-                tl.fromTo(s, { scale: 1.12 }, { scale: 1.05, duration: 0.2, ease: "power2.out", immediateRender: false }, p.inicio + 0.12);
+                hf.tween(s, { scale: 1 }, { scale: 1.12 }, p.inicio, 0.12, "back.out(3)", SIN_ANTES);
+                hf.tween(s, { scale: 1.12 }, { scale: 1.05 }, p.inicio + 0.12, 0.2, "power2.out", SIN_ANTES);
               }
             });
           });
-          window.__timelines = window.__timelines || {};
-          window.__timelines["subtitulos"] = tl;
         })();
       </script>
     </div>

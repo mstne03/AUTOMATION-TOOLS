@@ -141,7 +141,7 @@ automático**: no hay botón "Guardar"; cada cambio se envía al sidecar al mome
 toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast de error y
 `ajustes-error`.
 
-- Subnavegación `ajustes-subnav` (botones `ajustes-nav-general|canales|carpetas|clave|avanzado`,
+- Subnavegación `ajustes-subnav` (botones `ajustes-nav-general|canales|carpetas|clave|video|avanzado`, seis botones,
   el activo con `aria-current="true"`) que desplaza a cada sección.
 - **General**: modelo como tarjetas de radio (`ajustes-model` = radiogroup; una tarjeta
   `ajustes-model-<id>` por modelo de `models`, con nombre, descripción y precio de la tabla
@@ -186,6 +186,43 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
   `input[type=password][data-testid=ajustes-key]` (vacío siempre) con `ajustes-key-guardar`; con
   clave guardada el campo no existe. Tras guardar nunca se muestra la clave. `ajustes-key-borrar`
   ("Borrar") pide confirmación en un diálogo.
+- **Motor de vídeo** (`ajustes-video`, entre Clave de Anthropic y Avanzado): descarga a petición del
+  navegador del render (Chrome for Testing) y modo de render. Todo por el cliente HTTP del sidecar
+  (`GET /video/navegador` con sondeo de 1 s solo mientras la fase es activa; `POST
+  /video/navegador/descarga`; `GET /video/capacidades` **solo con el navegador `listo`**, nunca al
+  abrir Ajustes: sin caché el motor hace una prueba de GPU de minutos). Nunca se descarga solo (I14):
+  cargar o recargar Ajustes no hace ningún POST. Los textos del backend (`error`, `detail`) se pintan
+  como texto, sin rutas del sistema ni hashes. **No hay selector de navegador, ruta editable, `input
+  file` ni enlace a Chrome/Edge del sistema (I11).**
+  - `ajustes-video-aviso`: «El render usa Chrome for Testing <versión> (~120 MB), que se descarga
+    una sola vez de storage.googleapis.com, solo cuando tú lo pides, y se verifica antes de usarlo.»
+  - `ajustes-video-estado` (chip): `ausente` «No descargado»; `descargando` «Descargando…»;
+    `verificando` «Verificando…»; `extrayendo` «Instalando…»; `listo` «Listo» (success); `error`
+    «Error» (destructive).
+  - `ajustes-video-descargar` (primario): solo en `ausente` («Descargar el navegador del render»),
+    `error` («Reintentar la descarga») y `listo` con el navegador corrupto («Volver a descargar»,
+    M9). Con `loading` mientras el POST está pendiente. Un 409 («Ya hay una descarga…») o una
+    recarga con la descarga en marcha retoman el progreso: no se ofrece otra descarga.
+  - `ajustes-video-progreso` (barra, solo en fases activas): `descargando` con valor
+    `descargado/tamano` y «48 de 120 MB»; `verificando` y `extrayendo` indeterminada.
+  - `ajustes-video-error` (`role="alert"`): `error` del GET, fallo del POST, o navegador `listo`
+    pero corrupto (`/video/capacidades` falla con otro error que «no está instalado», o responde
+    200 sin `chrome` y con `gpu.detalle`); en ese caso se ofrece «Volver a descargar».
+  - `ajustes-video-sin-motor`: «El módulo de vídeo no está instalado en esta versión.» si el POST o
+    `/video/capacidades` dan 503 «no está instalado»; no hay botón de descarga.
+  - `ajustes-render-modo` (radiogroup «Modo de render»): `ajustes-render-modo-auto` (Automático,
+    por defecto: «Dos pasadas; funciona en cualquier equipo»: hoy equivale a Compatible),
+    `ajustes-render-modo-rapido` («Una sola pasada con la GPU») y `ajustes-render-modo-compatible`
+    («Dos pasadas; funciona en cualquier equipo»). «Rápido» está deshabilitado salvo que
+    `capacidades.codificadores` incluya alguno distinto de `h264_mf` (software, M7), con
+    `ajustes-render-rapido-aviso`: navegador no listo «Descarga el navegador del render para
+    comprobar los codificadores»; listo y pendiente «Comprobando…»; error de capacidades (o
+    navegador corrupto) «No se han podido comprobar los codificadores»; sin GPU «No hay
+    codificador de GPU: se usará Compatible». Si «Rápido» está guardado pero no hay GPU, no se
+    marca: se marca el modo efectivo (Compatible) y lo guardado no se toca. Guardado automático en
+    `localStorage` (`seo-studio.render-modo`; un valor inválido vale «auto») con toast «Modo de
+    render guardado». `ajustes-render-modo-nota`: «La preferencia se guarda en este equipo; todavía
+    no se aplica a los renders.»
 - **Avanzado**: cuota de YouTube de hoy (`cuota-<bucket>`, "154 de 10.000"), información
   (directorio de estado y almacén de secretos con su nombre legible: "Administrador de
   credenciales de Windows") y `ajustes-asistente` ("Abrir el asistente" → Onboarding).
@@ -429,8 +466,8 @@ el texto que lee el agente). Cada elemento lleva `origen` ("publica" | "privada"
 
 ## Regresión visual
 
-`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `onboarding` y el catálogo
+`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `ajustes-video` (Ajustes desplazado a «Motor de vídeo»), `onboarding` y el catálogo
 (`/#/catalogo`) en claro y oscuro, a 1200×800 y 900×600 (el catálogo muestra los dos temas, así que
 solo se captura una vez por tamaño). Los datos que varían (ajustes, canal, estado de la KB) se
-simulan y el reloj se fija; las referencias están en `e2e/__capturas__/`.
+simulan y el reloj se fija (`ajustes-video` muestra el navegador sin descargar); las referencias están en `e2e/__capturas__/`.
 
