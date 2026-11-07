@@ -463,13 +463,35 @@ const basura = Buffer.from("esto no es un mp3, es texto");
 
 describe("cabecera MP3 (antes de ffprobe)", () => {
   it("solo ID3 o sync de trama MPEG", () => {
-    expect(cabeceraMp3Valida(Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00", "latin1"))).toBe(true);
+    expect(cabeceraMp3Valida(Buffer.concat([Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00", "latin1"), Buffer.from([0xff, 0xfb, 0x90, 0x00])]))).toBe(true);
+    expect(cabeceraMp3Valida(Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00", "latin1"))).toBe(false); // tag sin trama detrás
     expect(cabeceraMp3Valida(Buffer.from([0xff, 0xfb, 0x90, 0x00]))).toBe(true);
     expect(cabeceraMp3Valida(Buffer.from([0xff, 0xe3, 0x90, 0x00]))).toBe(true);
     expect(cabeceraMp3Valida(Buffer.from([0xff, 0xc0, 0x90, 0x00]))).toBe(false);
     expect(cabeceraMp3Valida(Buffer.from([0x00, 0xfb, 0x90, 0x00]))).toBe(false);
     expect(cabeceraMp3Valida(Buffer.from("ffconcat version 1.0\nfile 'x.mp3'\n"))).toBe(false);
     expect(cabeceraMp3Valida(Buffer.alloc(2, 0xff))).toBe(false);
+  });
+
+  it("ID3 vacío + ffconcat + tramas sin saltos de línea: rechazado (bypass verificado en ffmpeg 6.1.1)", () => {
+    const trama = Buffer.alloc(64, 0xff);
+    const atacante = Buffer.concat([Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00", "latin1"), Buffer.from("ffconcat version 1.0\nfile 'otra.mp3'\n#"), trama]);
+    expect(cabeceraMp3Valida(atacante)).toBe(false);
+    // Aunque el tag declare un tamaño que cubra el texto, ffconcat en cualquier parte (y en cualquier caja) lo rechaza.
+    const texto = "FFConcat version 1.0\nfile 'x.mp3'\n#";
+    const tam = texto.length;
+    const id3 = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, tam >> 7, tam & 0x7f]);
+    expect(cabeceraMp3Valida(Buffer.concat([id3, Buffer.from(texto), trama]))).toBe(false);
+    expect(cabeceraMp3Valida(Buffer.concat([trama, Buffer.from("xxFfCoNcAtxx")]))).toBe(false);
+  });
+
+  it("un MP3 legítimo con tag ID3 (relleno incluido) pasa", () => {
+    const relleno = 300;
+    const id3 = Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, relleno >> 7, relleno & 0x7f]), Buffer.alloc(relleno)]);
+    expect(cabeceraMp3Valida(Buffer.concat([id3, Buffer.from([0xff, 0xfb, 0x90, 0x00, 0x11, 0x22])]))).toBe(true);
+    // Tamaño synchsafe inválido (bit alto) o tag que no deja sitio a la trama: no.
+    expect(cabeceraMp3Valida(Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0x80, 0]), Buffer.alloc(8, 0xff)]))).toBe(false);
+    expect(cabeceraMp3Valida(id3)).toBe(false);
   });
 
   sinSonda("un ffconcat disfrazado de mp3 se rechaza antes de ffprobe y no se guarda (pero se cobró)", async () => {
@@ -618,5 +640,43 @@ describe("muestra: carpeta, candado y caché", () => {
     expect(f).toHaveBeenCalledTimes(1);
     await expect(vozMuestra(cfg(), { voiceId: VOZ, caracteresConfirmados: 60, reintentarFacturada: true }, comoFetch(f))).rejects.toMatchObject({ codigo: "fallo_facturado" });
     expect(f).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("marca de vuelo (facturación si el motor cae tras el 200)", () => {
+  const HASH1 = () => hashFrase(VOZ, "eleven_multilingual_v2", TEXTO1);
+
+  it("una marca de vuelo huérfana cuenta como posiblemente cobrada y exige reintentarFacturadas", async () => {
+    const id = nuevo();
+    fs.mkdirSync(carpetaVoz(id), { recursive: true });
+    fs.writeFileSync(path.join(carpetaVoz(id), `${HASH1()}.vuelo`), "{}");
+    const c = vozCoste(cfg(), id, ["f1"]);
+    expect(c.fallidasFacturadas).toEqual([{ fraseId: "f1", intentos: 1, caracteresCobrados: 0 }]);
+    expect(c.caracteresRefacturados).toBe(TEXTO1.length);
+    const f = falso();
+    await expect(vozGenerarReal(cfg(), { id, frases: ["f1"], caracteresConfirmados: c.caracteres, planConfirmado: c.plan }, comoFetch(f))).rejects.toMatchObject({ codigo: "reintento_facturado" });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  sinSonda("la marca se escribe antes de llamar y se borra si la llamada no cobró", async () => {
+    const id = nuevo();
+    let vista = false;
+    const f = falso(() => {
+      vista = fs.existsSync(path.join(carpetaVoz(id), `${HASH1()}.vuelo`));
+      return new Response("{}", { status: 429 });
+    });
+    const r = await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f));
+    expect(vista).toBe(true);
+    expect(r.fallo?.facturada).toBe(false);
+    expect(ficherosVoz(id).filter((n) => n.endsWith(".vuelo"))).toEqual([]);
+    expect(vozCoste(cfg(), id, ["f1"]).fallidasFacturadas).toEqual([]);
+  });
+
+  sinSonda("tras un cobro con fallo de validación queda la marca de fallo y no la de vuelo", async () => {
+    const id = nuevo();
+    const f = falso((t) => respuesta(t, { audio: basura }));
+    await vozGenerar(cfg(), { id, frases: ["f1"], caracteresConfirmados: TEXTO1.length }, comoFetch(f));
+    expect(ficherosVoz(id).filter((n) => n.endsWith(".vuelo"))).toEqual([]);
+    expect(vozCoste(cfg(), id, ["f1"]).fallidasFacturadas).toEqual([{ fraseId: "f1", intentos: 1, caracteresCobrados: TEXTO1.length }]);
   });
 });
