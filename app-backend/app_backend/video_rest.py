@@ -9,7 +9,10 @@ errores sin valores ni rutas. El modelo no tiene tools `video_*` (D2): solo la U
 import asyncio
 import json
 import logging
+import os
 import re
+import secrets
+from collections import defaultdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -19,13 +22,13 @@ from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 
 from app_backend import config, video
-from app_backend.navegador import _borrar, es_enlace
+from app_backend.navegador import _borrar, comprobar_ancestros, es_enlace
 
 log = logging.getLogger("app_backend.video")
 
 # Patrones de ruta. `RECURSO` es el formato de T1 (`RECURSO_ID_RE`) y `BANDEJA` el de T13 (pendiente):
 # los usan T7/T11, que añaden sus rutas; se declaran aquí para que haya una sola fuente.
-PROYECTO = r"^video\d{3}$"
+PROYECTO = r"^video[0-9]{3}$"  # solo ASCII: `\d` aceptaría dígitos Unicode
 GUION = r"^g-[0-9a-f]{16}$"
 PERFIL = r"^(defecto|p-[0-9a-f]{16})$"
 RECURSO = r"^r-[0-9a-f]{16}$"
@@ -35,7 +38,8 @@ ID_URL = r"^[A-Za-z0-9_-]{1,64}$"  # ids de servidor de las rutas anteriores al 
 LIMITE_CUERPO = 1024 * 1024  # 1 MiB
 PROFUNDIDAD_MAXIMA = 16
 CSP = "sandbox; default-src 'none'"
-_RUTA_EN_TEXTO = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|/(?:home|Users|tmp|var|etc|usr|opt|root|mnt)\b)[^\s'\"]*")
+_RUTA_PROBLEMA = re.compile(r"[A-Za-z0-9_]{1,40}(\.[A-Za-z0-9_]{1,40}){0,8}", re.ASCII)
+_CODIGO_PROBLEMA = re.compile(r"[a-z_]{1,40}", re.ASCII)
 
 IdProyecto = Annotated[str, RutaPath(pattern=PROYECTO)]
 IdGuion = Annotated[str, RutaPath(pattern=GUION)]
@@ -159,11 +163,15 @@ def _ruta_segura(loc: tuple) -> str:
     return ".".join(str(p) if re.fullmatch(r"[A-Za-z0-9_]{1,40}", str(p)) else "?" for p in loc)
 
 
+def _rechazar_no_finito(constante: str) -> None:
+    raise ValueError("no finito")
+
+
 async def leer_cuerpo[M: BaseModel](request: Request, modelo: type[M]) -> M:
     """JSON acotado (profundidad, forma del sobre) y validado sin devolver nunca el valor recibido."""
     crudo = await request.body()
     try:
-        v = json.loads(crudo)
+        v = json.loads(crudo, parse_constant=_rechazar_no_finito)
     except (ValueError, RecursionError):
         raise _422("El cuerpo no es JSON válido.", "json") from None
     if _profundidad_excedida(v):
@@ -178,24 +186,53 @@ async def leer_cuerpo[M: BaseModel](request: Request, modelo: type[M]) -> M:
 # -------------------------------------------------------------------- errores
 
 
-def _sin_rutas(texto: str) -> str:
-    return _RUTA_EN_TEXTO.sub("…", texto)[:300]
+# Mensajes fijos: a la UI nunca llega texto libre del motor ni de una excepción (llevan rutas con el
+# nombre de usuario, p. ej. `C:\\Users\\Marc Serra\\…`). El detalle va solo al log.
+MENSAJE_503 = "El motor de vídeo no está disponible. Reinicia la aplicación o reinstálala."
+MENSAJE_TIMEOUT = "El motor de vídeo tardó demasiado y se ha reiniciado; vuelve a intentarlo."
+MENSAJE_502 = "El motor de vídeo no pudo completar la acción."
+MENSAJES_503_FIJOS = {video.MENSAJE_DETENIDO, video.MENSAJE_NO_INSTALADO}
+MENSAJES_POR_CODIGO = {
+    "esquema": (422, "El documento no cumple el esquema."),
+    "conflicto": (409, "El proyecto ha cambiado desde otra fuente; recárgalo."),
+    "coste_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo."),
+    "no_encontrado": (404, "No encontrado."),
+}
+
+
+def _problemas_seguros(problemas: list) -> list[dict]:
+    """Solo `{ruta, codigo}` y solo si tienen forma de ruta de esquema y de código: nunca valores."""
+    salida = []
+    for p in problemas[:50]:
+        if not isinstance(p, dict):
+            continue
+        ruta, codigo = str(p.get("ruta", "")), str(p.get("codigo", ""))
+        salida.append(
+            {
+                "ruta": ruta if ruta == "" or _RUTA_PROBLEMA.fullmatch(ruta) else "?",
+                "codigo": codigo if _CODIGO_PROBLEMA.fullmatch(codigo) else "desconocido",
+            }
+        )
+    return salida
 
 
 def _http(e: video.MotorError) -> HTTPException:
-    """Traduce un error del motor. Los mensajes sin tipar (de Node, con rutas) no salen del sidecar."""
-    if isinstance(e, video.MotorNoDisponible | video.MotorTimeout):
-        return HTTPException(503, _sin_rutas(str(e)))
-    mensaje = _sin_rutas(str(e))
-    match e.codigo:
-        case "esquema":
-            return HTTPException(422, {"mensaje": mensaje, "codigo": "esquema", "problemas": e.problemas})
-        case "conflicto" | "coste_cambiado":
-            return HTTPException(409, mensaje)
-        case "no_encontrado":
-            return HTTPException(404, mensaje)
+    """Traduce un error del motor a un mensaje fijo por clase o por `codigo`; el detalle, al log."""
+    if isinstance(e, video.MotorNoDisponible):
+        log.warning("Motor de vídeo no disponible: %s", e)
+        return HTTPException(503, str(e) if str(e) in MENSAJES_503_FIJOS else MENSAJE_503)
+    if isinstance(e, video.MotorTimeout):
+        log.warning("Motor de vídeo: timeout: %s", e)
+        return HTTPException(503, MENSAJE_TIMEOUT)
+    if e.codigo in MENSAJES_POR_CODIGO:
+        estado, mensaje = MENSAJES_POR_CODIGO[e.codigo]
+        if estado == 422:
+            return HTTPException(
+                422, {"mensaje": mensaje, "codigo": "esquema", "problemas": _problemas_seguros(e.problemas)}
+            )
+        return HTTPException(estado, mensaje)
     log.warning("Motor de vídeo: error sin tipar: %s", e)
-    return HTTPException(502, "El motor de vídeo no pudo completar la acción.")
+    return HTTPException(502, MENSAJE_502)
 
 
 async def _llamar(estado, tool: str, args: dict | None = None) -> Any:
@@ -209,11 +246,29 @@ async def _llamar(estado, tool: str, args: dict | None = None) -> Any:
 # --------------------------------------------------------------------- borrado
 
 
+class ProyectoEsEnlace(Exception):
+    """La carpeta del proyecto es un enlace o una junction: no se toca."""
+
+
+class ProyectoEnUso(Exception):
+    """La carpeta del proyecto no se puede renombrar: algo la tiene abierta."""
+
+
+_cerrojos: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def cerrojo_de(id: str) -> asyncio.Lock:
+    """Un cerrojo por proyecto, compartido por PUT y DELETE (los ids tienen patrón: acotado a 1000)."""
+    return _cerrojos[id]
+
+
 def borrar_proyecto(id: str) -> bool:
-    """Borra `<VIDEO_ROOT>/<id>`. Devuelve False si no existe; `PermissionError` si es un enlace.
+    """Borra `<VIDEO_ROOT>/<id>`. Devuelve False si no existe.
 
     Solo hijas directas de `VIDEO_ROOT`. Nunca sigue enlaces: los de dentro se desenlazan
-    (`navegador._borrar`) y una carpeta que ya es un punto de reanálisis se rechaza sin tocarla.
+    (`navegador._borrar`) y una carpeta que ya es un punto de reanálisis lanza `ProyectoEsEnlace`
+    sin tocarla. Antes de borrar se renombra a una carpeta de papelera: si algo la tiene abierta
+    el renombrado falla entero (`ProyectoEnUso`) y el proyecto queda intacto.
     """
     if not re.fullmatch(PROYECTO, id):
         return False
@@ -221,11 +276,26 @@ def borrar_proyecto(id: str) -> bool:
     carpeta = raiz / id
     if carpeta.parent != raiz:
         return False
+    try:
+        comprobar_ancestros()
+    except Exception:  # noqa: BLE001 - un ancestro enlazado se trata como enlace
+        raise ProyectoEsEnlace from None
     if es_enlace(carpeta):
-        raise PermissionError("La carpeta del proyecto es un enlace.")
+        raise ProyectoEsEnlace
     if not carpeta.is_dir():
         return False
-    _borrar(carpeta)
+    papelera = raiz / f".borrando-{id}-{secrets.token_hex(4)}"
+    try:
+        os.rename(carpeta, papelera)
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        log.warning("No se pudo renombrar %s para borrarlo: %s", id, e)
+        raise ProyectoEnUso from None
+    try:
+        _borrar(papelera)
+    except OSError as e:  # el proyecto ya no existe para el usuario; la papelera se barre luego
+        log.warning("Papelera de %s sin vaciar del todo: %s", id, e)
     return True
 
 
@@ -280,21 +350,27 @@ def crear_router(estado, protegido: list) -> APIRouter:
     @r.put("/proyectos/{id}")
     async def guardar_proyecto(id: IdProyecto, request: Request):
         cuerpo = await leer_cuerpo(request, ProyectoPutIn)
-        if "id" in cuerpo.proyecto and cuerpo.proyecto["id"] != id:
-            raise _422("El id del proyecto no coincide con el de la ruta.", "id_distinto")
-        return await _llamar(
-            estado, "video_proyecto_guardar", {"id": id, "revision": cuerpo.revision, "proyecto": cuerpo.proyecto}
-        )
+        if cuerpo.proyecto.get("id") != id:
+            raise _422("El id del proyecto falta o no coincide con el de la ruta.", "id_distinto")
+        if "revision" in cuerpo.proyecto and cuerpo.proyecto["revision"] != cuerpo.revision:
+            raise _422("La revisión del proyecto no coincide con la del sobre.", "revision_distinta")
+        async with cerrojo_de(id):
+            return await _llamar(
+                estado, "video_proyecto_guardar", {"id": id, "revision": cuerpo.revision, "proyecto": cuerpo.proyecto}
+            )
 
     @r.delete("/proyectos/{id}")
     async def borrar_proyecto_ruta(id: IdProyecto):
-        try:
-            existia = await asyncio.to_thread(borrar_proyecto, id)
-        except PermissionError:
-            raise HTTPException(409, "La carpeta del proyecto es un enlace y no se borra.") from None
-        except OSError as e:
-            log.warning("No se pudo borrar %s: %s", id, e)
-            raise HTTPException(409, "No se pudo borrar el proyecto: puede estar en uso.") from None
+        async with cerrojo_de(id):
+            try:
+                existia = await asyncio.to_thread(borrar_proyecto, id)
+            except ProyectoEsEnlace:
+                raise HTTPException(409, "La carpeta del proyecto es un enlace y no se borra.") from None
+            except ProyectoEnUso:
+                raise HTTPException(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.") from None
+            except OSError as e:
+                log.warning("No se pudo borrar %s: %s", id, e)
+                raise HTTPException(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.") from None
         if not existia:
             raise HTTPException(404, "Proyecto no encontrado.")
         return {}

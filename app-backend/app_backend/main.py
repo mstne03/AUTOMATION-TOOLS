@@ -172,6 +172,14 @@ def create_app(
     )
     app.add_middleware(video_rest.CabeceraCSP)
 
+    @app.exception_handler(Exception)
+    async def error_inesperado(request: Request, exc: Exception):
+        # `ServerErrorMiddleware` envuelve a los middleware de usuario: la CSP se pone aquí.
+        log.exception("Error no controlado en %s", request.url.path, exc_info=exc)
+        return JSONResponse(
+            {"detail": "Error interno."}, status_code=500, headers={"Content-Security-Policy": video_rest.CSP}
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validacion(request: Request, exc: RequestValidationError):
         # Un id de ruta con forma mala es "no encontrado", no un error de formulario.

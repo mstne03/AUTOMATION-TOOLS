@@ -66,6 +66,8 @@ def fallar(texto: str) -> str:
 
 # ------------------------------------------------------------------------------------------
 # Tools de guiones y proyectos (T4 del plan de vídeo, todavía sin hacer en el motor real).
+# SIMULADOR: sus validaciones de esquema (`_validar_guion`, claves del proyecto) NO son la frontera; la
+# cobertura real de esquema está en `test_video_rest.py::test_real_*`, contra `video-mcp-server/dist`.
 # Simulan la interfaz del plan: `datos` en el último bloque de texto y, en los errores tipados,
 # `isError` con un bloque JSON `{ codigo, problemas }`. `problemas` solo lleva ruta y código.
 # ------------------------------------------------------------------------------------------
@@ -127,6 +129,22 @@ def video_guion_leer(id: str) -> CallToolResult:
         raise ValueError("EACCES: permission denied, open 'C:\\Users\\marc\\AppData\\x\\guiones\\g.json'")
     if id == "g-eeeeeeeeeeeeeeee":  # error tipado cuyo mensaje se cuela una ruta
         return _error("no_encontrado", "No existe /home/marc/seo-studio/guiones/g.json")
+    if id == "g-dddddddddddddddd":  # tipado con rutas con espacios en el mensaje
+        return _error("conflicto", "Fallo en C:\\Program Files\\SEO Studio\\x y en C:\\Users\\Marc Serra\\y")
+    if id == "g-cccccccccccccccc":
+        return _error("no_encontrado", "No existe C:\\Users\\Marc Serra\\AppData\\Local\\seo-studio\\g.json")
+    if id == "g-bbbbbbbbbbbbbbbb":
+        return _error("coste_cambiado", "Coste en C:\\Program Files\\SEO Studio")
+    if id == "g-aaaaaaaaaaaaaaaa":  # problemas hostiles: valores, rutas y HTML donde van ruta y codigo
+        return _error(
+            "esquema",
+            "No cumple C:\\Users\\Marc Serra\\x",
+            [
+                {"ruta": "escenas.0.texto", "codigo": "too_big"},
+                {"ruta": "escenas.0.<img src=x>", "codigo": "C:\\Users\\Marc Serra"},
+                {"ruta": "C:\\Program Files\\SEO Studio", "codigo": "valor con espacios"},
+            ],
+        )
     if id not in _GUIONES:
         return _error("no_encontrado", "No existe ese guion.")
     return _ok("Guion", _GUIONES[id])
