@@ -13,7 +13,7 @@ export interface Approval {
   requires_confirm_id: boolean;
 }
 
-export type JobKind = "upload" | "transcribe";
+export type JobKind = "upload" | "transcribe" | "video_render";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 
 export interface Job {
@@ -58,6 +58,8 @@ export interface Settings {
   allowed_dirs: AllowedDir[];
   profile: string;
   has_anthropic_key: boolean;
+  /** Solo si hay clave o no: la clave de ElevenLabs nunca vuelve a la UI. */
+  has_elevenlabs_key?: boolean;
   has_client_secret: boolean;
   /** Proyecto de Google Cloud (client_secret.json) de toda la app; null si no hay ninguno. */
   google_project?: GoogleProject | null;

@@ -82,6 +82,8 @@ export interface Client {
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
+  /** Sin coste: comprueba la clave con `GET /v1/user` de ElevenLabs. Nunca devuelve la clave. */
+  validateElevenlabsKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
   /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
   importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
   removeClientSecret(): Promise<SettingsTrasProyecto>;
@@ -187,6 +189,7 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
     validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
+    validateElevenlabsKey: (apiKey) => req("/settings/validate-elevenlabs-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
     removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
