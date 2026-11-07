@@ -4,14 +4,17 @@ import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import { createClient, type Client } from "./api/client";
 import { ClientContext } from "./api/context";
 import { useSettings } from "./api/queries";
+import { vincularCliente } from "./state/editor";
 import { ChatScreen } from "./chat/ChatScreen";
 
 import { CanalScreen } from "./screens/CanalScreen";
+import { EditorVideoScreen } from "./screens/EditorVideoScreen";
 import { GuionesScreen } from "./screens/GuionesScreen";
 import { KbScreen } from "./screens/KbScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { VideoScreen } from "./screens/VideoScreen";
 import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
 import { Estado, Toaster } from "./ui";
@@ -37,6 +40,8 @@ const router = createHashRouter([
       { path: "chat", element: <ChatScreen /> },
       { path: "publicar", element: <PublicarScreen /> },
       { path: "guiones", element: <GuionesScreen /> },
+      { path: "video", element: <VideoScreen /> },
+      { path: "video/:id", element: <EditorVideoScreen /> },
       { path: "canal", element: <CanalScreen /> },
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },
@@ -60,7 +65,11 @@ export default function App() {
 
   useEffect(() => {
     sidecarInfo()
-      .then((info) => setClient(createClient(info.port, info.token)))
+      .then((info) => {
+        const c = createClient(info.port, info.token);
+        vincularCliente(c);
+        setClient(c);
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
 

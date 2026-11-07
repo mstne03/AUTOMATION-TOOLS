@@ -89,6 +89,8 @@ export interface SettingsPatch {
   profile?: string;
   /** Solo escritura: se envía una vez y nunca vuelve. Cadena vacía = borrar. */
   anthropic_api_key?: string;
+  /** Solo escritura, como la de Anthropic. Cadena vacía = borrar. */
+  elevenlabs_api_key?: string;
 }
 
 export interface YouTubeStatus {
@@ -223,5 +225,73 @@ export interface CapacidadesVideo {
   chrome?: string;
   gpu?: { webgpu: boolean; detalle: string };
   codificadores?: { codificador: string; adaptador: string }[];
+  [k: string]: unknown;
+}
+
+// --- Contrato REST de vídeo (tabla de la Task 9). Ningún tipo ni método lleva rutas (I6): solo ids de servidor. ---
+
+export type EstadoProyectoVideo = "borrador" | "renderizando" | "listo" | "error";
+
+export interface GuionVideoResumen {
+  id: string;
+  titulo: string;
+  creado?: string;
+  [k: string]: unknown;
+}
+
+export interface ProyectoVideoResumen {
+  id: string;
+  titulo: string;
+  perfil: string;
+  duracion: number;
+  actualizado: string;
+  estado: EstadoProyectoVideo;
+}
+
+export interface AvisoVideo {
+  codigo: string;
+  mensaje: string;
+  ruta?: string; // ruta dentro del documento (p. ej. «escenas.0»), no del sistema de ficheros
+}
+
+export interface PreviewVideo {
+  url: string;
+  duracion: number;
+  avisos: AvisoVideo[];
+  fondo: string;
+}
+
+export type ModoRender = "auto" | "rapido" | "compatible";
+
+/** `GET /video/proyectos/{id}/voz/coste` (T5). */
+export interface CosteVoz {
+  pendientes: string[];
+  caracteres: number;
+  voz: string;
+}
+/** `GET /video/proyectos/{id}/voz/forma` (T5). */
+export interface FormaVoz {
+  picos: number[];
+  segundos: number;
+}
+/** Cuerpo de las acciones que gastan: el servidor compara con su propio cálculo. */
+export interface CuerpoVoz {
+  frases?: string[];
+  caracteres_confirmados: number;
+}
+
+export interface PerfilVideo {
+  id: string;
+  nombre?: string;
+  [k: string]: unknown;
+}
+export interface VozVideo {
+  id: string;
+  nombre: string;
+  [k: string]: unknown;
+}
+export interface PistaMusica {
+  id: string;
+  nombre?: string;
   [k: string]: unknown;
 }

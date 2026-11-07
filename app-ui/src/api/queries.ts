@@ -68,3 +68,32 @@ export function useCapacidadesVideo(habilitado: boolean) {
   const client = useClient();
   return useQuery({ queryKey: ["video", "capacidades"], queryFn: () => client.videoCapacidades(), enabled: habilitado, staleTime: Infinity, retry: false });
 }
+
+/** Proyectos de vídeo con su estado. Los renders en curso se sondean cada 2 s. */
+export function useProyectosVideo() {
+  const client = useClient();
+  return useQuery({
+    queryKey: ["video", "proyectos"],
+    queryFn: () => client.videoProyectos(),
+    refetchInterval: (q) => (q.state.data?.some((p) => p.estado === "renderizando") ? 2000 : false),
+  });
+}
+
+export function useGuionesVideo() {
+  const client = useClient();
+  return useQuery({ queryKey: ["video", "guiones"], queryFn: () => client.videoGuiones() });
+}
+
+export function useBorrarProyectoVideo() {
+  const client = useClient();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client.videoProyectoBorrar(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["video", "proyectos"] }),
+  });
+}
+
+export function usePerfilesVideo() {
+  const client = useClient();
+  return useQuery({ queryKey: ["video", "perfiles"], queryFn: () => client.videoPerfiles() });
+}
