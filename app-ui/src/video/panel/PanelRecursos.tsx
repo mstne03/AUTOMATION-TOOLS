@@ -36,6 +36,11 @@ function leerRecurso(v: unknown): Recurso | null {
  *  instantánea anterior reintroduciría un recurso borrado (inexistente) o dejaría huérfano uno
  *  añadido. Opción robusta: tras la operación se vacía el historial de deshacer/rehacer, y el
  *  panel lo avisa. Las ediciones anteriores siguen en el proyecto; solo dejan de poder deshacerse. */
+// Con un conflicto abierto, `editar()` no programa el guardado y vaciar el historial borraría la señal
+// que usa «Descartar la mía»: el recurso quedaría en disco y no en proyecto.json. Se avisa y no se toca
+// el proyecto; al resolver el conflicto se recarga el estado del servidor.
+const AVISO_CONFLICTO = "Hay un conflicto abierto: resuélvelo y vuelve a cargar los recursos.";
+
 function vaciarHistorial() {
   useEditor.setState({ historial: [], futuro: [] });
 }
@@ -64,6 +69,7 @@ export function PanelRecursos() {
       const nuevo = leerRecurso(r.recurso);
       if (!nuevo) throw new Error("El servidor no devolvió el recurso añadido.");
       if (useEditor.getState().proyecto?.id !== proyectoId) return; // se cambió de proyecto mientras tanto
+      if (useEditor.getState().conflicto) throw new Error(AVISO_CONFLICTO);
       editar((p) => {
         if (!p.recursos.some((x) => x.id === nuevo.id)) p.recursos.push(nuevo);
       });
@@ -85,6 +91,7 @@ export function PanelRecursos() {
     try {
       await client.videoRecursoBorrar(proyectoId, rid);
       if (useEditor.getState().proyecto?.id !== proyectoId) return;
+      if (useEditor.getState().conflicto) throw new Error(AVISO_CONFLICTO);
       editar((p) => {
         p.recursos = p.recursos.filter((x) => x.id !== rid);
       });

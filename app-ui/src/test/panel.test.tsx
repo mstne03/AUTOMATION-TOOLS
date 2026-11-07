@@ -275,6 +275,19 @@ describe("recursos", () => {
     expect(proy().recursos).toHaveLength(0);
   });
 
+  it("un borrado que responde durante un conflicto no edita ni vacía el historial y avisa", async () => {
+    let soltar: (v: unknown) => void = () => {};
+    const borrar = vi.fn(() => new Promise((r) => { soltar = r; }));
+    montar({ videoRecursoBorrar: borrar }, proyecto({ recursos: [recurso()] }));
+    pestana("Recursos");
+    fireEvent.click(g("recurso-borrar-r-0123456789abcdef"));
+    act(() => useEditor.setState({ conflicto: true, historial: [proy()] }));
+    await act(async () => { soltar({}); });
+    expect((await screen.findByTestId("recursos-error")).textContent).toContain("conflicto");
+    expect(proy().recursos).toHaveLength(1);
+    expect(useEditor.getState().historial).toHaveLength(1);
+  });
+
   it("el botón de borrar se bloquea con el borrado en vuelo", async () => {
     let soltar!: (v: unknown) => void;
     const borrar = vi.fn(() => new Promise((r) => (soltar = r)));
