@@ -8,7 +8,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { pasaPorEnlace } from "../src/proceso.js";
 
 const BASE = fs.mkdtempSync(path.join(os.tmpdir(), "video enlaces "));
-afterAll(() => fs.rmSync(BASE, { recursive: true, force: true }));
+afterAll(() => fs.rmSync(BASE, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }));
 
 const real = path.join(BASE, "carpeta con nombre largo", "hf-home");
 fs.mkdirSync(real, { recursive: true });
@@ -46,10 +46,16 @@ describe.runIf(process.platform === "win32")("pasaPorEnlace", () => {
     const destino = guid + path.dirname(real).slice(unidad.length);
     const junta = path.join(BASE, "junta a volumen con nombre largo");
     execFileSync("cmd.exe", ["/d", "/c", `mklink /J "${junta}" "${destino}"`], { windowsVerbatimArguments: true });
-    expect(fs.lstatSync(junta).isSymbolicLink(), "si lstat ya la marca, este test no prueba H1").toBe(false);
-    expect(pasaPorEnlace(path.join(junta, "hf-home"))).toBe(true);
-    const c = corta(path.join(junta, "hf-home"));
-    if (c.toLowerCase() !== path.join(junta, "hf-home").toLowerCase()) expect(pasaPorEnlace(c)).toBe(true);
+    try {
+      expect(fs.lstatSync(junta).isSymbolicLink(), "si lstat ya la marca, este test no prueba H1").toBe(false);
+      expect(pasaPorEnlace(path.join(junta, "hf-home"))).toBe(true);
+      const c = corta(path.join(junta, "hf-home"));
+      if (c.toLowerCase() !== path.join(junta, "hf-home").toLowerCase()) expect(pasaPorEnlace(c)).toBe(true);
+    } finally {
+      // rmdir quita solo el enlace. Sin esto, el rmSync recursivo de afterAll la ve como carpeta (el mismo fallo de
+      // lstat) y borra su destino por dos caminos a la vez (ENOTEMPTY en el runner de CI).
+      fs.rmdirSync(junta);
+    }
   });
 
   it("rutas UNC o de dispositivo: falla cerrado", () => {
