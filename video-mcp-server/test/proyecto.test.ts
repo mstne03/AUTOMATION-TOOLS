@@ -1,6 +1,5 @@
 // T4: almacén de guiones y proyectos. Validación al guardar y al cargar (I1), rutas solo bajo VIDEO_ROOT (I6),
 // escritura atómica y revisión que gana. Los casos de junctions solo se ejecutan en Windows.
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -328,7 +327,8 @@ describe("enlaces en el proyecto (I6)", () => {
 });
 
 describe.runIf(process.platform === "win32")("junctions (I6)", () => {
-  const junction = (enlace: string, destino: string) => execFileSync("cmd.exe", ["/d", "/c", "mklink", "/J", enlace, destino], { windowsVerbatimArguments: true });
+  // Sin cmd.exe: `mklink` no admite rutas con espacios sin comillas (el temporal se llama «video proyecto …»).
+  const junction = (enlace: string, destino: string) => fs.symlinkSync(destino, enlace, "junction");
 
   it("la carpeta del proyecto no puede ser una junction a un proyecto de fuera", () => {
     const { id, disco } = nuevoProyecto();
@@ -504,7 +504,8 @@ describe("cierre de la revisión de seguridad de T4", () => {
 });
 
 describe.runIf(process.platform === "win32")("cierre T4 en Windows (junctions)", () => {
-  const junction = (enlace: string, destino: string) => execFileSync("cmd.exe", ["/d", "/c", "mklink", "/J", enlace, destino], { windowsVerbatimArguments: true });
+  // Sin cmd.exe: `mklink` no admite rutas con espacios sin comillas (el temporal se llama «video proyecto …»).
+  const junction = (enlace: string, destino: string) => fs.symlinkSync(destino, enlace, "junction");
 
   it("M2: si falla la creación, la limpieza no entra en una junction y deja intacta la centinela", () => {
     const { id: guionId } = guionGuardar(RAIZ, { guion: clon(GUION) });
