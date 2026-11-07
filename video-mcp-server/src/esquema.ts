@@ -42,8 +42,10 @@ const FECHA_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 //  y no-caracteres (FDD0–FDEF, xFFFE/xFFFF). Los selectores de variación (VS16) son Mn y no entran.
 // Además, los invisibles que no son Cf: selectores de variación (FE00–FE0E, E0100–E01EF; U+FE0F solo se admite tras
 // una base emoji, ver `VS16_DE_EMOJI_RE`), U+034F, rellenos hangul (115F, 1160, 3164, FFA0) y el braille en blanco (2800).
-const INVISIBLES_RE = /[\uFE00-\uFE0E\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800]/u;
-const VS16_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic}|\p{Emoji})\uFE0F/gu;
+const INVISIBLES_RE = /[\uFE00-\uFE0E\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800\u180B-\u180F\u17B4\u17B5]/u;
+// `\p{Emoji}` incluye dígitos, `#` y `*`: tras ellos U+FE0F solo vale como tecla (seguido de U+20E3), o sería un
+// canal oculto de un bit por carácter.
+const VS16_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic})\uFE0F|(?<=[#*0-9])\uFE0F(?=\u20E3)/gu;
 const PROHIBIDOS_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Noncharacter_Code_Point}]/u;
 
 // Decisión (M2, Review Focus 1): U+200D es Cf, pero sin él se rompen 👨‍👩‍👧 o 🏳️‍🌈. Se admite SOLO entre dos
@@ -52,9 +54,10 @@ const PROHIBIDOS_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Noncharacter_Code
 const ZWJ_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]?)\u200D(?=\p{Extended_Pictographic})/gu;
 
 // Esquemas que la R0-8 manda rechazar (L2). Cualquier `esquema://` cae (con o sin barras de más), y los esquemas sin
-// `//` que ejecutan o incrustan, solo si lo siguiente es una letra o `/`: «Data: cinco filas», «Big data:2024», «FTP:21», «Nota: …» y «10:30» pasan;
+// `//` que ejecutan o incrustan: `javascript:`/`vbscript:` con cualquier cosa que no sea espacio detrás, `data:` con
+// letra, `/`, `,` o `;` (`data:,x`, `data:;base64`), y el resto con letra o `/`. «Data: cinco filas», «Big data:2024», «FTP:21», «Nota: …» y «10:30» pasan;
 // «data:text/html,x» y «javascript:alert(1)» no. Los demás esquemas sin `//` (mailto:, tel:) son texto inofensivo.
-const ESQUEMA_GENERICO_RE = /\b[a-z][a-z0-9+.-]{0,31}:[\\/]{2}|\b(?:javascript|vbscript|data|blob|ftps?|sftp|about):(?=[a-z\\/])/i;
+const ESQUEMA_GENERICO_RE = /\b[a-z][a-z0-9+.-]{0,31}:[\\/]{2}|\b(?:javascript|vbscript):(?=\S)|\bdata:(?=[a-z\\/,;])|\b(?:blob|ftps?|sftp|about):(?=[a-z\\/])/i;
 
 /** Lo que `urlsDeRed` marcaría de este texto tal como llega a la composición: en el HTML, escapado, y en el script, como JSON. */
 function contieneUrl(s: string): boolean {

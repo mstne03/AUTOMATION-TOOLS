@@ -539,7 +539,7 @@ describe("esquema de guion y proyecto", () => {
     });
 
     it("rechaza esquemas genéricos y peligrosos, y deja pasar los usos normales (L2)", () => {
-      for (const m of ["ftp://host", "FTP://host/x", "javascript://x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "blob:x", "vbscript:x", "sftp://h", "x:////host", "z+y.w-v://h", "x:\\\\h", "mira ftp://h", "ftp:x", "Blob:a", "data:text", "about:blank"]) {
+      for (const m of ["ftp://host", "FTP://host/x", "javascript://x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "blob:x", "vbscript:x", "sftp://h", "x:////host", "z+y.w-v://h", "x:\\\\h", "mira ftp://h", "ftp:x", "Blob:a", "data:text", "about:blank", "javascript:%61lert(1)", "javascript:(alert)(1)", "javascript:'x'", "data:,<b>x", "data:;base64,AAAA"]) {
         expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: true });
       }
       for (const m of ["Nota: lo vimos ayer", "10:30", "El 12:30 llegó", "Gol: 3", "Resultado:3-1", "Data: cinco filas", "Mundial:2026", "Hora 9:05", "a:b", "ftp", "Datos: 5", "Big data:2024", "FTP:21", "Blob:3", "data:5"]) {
@@ -596,7 +596,7 @@ describe("esquema de guion y proyecto", () => {
     });
 
     it("pendientes T1: invisibles restantes y VS16 solo tras emoji (M2)", () => {
-      for (const malo of ["a\uFE00b", "a\uFE0Eb", "a\u{E0100}b", "a\u{E01EF}b", "a\u034Fb", "a\u115Fb", "a\u1160b", "a\u3164b", "a\uFFA0b", "a\u2800b", "a\uFE0Fb", "👨\uFE0F\uFE0F"]) {
+      for (const malo of ["a\uFE00b", "a\uFE0Eb", "a\u{E0100}b", "a\u{E01EF}b", "a\u034Fb", "a\u115Fb", "a\u1160b", "a\u3164b", "a\uFFA0b", "a\u2800b", "a\uFE0Fb", "👨\uFE0F\uFE0F", "1\uFE0F2\uFE0F", "#\uFE0Fa", "a\u180Bb", "a\u180Fb", "a\u17B4b", "a\u17B5b"]) {
         const g = clon(GUION_FUTBOL);
         g.titulo = malo;
         expect({ malo, c: codigos(() => validarGuionVideo(g)) }).toEqual({ malo, c: expect.arrayContaining(["texto_inseguro"]) });
