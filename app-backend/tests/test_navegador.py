@@ -1365,4 +1365,6 @@ def test_quien_puede_usar_el_navegador():
     assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "comprobar_ancestros", "NavegadorError"}
     # video_rest.py borra la carpeta de un proyecto sin seguir enlaces con los mismos ayudantes (T9).
     assert usos.pop("video_rest.py") - {"<módulo>"} <= {"es_enlace", "_borrar", "comprobar_ancestros"}
+    # preview.py (T10) solo comprueba que lo que sirve no cuelga de un enlace (no descarga ni lanza nada).
+    assert usos.pop("preview.py") - {"<módulo>"} <= {"es_enlace", "comprobar_ancestros"}
     assert {m: u for m, u in usos.items() if u} == {}

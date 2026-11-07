@@ -20,11 +20,11 @@ from pathlib import Path
 
 import httpx
 import pytest
-from app_backend.preview import Claves, Reserva
 from fastapi import FastAPI
 
 from app_backend import config, preview
 from app_backend.main import create_app
+from app_backend.preview import Claves, Reserva
 from tests.test_video import AUTH, TOKEN
 
 MOTOR_FALSO = Path(__file__).with_name("motor_falso.py")
@@ -871,7 +871,9 @@ async def test_clave_no_en_logs(api, previa, caplog, capfd):
     await api.delete(f"/video/proyectos/{pid}/preview")
     await previa.get(f"/p/{clave}/index.html")  # ya cerrada
     salida = capfd.readouterr()
-    assert clave not in caplog.text and clave not in salida.out and clave not in salida.err
+    # El cliente de prueba (httpx) registra sus propias URLs: no es código del backend.
+    propios = "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith("httpx"))
+    assert clave not in propios and clave not in salida.out and clave not in salida.err
 
 
 def test_la_preview_no_registra_rutas():

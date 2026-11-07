@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 
-from app_backend import config, video
+from app_backend import config, preview, video
 from app_backend.navegador import _borrar, comprobar_ancestros, es_enlace
 
 log = logging.getLogger("app_backend.video")
@@ -143,6 +143,11 @@ class ProyectoPutIn(BaseModel):
     proyecto: dict
 
 
+class PreviewIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    webgpu: bool = Field(default=False, strict=True)
+
+
 def _422(mensaje: str, codigo: str = "esquema", problemas: list | None = None) -> HTTPException:
     return HTTPException(422, {"mensaje": mensaje, "codigo": codigo, "problemas": problemas or []})
 
@@ -201,6 +206,17 @@ async def leer_cuerpo[M: BaseModel](request: Request, modelo: type[M]) -> M:
     except ValidationError as e:
         problemas = [{"ruta": _ruta_segura(i["loc"]), "codigo": i["type"]} for i in e.errors()[:50]]
         raise _422("El cuerpo no tiene la forma esperada.", "cuerpo", problemas) from None
+
+
+async def leer_cuerpo_opcional[M: BaseModel](request: Request, modelo: type[M]) -> M:
+    """Como `leer_cuerpo`, pero un cuerpo vacío vale lo mismo que `{}`."""
+    if not (await request.body()).strip():
+        return modelo()
+    return await leer_cuerpo(request, modelo)
+
+
+def _numero_seguro(v: Any, maximo: float) -> float | None:
+    return float(v) if isinstance(v, int | float) and not isinstance(v, bool) and 0 <= v <= maximo else None
 
 
 # -------------------------------------------------------------------- errores
@@ -391,8 +407,51 @@ def crear_router(estado, protegido: list) -> APIRouter:
             except OSError as e:
                 log.warning("No se pudo borrar %s: %s", id, e)
                 raise HTTPException(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.") from None
+            estado.claves.cerrar(id)  # la clave de la preview muere con el proyecto
         if not existia:
             raise HTTPException(404, "Proyecto no encontrado.")
+        return {}
+
+    @r.post("/proyectos/{id}/preview")
+    async def abrir_preview(id: IdProyecto, request: Request):
+        """Monta la composición y entrega la URL de capacidad. La UI no arma ningún `src` (I8)."""
+        cuerpo = await leer_cuerpo_opcional(request, PreviewIn)
+        reserva = estado.reserva_preview
+        if reserva is None or reserva.servicio is None:
+            raise HTTPException(503, preview.MENSAJE_SIN_PUERTO)
+        if estado.runtime.obtener() is None:
+            raise HTTPException(503, preview.MENSAJE_RUNTIME)
+        async with cerrojo_de(id):
+            datos = await _llamar(estado, "video_montar_preview", {"id": id, "webgpu": cuerpo.webgpu})
+            carpeta = datos.get("carpeta") if isinstance(datos, dict) else None
+            if not isinstance(carpeta, str) or not re.fullmatch(r"r[0-9]{1,9}", carpeta, re.ASCII):
+                log.warning("video_montar_preview devolvió una carpeta inesperada")
+                raise HTTPException(502, MENSAJE_502)
+            leido = await _llamar(estado, "video_proyecto_leer", {"id": id})
+            doc = leido.get("proyecto", leido) if isinstance(leido, dict) else None
+            creado = doc.get("creado") if isinstance(doc, dict) else None
+            if not isinstance(creado, str) or not 1 <= len(creado) <= 64:
+                log.warning("video_proyecto_leer no devolvió `creado`")
+                raise HTTPException(502, MENSAJE_502)
+            clave = estado.claves.rotar(id, carpeta, creado)
+        avisos = [
+            {"codigo": a["codigo"]}
+            for a in (datos.get("avisos") or [])
+            if isinstance(a, dict) and isinstance(a.get("codigo"), str) and _CODIGO_PROBLEMA.fullmatch(a["codigo"])
+        ]
+        if reserva.ajenos:
+            log.warning("puertos_preview_ajenos: %s", list(reserva.ajenos))
+            avisos.append({"codigo": "puertos_preview_ajenos", "puertos": list(reserva.ajenos)})
+        salida: dict[str, Any] = {"url": f"http://127.0.0.1:{reserva.servicio}/p/{clave}/index.html", "avisos": avisos}
+        duracion = _numero_seguro(datos.get("duracion"), 3600)
+        if duracion is not None:
+            salida["duracion"] = duracion
+        return salida
+
+    @r.delete("/proyectos/{id}/preview")
+    async def cerrar_preview(id: IdProyecto):
+        """Cierra el editor: la clave deja de valer."""
+        estado.claves.cerrar(id)
         return {}
 
     return r

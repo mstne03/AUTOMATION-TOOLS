@@ -115,6 +115,22 @@ NAVEGADOR_MANIFIESTO = "MANIFIESTO-SHA256.json"
 # Chrome lo escribe junto a su exe y ninguna bandera lo evita: única excepción a I4 (decisión M-2).
 NAVEGADOR_LOG = "chrome-headless-shell-win64/debug.log"
 
+# Preview del editor de vídeo (T10, M-D1, I8): puertos fijos y propios, distintos del de la API, que
+# `frame-src` de `tauri.conf.json` lista uno a uno (lo comprueba `tests/test_preview.py`).
+PUERTOS_PREVIEW = (47810, 47811, 47812, 47813)
+# Runtime de HyperFrames 0.8.206 que la preview inyecta: se lee una vez, se verifica contra este
+# SHA-256 y se sirve desde memoria. Si no cuadra, no se sirve ningún otro (I4, I11).
+RUNTIME_SHA256 = "cafd7cc9ef6867d0e08910ef27d471ebcb38127c2bc68b1e5c8950a513ac607e"
+RUNTIME_PREVIEW_REL = ("node_modules", "hyperframes", "dist", "hyperframe.runtime.iife.js")
+# Política del `<meta>` de `index.html`, tal como la emite el motor (`plantilla/index.html`). La preview
+# la sustituye exactamente una vez, cambiando `'self'` por el origen exacto; si no aparece una sola
+# vez, la composición no se sirve (R0-10). Un test la compara con la plantilla.
+CSP_META_COMPOSICION = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+    "worker-src 'none'; base-uri 'none'; form-action 'none'"
+)
+
 ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
 
 

@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import secrets
-import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -37,7 +36,7 @@ from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, navegador, registry, video, video_rest
+from app_backend import config, navegador, preview, registry, video, video_rest
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -100,6 +99,7 @@ def create_app(
     conversaciones_dir: str | Path | None = None,
     elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
     navegador_transport: httpx.BaseTransport | None = None,
+    reserva_preview: preview.Reserva | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -161,6 +161,10 @@ def create_app(
     # Sin /docs, /redoc ni /openapi.json: son documentos HTML servidos desde el puerto de la API.
     app = FastAPI(title="app-backend", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     # Orden (de dentro a fuera): tope de cuerpo, CORS, CSP. El 413 lleva CORS y todo lleva CSP.
+    # Preview (T10): claves y runtime en memoria del proceso; sin reserva (tests) no hay puerto de preview.
+    app.state.claves = preview.Claves()
+    app.state.runtime = preview.Runtime()
+    app.state.reserva_preview = reserva_preview
     app.add_middleware(video_rest.LimiteCuerpo)
     # El WebView de Tauri tiene origen propio (tauri.localhost; localhost:1420 en desarrollo),
     # asi que el navegador exige CORS. Solo esos origenes; el token sigue siendo obligatorio.
@@ -698,15 +702,19 @@ def main() -> None:
     import uvicorn
 
     token = os.environ.get("APP_BACKEND_TOKEN") or secrets.token_urlsafe(32)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))  # nunca 0.0.0.0: el sidecar es local
+    # R0-7: los cuatro puertos de la preview se vinculan primero y se mantienen mientras viva el
+    # proceso; el de la API (efímero) se vincula después y fuera de esa lista.
+    reserva = preview.reservar_puertos()
+    sock = preview.vincular_api()
     port = sock.getsockname()[1]
     # listen() antes de anunciar el puerto: las conexiones que lleguen mientras uvicorn
     # termina de arrancar (varios segundos de imports) quedan en cola en vez de rechazarse.
-    sock.listen(128)
     print(json.dumps({"port": port, "token": token}), flush=True)
-    app = create_app(token)
-    uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=[sock])
+    app = create_app(token, reserva_preview=reserva)
+    destino = preview.despachar(app, preview.apps_preview(app.state.claves, reserva, app.state.runtime))
+    # El primer socket de la preview sirve; los demás responden 404 con la CSP. Sin puerto libre la API
+    # arranca igual y `POST …/preview` da 503.
+    uvicorn.Server(preview.config_servidor(destino)).run(sockets=[sock, *reserva.sockets])
 
 
 if __name__ == "__main__":
