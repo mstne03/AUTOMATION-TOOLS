@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
-import { archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
+import { borrarArbol, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
@@ -552,7 +552,7 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
   try {
     const m = await montarComposicion(prep, dir, o);
     const segundos = args.segundos.map((s) => Math.min(Math.max(0, s), m.duracion - 0.05));
-    fs.rmSync(fotos, { recursive: true, force: true });
+    borrarArbol(fotos);
     const snap = [HYPERFRAMES_BIN, "snapshot", dir, "--at", segundos.map((s) => s.toFixed(2)).join(","), "--no-end", "-o", fotos];
     if (m.usaWebgpu) snap.push("--browser-gpu");
     const r = await ejecutar(process.execPath, snap, { timeoutMs: 300000 });
@@ -572,8 +572,8 @@ export async function vistaPrevia(cfg: Config, args: { id: string; segundos: num
       imagen: { base64: png.toString("base64"), mimeType: "image/png" },
     };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
-    fs.rmSync(fotos, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    borrarArbol(dir);
+    borrarArbol(fotos);
   }
 }
 

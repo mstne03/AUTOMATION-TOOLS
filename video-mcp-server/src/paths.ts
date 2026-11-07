@@ -184,6 +184,74 @@ export function copiarRecurso(origen: string, destino: string): void {
 
 const igualRuta = (a: string, b: string) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
 
+const REINTENTABLES = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
+/** Reintenta una operación de borrado ante bloqueos breves de Windows (un ffmpeg que acaba de soltar el fichero); ENOENT no es fallo. */
+function conReintentos(op: () => void): void {
+  for (let intento = 0; ; intento++) {
+    try {
+      return op();
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? "";
+      if (code === "ENOENT") return;
+      if (!REINTENTABLES.has(code) || intento >= 10) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    }
+  }
+}
+
+/** Quita un enlace o junction (de fichero o de carpeta) sin tocar su destino. */
+function quitarEnlace(ruta: string): void {
+  conReintentos(() => {
+    try {
+      fs.unlinkSync(ruta);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+      fs.rmdirSync(ruta); // junction o symlink de carpeta en Windows
+    }
+  });
+}
+
+/**
+ * Borra una carpeta y su contenido sin atravesar enlaces. `fs.rmSync({ recursive })` mira cada entrada con lstat, que
+ * no marca las junctions a `\??\Volume{GUID}\…` (las crea `mklink /J` sin privilegios): entraría en ellas y borraría
+ * su destino, esté donde esté. Aquí cada entrada se mira por su Dirent, que sí las marca; un enlace se quita sin
+ * entrar, y si la propia carpeta es un enlace, solo se quita el enlace. Si no existe, no hace nada.
+ */
+export function borrarArbol(dir: string): void {
+  const raiz = path.resolve(dir);
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(raiz);
+  } catch {
+    return;
+  }
+  const padre = path.dirname(raiz);
+  const enPadre = padre === raiz ? undefined : leerEntradas(padre).find((e) => igualRuta(e.name, path.basename(raiz)));
+  if (st.isSymbolicLink() || enPadre?.isSymbolicLink()) return quitarEnlace(raiz);
+  if (!st.isDirectory()) return conReintentos(() => fs.unlinkSync(raiz));
+  vaciar(raiz);
+  conReintentos(() => fs.rmdirSync(raiz));
+}
+
+function leerEntradas(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function vaciar(dir: string): void {
+  for (const e of leerEntradas(dir)) {
+    const ruta = path.join(dir, e.name);
+    if (e.isSymbolicLink()) quitarEnlace(ruta);
+    else if (e.isDirectory()) {
+      vaciar(ruta);
+      conReintentos(() => fs.rmdirSync(ruta));
+    } else conReintentos(() => fs.unlinkSync(ruta));
+  }
+}
+
 /** La carpeta del vídeo no puede ser un enlace, una junction ni colgar de un padre enlazado: nada de lo de dentro sería «suyo». */
 export function comprobarCarpeta(dir: string): void {
   let st: fs.Stats;

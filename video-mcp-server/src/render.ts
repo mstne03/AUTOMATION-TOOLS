@@ -7,7 +7,7 @@ import { parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
-import { archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
+import { borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
@@ -330,7 +330,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
   const h = prep.herramientas;
   const avisos: string[] = [];
   const tmp = `${destino}.audio-${process.pid}`;
-  fs.rmSync(tmp, { recursive: true, force: true });
+  borrarArbol(tmp);
   fs.mkdirSync(tmp, { recursive: true });
   try {
     await normalizarVoz(h, prep.voz, path.join(tmp, "voz.mp3"));
@@ -368,7 +368,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
     if (red.length) throw new Error(`La composición tiene recursos de red y el render tiene que ser local: ${red.slice(0, 5).join("; ")}`);
     return { duracion: plan.duracion, usaWebgpu: plan.usaWebgpu, avisos };
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    borrarArbol(tmp);
   }
 }
 

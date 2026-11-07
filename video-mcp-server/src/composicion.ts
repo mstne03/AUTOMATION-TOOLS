@@ -18,7 +18,7 @@ import {
   type EscenaTitulo3d,
 } from "./formato.js";
 import { trazarMapa } from "./mapas.js";
-import type { ImagenEncontrada } from "./paths.js";
+import { borrarArbol, type ImagenEncontrada } from "./paths.js";
 
 export const PLANTILLA_DIR = path.join(SERVER_ROOT, "plantilla");
 export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
@@ -678,7 +678,7 @@ function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { te
 /** Escribe _composicion\ desde cero con el plan ya calculado. */
 export function escribirPlan(destino: string, plan: PlanComposicion): void {
   // En Windows un Chrome que acaba de cerrarse puede tener la carpeta abierta unos instantes.
-  fs.rmSync(destino, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  borrarArbol(destino);
   for (const [rel, contenido] of Object.entries(plan.archivos)) {
     const ruta = path.join(destino, rel);
     fs.mkdirSync(path.dirname(ruta), { recursive: true });

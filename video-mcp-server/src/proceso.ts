@@ -63,12 +63,19 @@ const mismaRuta = (a: string, b: string): boolean => normalizarRuta(a) === norma
  * En cada tramo se mira lstat y, además, su entrada en el listado del padre: lstat no marca las junctions a
  * `\??\Volume{GUID}\…` (las crea `mklink /J` sin privilegios), y el Dirent sí, porque mira el atributo de
  * reparse point (revisión post-R2, H1). Un tramo 8.3 no aparece por su nombre en el listado: se busca su
- * entrada larga por identificador de fichero, y si no aparece, falla cerrado. Rutas UNC o de dispositivo
- * (`\\?\UNC\`, `\\.\`, `\\srv\`): falla cerrado; las carpetas del motor siempre son locales.
+ * entrada larga por identificador de fichero, y si no aparece, falla cerrado. Solo rutas locales con letra de
+ * unidad: se exige la forma buena en vez de buscar las malas, porque UNC, dispositivo, `\?\Volume{…}` o
+ * `GLOBALROOT` admiten barras de los dos tipos (revisión post-R2, Low-2). Las carpetas del motor siempre son locales.
  */
 export function pasaPorEnlace(ruta: string): boolean {
-  if (/^(\\\\\?\\UNC\\|\\\\\.\\|\\\\[^?.])/i.test(ruta)) throw new Error(`Ruta de red o de dispositivo, no la uso: ${ruta}`);
-  for (let d = path.resolve(sinPrefijoLargo(ruta)); ; ) {
+  const sinPrefijo = sinPrefijoLargo(ruta);
+  const inicio = path.resolve(sinPrefijo);
+  // Con prefijo \\?\, lo que queda tiene que llevar letra de unidad (\\?\GLOBALROOT\… quedaría relativa).
+  const conPrefijo = sinPrefijo !== ruta;
+  if (/^[\\/]/.test(sinPrefijo) || (conPrefijo && !/^[A-Za-z]:[\\/]/.test(sinPrefijo)) || !/^[A-Za-z]:\\/.test(inicio)) {
+    throw new Error(`Ruta de red o de dispositivo, no la uso: ${ruta}`);
+  }
+  for (let d = inicio; ; ) {
     if (fs.lstatSync(d).isSymbolicLink()) return true;
     const padre = path.dirname(d);
     if (padre === d) return false;
@@ -613,6 +620,12 @@ export function filtrarProcesos(lista: ProcesoVivo[], o: ObjetivoBarrido): Proce
 }
 
 /**
+ * Literal de comillas simples de PowerShell: se dobla cualquier comilla que lo cerraría, también las tipográficas
+ * ‘ ’ ‚ ‛, que PowerShell acepta igual (revisión post-R2, L1 y Low-1: con ’ se inyectaba código).
+ */
+export const literalPowerShell = (s: string): string => `'${s.replace(/['‘’‚‛]/g, "$&$&")}'`;
+
+/**
  * Módulos que usan los scripts de `powershell()`: ConvertTo/From-Json, Stop-Process y Get-CimInstance. Utility va
  * primero: al cargarse, CimCmdlets llama a Set-Alias, que está en Utility (sin autocarga no lo encontraría).
  */
@@ -628,9 +641,7 @@ const MODULOS_PS = ["Microsoft.PowerShell.Utility", "Microsoft.PowerShell.Manage
 function powershell(script: string): Promise<Resultado> {
   const raiz = path.join(system32(), "WindowsPowerShell", "v1.0");
   const exe = path.join(raiz, "powershell.exe");
-  // Comillas simples de PowerShell: una ' dentro se dobla (revisión post-R2, L1).
-  const literal = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  const imports = MODULOS_PS.map((m) => `Import-Module ${literal(path.join(raiz, "Modules", m, `${m}.psd1`))} -ErrorAction Stop`).join("\n");
+  const imports = MODULOS_PS.map((m) => `Import-Module ${literalPowerShell(path.join(raiz, "Modules", m, `${m}.psd1`))} -ErrorAction Stop`).join("\n");
   const prologo = `$ErrorActionPreference = 'Stop'\n$PSModuleAutoloadingPreference = 'None'\n${imports}\n$ErrorActionPreference = 'Continue'`;
   const codificado = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${prologo}\n${script}`, "utf16le").toString("base64");
   // cwd fijo: sin LOCALAPPDATA (I5), PowerShell escribe su ModuleAnalysisCache relativa al cwd.

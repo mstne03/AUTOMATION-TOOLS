@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { argsEntrada, ejecutar, type Herramientas } from "./proceso.js";
+import { borrarArbol } from "./paths.js";
 
 const TIMEOUT_FOTOGRAMA_MS = 30_000;
 
@@ -26,6 +27,6 @@ export async function extraerFotograma(h: Herramientas, mp4: string, segundo: nu
     }
     return datos;
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    borrarArbol(dir);
   }
 }

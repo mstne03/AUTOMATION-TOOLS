@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { borrarArbol } from "../src/paths.js";
 import { pasaPorEnlace } from "../src/proceso.js";
 
 const BASE = fs.mkdtempSync(path.join(os.tmpdir(), "video enlaces "));
@@ -58,8 +59,69 @@ describe.runIf(process.platform === "win32")("pasaPorEnlace", () => {
     }
   });
 
+  // borrarArbol: el mismo fallo de lstat haría que fs.rmSync recursivo entrase en la junction y borrase su destino.
+  describe("borrarArbol no atraviesa una junction a Volume{GUID}", () => {
+    const juntaVolumen = (junta: string, destino: string) => {
+      const unidad = path.parse(destino).root;
+      const guid = /\\\\\?\\Volume\{[0-9a-f-]+\}\\/i.exec(execFileSync("mountvol", [unidad, "/L"]).toString())![0];
+      execFileSync("cmd.exe", ["/d", "/c", `mklink /J "${junta}" "${guid}${destino.slice(unidad.length)}"`], { windowsVerbatimArguments: true });
+    };
+    const preparar = (nombre: string) => {
+      const fuera = path.join(BASE, `${nombre} fuera`);
+      fs.mkdirSync(fuera, { recursive: true });
+      fs.writeFileSync(path.join(fuera, "del usuario.txt"), "no se toca");
+      const dir = path.join(BASE, `${nombre} a borrar`);
+      fs.mkdirSync(path.join(dir, "sub"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "sub", "temporal.txt"), "x");
+      return { fuera, dir };
+    };
+
+    // Node 22 (el del bundle y la CI) borra el destino; el rmSync nativo de Node 24 no lo atraviesa, y ahí el
+    // control se salta: los demás casos siguen probando borrarArbol, que no depende de la versión.
+    it("control: fs.rmSync recursivo de este Node borra el destino", (ctx) => {
+      const { fuera, dir } = preparar("control");
+      juntaVolumen(path.join(dir, "sub", "junta"), fuera);
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      } catch {
+        /* puede acabar en ENOTEMPTY: lo que importa es el destino */
+      }
+      const borrado = !fs.existsSync(path.join(fuera, "del usuario.txt"));
+      if (fs.existsSync(path.join(dir, "sub", "junta"))) fs.rmdirSync(path.join(dir, "sub", "junta"));
+      if (!borrado) ctx.skip(`Node ${process.version} no atraviesa la junction en rmSync`);
+      expect(borrado).toBe(true);
+    });
+
+    it("una junction dentro: se quita el enlace y el destino queda intacto", () => {
+      const { fuera, dir } = preparar("dentro");
+      juntaVolumen(path.join(dir, "sub", "junta"), fuera);
+      borrarArbol(dir);
+      expect(fs.existsSync(dir)).toBe(false);
+      expect(fs.readFileSync(path.join(fuera, "del usuario.txt"), "utf8")).toBe("no se toca");
+    });
+
+    it("la propia carpeta es la junction: solo se quita el enlace", () => {
+      const { fuera } = preparar("raiz");
+      const junta = path.join(BASE, "raiz junta");
+      juntaVolumen(junta, fuera);
+      borrarArbol(junta);
+      expect(fs.existsSync(junta)).toBe(false);
+      expect(fs.readFileSync(path.join(fuera, "del usuario.txt"), "utf8")).toBe("no se toca");
+    });
+
+    it("una carpeta normal se borra entera y una que no existe no falla", () => {
+      const { dir } = preparar("normal");
+      borrarArbol(dir);
+      expect(fs.existsSync(dir)).toBe(false);
+      expect(() => borrarArbol(path.join(BASE, "no existe"))).not.toThrow();
+    });
+  });
+
   it("rutas UNC o de dispositivo: falla cerrado", () => {
-    for (const r of ["\\\\?\\UNC\\srv\\share\\x", "\\\\.\\C:\\x", "\\\\srv\\share\\x"]) expect(() => pasaPorEnlace(r)).toThrow(/red o de dispositivo/);
+    const malas = ["\\\\?\\UNC\\srv\\share\\x", "\\\\.\\C:\\x", "\\\\srv\\share\\x", "//srv/share/x", "//?/UNC/srv/x", "//./C:/x", "\\/srv/x"];
+    // Low-2: con el prefijo de un solo \, path.resolve las haría relativas al cwd y se comprobaría otra ruta.
+    malas.push("\\?\\Volume{00000000-0000-0000-0000-000000000000}\\x", "\\\\?\\GLOBALROOT\\Device\\x");
+    for (const r of malas) expect(() => pasaPorEnlace(r), r).toThrow(/red o de dispositivo/);
     expect(pasaPorEnlace("\\\\?\\" + real)).toBe(false); // \\?\C:\… es local: se acepta
   });
 });

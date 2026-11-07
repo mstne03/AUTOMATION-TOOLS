@@ -8,6 +8,7 @@ import { log } from "./log.js";
 import { argsEntrada, ejecutar, ErrorNavegador, type Herramientas } from "./proceso.js";
 import { HYPERFRAMES_BIN } from "./musica.js";
 import { FONDOS, FONDOS_WEBGPU } from "./formato.js";
+import { borrarArbol } from "./paths.js";
 
 const CACHE = path.join(STATE_DIR, "capacidades.json");
 const SHADERS_JS = path.join(SERVER_ROOT, "plantilla", "vendor", "shaders.iife.js");
@@ -95,7 +96,7 @@ export async function probarGpu(h: Herramientas): Promise<PruebaGpu> {
     sinNavegador = e instanceof ErrorNavegador;
     resultado = { webgpu: false, fecha, detalle: `No se pudo hacer la prueba: ${(e as Error).message}` };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    borrarArbol(dir);
   }
   log.info(`Prueba de GPU: webgpu=${resultado.webgpu} (${resultado.detalle})`);
   // Solo se guarda un resultado medido (con luminancia). Un fallo (render roto, timeout, fotograma
