@@ -17,6 +17,7 @@ import {
   proyectoLeer,
   proyectoListar,
 } from "./proyecto.js";
+import { perfilDuplicar, perfilGuardar, perfilesListar } from "./perfil.js";
 import { vozCoste, vozForma, vozGenerar, vozMuestra, vozQuitarSilencios, voces } from "./voz.js";
 
 export function guionEsquemaTool(): Respuesta {
@@ -61,6 +62,23 @@ export function proyectoLeerTool(cfg: Config, a: { id: string }): Respuesta {
 export function proyectoGuardarTool(cfg: Config, a: { id: string; revision: number; proyecto: unknown }): Respuesta {
   const r = proyectoGuardar(cfg.videoRoot, a);
   return { texto: `Proyecto ${a.id} guardado, revisión ${r.revision}.`, datos: r };
+}
+
+// ---------- Perfil visual (T8) ----------
+
+export function perfilesListarTool(cfg: Config): Respuesta {
+  const perfiles = perfilesListar(cfg.videoRoot);
+  return { texto: `${perfiles.length} perfil(es).`, datos: { perfiles } };
+}
+
+export function perfilGuardarTool(cfg: Config, a: { id: string; perfil: unknown }): Respuesta {
+  const r = perfilGuardar(cfg.videoRoot, a);
+  return { texto: `Perfil ${r.id} guardado.`, datos: r };
+}
+
+export function perfilDuplicarTool(cfg: Config, a: { id: string; nombre?: string }): Respuesta {
+  const r = perfilDuplicar(cfg.videoRoot, a);
+  return { texto: `Perfil ${a.id} duplicado como ${r.id}.`, datos: r };
 }
 
 // ---------- Voz por frases (T5) ----------
@@ -113,6 +131,7 @@ export function resultadoDeError(nombre: string, e: unknown): CallToolResult {
 type Envolver = (nombre: string, fn: () => Respuesta | Promise<Respuesta>) => Promise<CallToolResult>;
 
 export const ID_GUION = z.string().max(40).describe('Id del guion, "g-" más 16 hexadecimales.');
+export const ID_PERFIL = z.string().max(40).describe('Id del perfil: "defecto" o "p-" más 16 hexadecimales.');
 export const ID_PROYECTO = z.string().max(40).describe('Id del proyecto, "video" más tres cifras (video001).');
 
 export function registrarHerramientasProyecto(server: McpServer, cfg: Config, envolver: Envolver): void {
@@ -172,6 +191,30 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
       inputSchema: { id: ID_PROYECTO, revision: z.number().describe("Revisión sobre la que se editó."), proyecto: z.unknown().describe("Proyecto completo.") },
     },
     (a) => envolver("video_proyecto_guardar", () => proyectoGuardarTool(cfg, a)),
+  );
+  // Perfil visual (T8). El id nuevo lo genera siempre el motor: duplicar solo recibe el de origen.
+  server.registerTool(
+    "video_perfiles_listar",
+    { title: "Listar perfiles", description: "Lista los perfiles visuales (nombre, voz, idioma, colores y fuente). \"defecto\" siempre existe. Los que no cumplen el esquema salen con valido:false.", inputSchema: {} },
+    () => envolver("video_perfiles_listar", () => perfilesListarTool(cfg)),
+  );
+  server.registerTool(
+    "video_perfil_guardar",
+    {
+      title: "Guardar perfil",
+      description: "Guarda un perfil que ya existe. Si el `id` del perfil no es el del argumento, codigo \"esquema\" con id_distinto y no se escribe nada; un perfil que no existe es \"no_encontrado\". Colores #RGB/#RRGGBB, fuente de la lista cerrada. Devuelve { id }.",
+      inputSchema: { id: ID_PERFIL, perfil: z.unknown().describe("Perfil { id?, nombre, voz, idioma, colores { fondo, texto, acento, contorno, secundario }, fuente }.") },
+    },
+    (a) => envolver("video_perfil_guardar", () => perfilGuardarTool(cfg, a)),
+  );
+  server.registerTool(
+    "video_perfil_duplicar",
+    {
+      title: "Duplicar perfil",
+      description: "Copia un perfil con un id nuevo que genera el motor (no se puede pedir uno). `nombre` es opcional. Devuelve { id } del nuevo.",
+      inputSchema: { id: ID_PERFIL.describe("Id del perfil que se copia."), nombre: z.string().max(240).optional() },
+    },
+    (a) => envolver("video_perfil_duplicar", () => perfilDuplicarTool(cfg, a)),
   );
   // Voz por frases (T5). Gastan créditos de ElevenLabs: el modelo no las usa (D2, I10) y el gasto exige los caracteres confirmados.
   server.registerTool(

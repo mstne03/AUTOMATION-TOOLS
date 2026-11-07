@@ -6,8 +6,7 @@ import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { validarTema } from "../src/composicion.js";
 import { PERFIL_ID_RE } from "../src/esquema.js";
-import { archivosVideo } from "../src/paths.js";
-import { ErrorAlmacen } from "../src/proyecto.js";
+import { ErrorAlmacen, proyectoListar } from "../src/proyecto.js";
 import { IDIOMAS, PERFIL_DEFECTO, carpetaPerfiles, perfilDuplicar, perfilGuardar, perfilesListar, temaDePerfil, type Perfil } from "../src/perfil.js";
 import { perfilDuplicarTool, perfilGuardarTool, perfilesListarTool } from "../src/herramientas-proyecto.js";
 import type { Config } from "../src/config.js";
@@ -222,9 +221,10 @@ describe("perfil: negativas", () => {
     expect(codigoDe(() => perfilGuardar(RAIZ, { id: p.id, perfil: p })).codigo).toBe("esquema");
   });
 
-  it("la carpeta de perfiles no cuenta como proyecto ni como fichero de vídeo", () => {
+  it("la carpeta de perfiles queda fuera de VIDEO_ROOT: no cuenta como proyecto", () => {
     copia();
-    expect(archivosVideo(RAIZ)).toEqual([]);
+    expect(proyectoListar(RAIZ)).toEqual([]);
+    expect(fs.readdirSync(RAIZ)).toEqual([]);
   });
 });
 
@@ -242,11 +242,15 @@ describe("perfil → tema", () => {
     const b: Perfil = { ...a, colores: { fondo: "#112233", texto: "#EEEEEE", acento: "#FF00AA", contorno: "#000000", secundario: "#445566" }, fuente: "Anton" };
     const pa = plan("", 0.06, undefined, undefined, undefined, temaDePerfil({ ...a, fuente: "Inter Tight" })).p;
     const pb = plan("", 0.06, undefined, undefined, undefined, temaDePerfil(b)).p;
-    const quitarCss = (p: typeof pa) => Object.fromEntries(Object.entries(p.archivos).map(([k, v]) => [k, v.replace(/--[a-z-]+:[^;]*;/g, "")]));
+    // Lo único que puede diferir son los colores y la fuente: con ellos neutralizados, el resto es idéntico.
+    const neutro = (p: typeof pa) =>
+      Object.fromEntries(
+        Object.entries(p.archivos).map(([k, v]) => [k, v.replace(/#[0-9a-fA-F]{3,8}\b/g, "#C").replace(/(Anton|Inter Tight|JetBrains Mono)/g, "F").replace(/(font-weight: |--peso-\w+: )\d+/g, "$1N").replace(/(anton|inter-tight|jetbrains-mono)-latin-\d+-normal/g, "f")]),
+      );
     expect(pa.archivos["index.html"]).not.toBe(pb.archivos["index.html"]);
     expect(pb.archivos["index.html"]).toMatch(/#FF00AA/i);
     expect(pa.archivos["index.html"]).not.toMatch(/#FF00AA/i);
-    expect(quitarCss(pa)).toEqual(quitarCss(pb));
+    expect(neutro(pa)).toEqual(neutro(pb));
     expect(pa.duracion).toBe(pb.duracion);
   });
 });

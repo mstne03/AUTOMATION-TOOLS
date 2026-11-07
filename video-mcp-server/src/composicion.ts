@@ -46,7 +46,7 @@ const DIRECCIONES: [number, number][] = [
 // "nebula" usa FractalNoise: el shader Nebula del catálogo es un efecto de forma (una esfera de cristal), no un fondo.
 const SHADERS: Record<string, string> = { aurora: "Aurora", plasma: "Plasma", nebula: "FractalNoise", mesh: "MeshGradient" };
 
-const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+export const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const Color = z.string().regex(COLOR_RE);
 // Lista cerrada: una familia solo existe con la cara que trae plantilla/fuentes/.
 const cara = <F extends string, A extends string, P extends number>(familia: F, archivo: A, peso: P) =>
@@ -56,6 +56,12 @@ const Fuente = z.union([
   cara("Inter Tight", "inter-tight-latin-800-normal.woff2", 800),
   cara("JetBrains Mono", "jetbrains-mono-latin-700-normal.woff2", 700),
 ]);
+/** Archivo y peso de cada familia de la lista cerrada (los que trae plantilla/fuentes/). */
+export const CARAS_FUENTE = {
+  Anton: { archivo: "anton-latin-400-normal.woff2", peso: 400 },
+  "Inter Tight": { archivo: "inter-tight-latin-800-normal.woff2", peso: 800 },
+  "JetBrains Mono": { archivo: "jetbrains-mono-latin-700-normal.woff2", peso: 700 },
+} as const;
 const Tamano = z.number().int().min(8).max(400);
 const TEMA = z.strictObject({
   nombre: z.string().max(200).optional(),
