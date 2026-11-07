@@ -44,6 +44,23 @@ function esperarPuerto(url: string, ms: number, init?: RequestInit): Promise<voi
   });
 }
 
+/** Entorno del sidecar de los E2E. Nunca hereda credenciales reales: toda variable `*_API_KEY` o
+ *  `*_TOKEN` del entorno de Marc se sustituye por un valor falso, y ElevenLabs va al mock.
+ *
+ *  AVISO (hallazgo de seguridad de T14): mientras T5/T11 no hagan que el motor lea
+ *  `VIDEO_PRUEBAS_TTS_URL`, el motor sigue apuntando a `api.elevenlabs.io`. Por eso la clave se
+ *  neutraliza aquí: ningún E2E de voz debe poder llegar a la API real con una clave real. */
+export function entornoSidecar(heredado: NodeJS.ProcessEnv, extra: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(heredado)) {
+    if (v === undefined) continue;
+    env[k] = /(_API_KEY|_TOKEN)$/i.test(k) ? "e2e-falsa" : String(v);
+  }
+  env.ELEVENLABS_API_KEY = "e2e-eleven-falsa";
+  env.ELEVENLABS_VOICE_ID = "voz-e2e";
+  return { ...env, ...extra };
+}
+
 export default async function globalSetup() {
   const raiz = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   limpiarEstadosHuerfanos();
@@ -55,24 +72,25 @@ export default async function globalSetup() {
   const mock = await startAnthropicMock();
 
   // Motor de vídeo REAL (no el falso del backend): se compila y el sidecar lo lanza por
-  // APP_BACKEND_VIDEO_CMD. ElevenLabs va a un servidor local para no gastar créditos ni salir a la red.
+  // APP_BACKEND_VIDEO_CMD. ElevenLabs va a un servidor local (VIDEO_PRUEBAS_TTS_URL) y las claves reales no se heredan.
   const motorDir = resolve(raiz, "..", "video-mcp-server");
   const compilar = spawnSync("npm", ["run", "build"], { cwd: motorDir, shell: true, stdio: "inherit" });
   if (compilar.status !== 0) throw new Error("No se pudo compilar el motor de vídeo (npm run build en video-mcp-server).");
   const eleven = await startElevenLabsMock();
-  process.env.VIDEO_PRUEBAS_TTS_URL = eleven.url;
+  // Fail-closed: si el mock no responde, el motor no tendría adónde ir salvo la API real.
+  const mockVivo = await fetch(`${eleven.url}/__llamadas`).then((r) => r.ok).catch(() => false);
+  if (!mockVivo) throw new Error(`El ElevenLabs falso no responde en ${eleven.url}: se aborta para no llegar a api.elevenlabs.io.`);
 
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
     cwd: resolve(raiz, "..", "app-backend"),
-    env: {
-      ...process.env,
+    env: entornoSidecar(process.env, {
       APP_BACKEND_SECRETS: "file",
       APP_BACKEND_DIR: stateDir,
       APP_BACKEND_TOKEN: TOKEN,
       ANTHROPIC_BASE_URL: mock.url,
       APP_BACKEND_VIDEO_CMD: JSON.stringify(["node", join(motorDir, "dist", "index.js")]),
       VIDEO_PRUEBAS_TTS_URL: eleven.url,
-    },
+    }),
     shell: true,
     stdio: ["ignore", "pipe", "inherit"],
   });

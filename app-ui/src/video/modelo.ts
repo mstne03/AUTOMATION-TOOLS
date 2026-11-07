@@ -101,9 +101,16 @@ export interface Aviso {
 // ---------- Preview ----------
 
 /** El `src` del iframe solo sale de aquí: `http://127.0.0.1:4781[0-3]/p/…` (M-D1, I8). */
-const PREVIEW_RE = /^http:\/\/127\.0\.0\.1:4781[0-3]\/p\/[A-Za-z0-9._~\-/?=&%]*$/;
+const PREVIEW_RE = /^http:\/\/127\.0\.0\.1:4781[0-3]\/p\/[A-Za-z0-9_-]+\/[A-Za-z0-9._~\-/?=&%]*$/;
 export function aPreviewUrl(url: unknown): string | null {
-  if (typeof url !== "string" || !PREVIEW_RE.test(url) || url.includes("..")) return null;
+  if (typeof url !== "string" || !PREVIEW_RE.test(url) || url.includes("..") || /%2e|%2f|%5c/i.test(url) || url.includes("//", 7)) return null;
+  // El parser decide: si normaliza algo (segmentos de punto, mayúsculas…), la URL no es de fiar.
+  try {
+    const u = new URL(url);
+    if (u.href !== url || u.hostname !== "127.0.0.1" || u.username || u.password) return null;
+  } catch {
+    return null;
+  }
   return url;
 }
 
@@ -133,6 +140,8 @@ export interface EscenaGuionUi {
   /** Campos de la escena base tal como llegan; la UI solo los muestra como texto. */
   base: Record<string, Plano> & { texto?: string };
   recurso: { tipo: string; queDebeSalir: string } | null;
+  /** Recurso tal como llegó, atado a su escena: reordenar o borrar escenas no lo descoloca. */
+  recursoCrudo: Plano | null;
 }
 
 export interface GuionVideoUi {
@@ -149,12 +158,10 @@ const texto = (v: unknown) => (typeof v === "string" ? v : "");
 export function aGuionVideo(j: unknown): GuionVideoUi | null {
   if (!esObjeto(j) || typeof j.titulo !== "string" || !j.titulo || !Array.isArray(j.escenas) || !j.escenas.length) return null;
   const escenas: EscenaGuionUi[] = [];
-  const extra: Record<string, Plano[]> = {};
   for (const e of j.escenas) {
     if (!esObjeto(e) || !Array.isArray(e.frases) || !e.frases.every((f) => typeof f === "string") || !esObjeto(e.base) || typeof e.base.tipo !== "string") return null;
     const r = esObjeto(e.recurso) ? { tipo: texto(e.recurso.tipo), queDebeSalir: texto(e.recurso.que_debe_salir) } : null;
-    escenas.push({ tipo: e.base.tipo, frases: [...(e.frases as string[])], base: plano(e.base) as EscenaGuionUi["base"], recurso: r });
-    (extra.recursos ??= []).push(e.recurso === undefined ? null : plano(e.recurso));
+    escenas.push({ tipo: e.base.tipo, frases: [...(e.frases as string[])], base: plano(e.base) as EscenaGuionUi["base"], recurso: r, recursoCrudo: e.recurso === undefined ? null : plano(e.recurso) });
   }
   const raiz = plano(j) as Record<string, Plano>;
   const ui: GuionVideoUi = {
@@ -166,10 +173,7 @@ export function aGuionVideo(j: unknown): GuionVideoUi | null {
         ...raiz,
         titulo: ui.titulo,
         gancho: ui.gancho,
-        escenas: ui.escenas.map((e, i) => {
-          const recurso = extra.recursos[i];
-          return { frases: e.frases, base: { ...e.base, tipo: e.tipo }, ...(recurso ? { recurso } : {}) };
-        }),
+        escenas: ui.escenas.map((e) => ({ frases: e.frases, base: { ...e.base, tipo: e.tipo }, ...(e.recursoCrudo ? { recurso: e.recursoCrudo } : {}) })),
       };
     },
   };

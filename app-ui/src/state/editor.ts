@@ -34,21 +34,68 @@ let guardando = false;
 /** Se incrementa en cada cambio: si cambia durante un PUT, hay que volver a guardar. */
 let version = 0;
 
+/** Época del proyecto abierto: sube en cada `cargar`/`reiniciarEditor`. Las respuestas de PUT/GET
+ *  de una época anterior se descartan, para que no se apliquen al proyecto que hay ahora. */
+let epoca = 0;
+/** Ediciones de otros proyectos que no se pudieron guardar al cambiar: borrador de su propio id. */
+const borradores = new Map<string, Proyecto>();
+
 export function vincularCliente(c: Client) {
   cliente = c;
 }
 
-export function cargar(proyecto: Proyecto) {
+/** Solo para los tests: `reiniciarEditor` no desvincula el cliente global. */
+export function desvincularCliente() {
+  cliente = null;
+  borradores.clear();
+}
+
+/** Guarda en segundo plano la edición pendiente del proyecto que se abandona; si no puede, la
+ *  conserva como borrador de ese proyecto (se ofrece al volver a abrirlo). Nunca en silencio. */
+function salvarSaliente() {
+  const st = useEditor.getState();
+  if (st.conflicto && st.borrador) {
+    borradores.set(st.borrador.id, st.borrador);
+    return;
+  }
+  if (!st.proyecto || (st.guardado !== "pendiente" && st.guardado !== "error")) return;
+  const p = st.proyecto;
+  const c = cliente;
+  if (!c) {
+    borradores.set(p.id, p);
+    return;
+  }
+  c.videoProyectoGuardar(p.id, { revision: st.revision, proyecto: { ...p, revision: st.revision } }).catch(() => {
+    borradores.set(p.id, p);
+  });
+}
+
+function abrir(proyecto: Proyecto) {
   cancelarTimer();
+  salvarSaliente();
+  epoca++;
+  guardando = false;
   version = 0;
-  useEditor.setState({ ...vacio(), proyecto: structuredClone(proyecto), revision: proyecto.revision });
+  const borrador = borradores.get(proyecto.id) ?? null;
+  borradores.delete(proyecto.id);
+  useEditor.setState({
+    ...vacio(),
+    proyecto: structuredClone(proyecto),
+    revision: proyecto.revision,
+    ...(borrador ? { borrador, conflicto: true, guardado: "error" as const } : {}),
+  });
+}
+
+export function cargar(proyecto: Proyecto) {
+  abrir(proyecto);
 }
 
 export function reiniciarEditor() {
   cancelarTimer();
+  salvarSaliente();
+  epoca++;
   guardando = false;
   version = 0;
-  cliente = null;
   useEditor.setState(vacio());
 }
 
@@ -124,13 +171,19 @@ export function descartarBorrador() {
 export async function guardar() {
   cancelarTimer();
   const st = useEditor.getState();
-  if (!cliente || !st.proyecto || guardando || st.conflicto) return;
+  if (!st.proyecto || guardando || st.conflicto) return;
+  if (!cliente) {
+    useEditor.setState({ guardado: "error" });
+    return;
+  }
   guardando = true;
   const enviado = version;
+  const mia = epoca;
   const proyecto = st.proyecto;
   useEditor.setState({ guardado: "guardando" });
   try {
     const r = await cliente.videoProyectoGuardar(proyecto.id, { revision: st.revision, proyecto: { ...proyecto, revision: st.revision } });
+    if (mia !== epoca) return; // se cambió de proyecto durante el PUT: `abrir` ya reinició el estado
     const actual = useEditor.getState().proyecto;
     useEditor.setState({ revision: r.revision, proyecto: actual ? { ...actual, revision: r.revision } : actual });
     guardando = false;
@@ -141,19 +194,32 @@ export async function guardar() {
       useEditor.setState({ guardado: "guardado" });
     }
   } catch (e) {
+    if (mia !== epoca) {
+      borradores.set(proyecto.id, proyecto); // el PUT del proyecto anterior falló: no se pierde
+      return;
+    }
     guardando = false;
-    if (e instanceof ApiError && e.status === 409) await alConflicto(proyecto);
+    if (e instanceof ApiError && e.status === 409) await alConflicto(proyecto, mia);
     else useEditor.setState({ guardado: "error" });
   }
 }
 
 /** 409: la edición local queda como borrador y el proyecto pasa a la versión del servidor. */
-async function alConflicto(local: Proyecto) {
-  const actualLocal = useEditor.getState().proyecto ?? local;
+async function alConflicto(local: Proyecto, mia: number) {
   try {
     const remoto = await cliente!.videoProyecto(local.id);
+    if (mia !== epoca) {
+      borradores.set(local.id, useEditor.getState().proyecto?.id === local.id ? useEditor.getState().proyecto! : local);
+      return;
+    }
+    // La edición local se toma DESPUÉS del GET: lo escrito mientras duraba va al borrador.
+    const actualLocal = useEditor.getState().proyecto ?? local;
     useEditor.setState({ proyecto: remoto, revision: remoto.revision, borrador: actualLocal, conflicto: true, guardado: "error", historial: [], futuro: [] });
   } catch {
-    useEditor.setState({ guardado: "error", borrador: actualLocal, conflicto: true });
+    if (mia !== epoca) {
+      borradores.set(local.id, local);
+      return;
+    }
+    useEditor.setState({ guardado: "error", borrador: useEditor.getState().proyecto ?? local, conflicto: true });
   }
 }

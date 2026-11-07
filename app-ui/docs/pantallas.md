@@ -533,6 +533,11 @@ La verificación E2E de cada grupo la escribe el lane que lo implementa, en el m
 por `marco.spec.ts`. Utilidades compartidas: `e2e/video-comun.ts` (guion y proyecto de ejemplo,
 atajos sobre la API real) y `e2e/elevenlabs-mock.ts` (ElevenLabs falso, `VIDEO_PRUEBAS_TTS_URL`).
 
+Seguridad de los E2E: `global-setup` lanza el sidecar sin heredar ninguna variable `*_API_KEY` ni
+`*_TOKEN` (las sustituye por valores falsos) y aborta si el mock de ElevenLabs no responde. Mientras
+T5 no haga que el motor lea `VIDEO_PRUEBAS_TTS_URL`, ningún E2E de voz debe poder llegar a
+`api.elevenlabs.io`; no se desactiva esa defensa.
+
 ## Regresión visual
 
 `e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `ajustes-video` (Ajustes desplazado a «Motor de vídeo»), `onboarding` y el catálogo

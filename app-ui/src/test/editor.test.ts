@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "../api/client";
-import { cargar, deshacer, editar, rehacer, reiniciarEditor, useEditor, vincularCliente } from "../state/editor";
+import { cargar, deshacer, desvincularCliente, editar, guardar as guardarAhora, rehacer, reiniciarEditor, useEditor, vincularCliente } from "../state/editor";
 import { aGuionVideo, aPreviewUrl, type Proyecto } from "../video/modelo";
 
 const proyecto = (titulo = "Cocina"): Proyecto => ({
@@ -34,6 +34,7 @@ describe("store del editor", () => {
   });
   afterEach(() => {
     reiniciarEditor();
+    desvincularCliente();
     vi.useRealTimers();
   });
 
@@ -107,6 +108,84 @@ describe("store del editor", () => {
     expect(useEditor.getState()).toMatchObject({ guardado: "error", conflicto: false });
     expect(titulo()).toBe("Mía");
   });
+
+  describe("cambio de proyecto", () => {
+    const otro = (): Proyecto => ({ ...proyecto("Otro"), id: "video002", revision: 10 });
+
+    it("cambiar_de_proyecto_con_put_en_vuelo: la respuesta no se aplica al proyecto nuevo", async () => {
+      let soltar!: () => void;
+      guardar.mockImplementationOnce(() => new Promise((ok) => { soltar = () => ok({ revision: 4, avisos: [] }); }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      cargar(otro());
+      soltar();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEditor.getState()).toMatchObject({ revision: 10, guardado: "guardado" });
+      expect(useEditor.getState().proyecto).toMatchObject({ id: "video002", revision: 10 });
+    });
+
+    it("cambiar_de_proyecto_con_409: el 409 del anterior no pisa el proyecto abierto", async () => {
+      let fallar!: () => void;
+      guardar.mockImplementationOnce(() => new Promise((_, ko) => { fallar = () => ko(new ApiError(409, "Revisión antigua.")); }));
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      cargar(otro());
+      fallar();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(leer).not.toHaveBeenCalled();
+      expect(useEditor.getState()).toMatchObject({ conflicto: false, borrador: null, revision: 10 });
+      expect(useEditor.getState().proyecto?.id).toBe("video002");
+    });
+
+    it("cambiar con una edición pendiente la guarda antes, con su propia revisión", async () => {
+      editar((p) => { p.titulo = "Mía"; });
+      cargar(otro());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guardar).toHaveBeenCalledTimes(1);
+      expect(guardar.mock.calls[0][0]).toBe("video001");
+      expect(guardar.mock.calls[0][1]).toMatchObject({ revision: 3, proyecto: { titulo: "Mía" } });
+      expect(useEditor.getState().proyecto?.id).toBe("video002");
+    });
+
+    it("si no se puede guardar al cambiar, la edición queda como borrador de su proyecto", async () => {
+      guardar.mockRejectedValueOnce(new ApiError(503, "Sin motor."));
+      editar((p) => { p.titulo = "Mía"; });
+      cargar(otro());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEditor.getState().borrador).toBeNull();
+      cargar(proyecto());
+      expect(useEditor.getState()).toMatchObject({ conflicto: true });
+      expect(useEditor.getState().borrador?.titulo).toBe("Mía");
+    });
+
+    it("edicion_durante_get_de_conflicto_va_al_borrador", async () => {
+      guardar.mockRejectedValueOnce(new ApiError(409, "Revisión antigua."));
+      let servir!: (p: Proyecto) => void;
+      leer.mockImplementationOnce(() => new Promise((ok) => { servir = ok; }));
+      editar((p) => { p.titulo = "Mía"; });
+      await vi.advanceTimersByTimeAsync(800);
+      editar((p) => { p.titulo = "Mía y más"; }); // durante el GET
+      servir({ ...proyecto("Del servidor"), revision: 7 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEditor.getState().borrador?.titulo).toBe("Mía y más");
+      expect(titulo()).toBe("Del servidor");
+    });
+
+    it("guardar_sin_cliente_marca_error", async () => {
+      desvincularCliente();
+      editar((p) => { p.titulo = "A"; });
+      await guardarAhora();
+      expect(useEditor.getState().guardado).toBe("error");
+    });
+
+    it("reiniciarEditor_no_desvincula_el_cliente", async () => {
+      reiniciarEditor();
+      cargar(proyecto());
+      editar((p) => { p.titulo = "A"; });
+      await vi.advanceTimersByTimeAsync(800);
+      expect(guardar).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("aPreviewUrl", () => {
@@ -122,6 +201,11 @@ describe("aPreviewUrl", () => {
       "http://127.0.0.1:47810@evil.com/p/x",
       "http://127.0.0.1:47810/otro/x",
       "http://127.0.0.1:47810/p/../x",
+      "http://127.0.0.1:47810/p/%2e%2e/%2e%2e/x",
+      "http://127.0.0.1:47810/p/.%2E/x",
+      "http://127.0.0.1:47810/p/a%2Fb",
+      "http://127.0.0.1:47810/p//x",
+      "http://127.0.0.1:47810/p/",
       "http://127.0.0.1:47810/p/x\\y",
       "javascript:alert(1)",
       "//127.0.0.1:47810/p/x",
@@ -168,5 +252,14 @@ describe("aGuionVideo", () => {
     expect(cuerpo.titulo).toBe("Receta");
     expect(cuerpo.escenas[0].frases).toEqual(["Editada."]);
     expect(Object.keys(cuerpo)).not.toContain("__proto__");
+  });
+
+  it("el recurso viaja con su escena al reordenar", () => {
+    const g = aGuionVideo(guion)!;
+    g.escenas.reverse();
+    const cuerpo = g.aCuerpo() as { escenas: { base: { tipo: string }; recurso?: { que_debe_salir: string } }[] };
+    expect(cuerpo.escenas[0].base.tipo).toBe("cartel");
+    expect(cuerpo.escenas[0].recurso).toBeUndefined();
+    expect(cuerpo.escenas[1].recurso?.que_debe_salir).toBe("Un plato");
   });
 });
