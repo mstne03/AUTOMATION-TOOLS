@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { entornoSidecar } from "../../e2e/global-setup";
+import { entornoSidecar } from "../../e2e/entorno";
 
 describe("entorno del sidecar en los E2E", () => {
   it("no_hereda_claves_reales", () => {
