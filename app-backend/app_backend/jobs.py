@@ -4,8 +4,9 @@ Un worker `asyncio` ejecuta los jobs de uno en uno en un hilo; el estado y el
 progreso viven en SQLite para sobrevivir a reinicios y poder consultarse por HTTP.
 El progreso llega por `youtube_mcp.utils.progress` (ContextVar, se propaga al hilo).
 
-ponytail: un solo worker; las subidas van limitadas por ancho de banda y la
-transcripcion por GPU, asi que paralelizar no aporta. Varios workers si hiciera falta.
+ponytail: un worker por carril. Subidas y transcripcion comparten el carril por defecto (van
+limitadas por ancho de banda y GPU); el render de video tiene el suyo (`carriles`), para que un
+render de minutos no bloquee una subida. Los tipos `internos` solo los encola el backend.
 """
 
 import asyncio
@@ -35,13 +36,25 @@ CREATE TABLE IF NOT EXISTS jobs (
 """
 
 
+class ErrorPublico(Exception):
+    """Error con mensaje ya legible y sin rutas: se guarda tal cual en el job (sin el nombre de la clase)."""
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class Jobs:
-    def __init__(self, path: str | Path, runners: dict[str, Callable[..., Any]]):
+    def __init__(
+        self,
+        path: str | Path,
+        runners: dict[str, Callable[..., Any]],
+        carriles: dict[str, str] | None = None,
+        internos: set[str] | frozenset[str] = frozenset(),
+    ):
         self.runners = runners
+        self.carriles = dict(carriles or {})
+        self.internos = frozenset(internos)
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -54,31 +67,37 @@ class Jobs:
                 (_now(),),
             )
             self._db.commit()
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._colas: dict[str, asyncio.Queue[str]] = {
+            c: asyncio.Queue() for c in {"default", *self.carriles.values()}
+        }
         self._done: dict[str, asyncio.Event] = {}
-        self._worker: asyncio.Task | None = None
+        self._workers: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------ ciclo
 
     def start(self) -> None:
-        if self._worker is None:
-            self._worker = asyncio.create_task(self._run())
+        if not self._workers:
+            self._workers = [asyncio.create_task(self._run(c)) for c in self._colas]
 
     async def stop(self) -> None:
-        if self._worker is not None:
-            self._worker.cancel()
+        for w in self._workers:
+            w.cancel()
+        for w in self._workers:
             try:
-                await self._worker
+                await w
             except asyncio.CancelledError:
                 pass
-            self._worker = None
+        self._workers = []
         self._db.close()
 
     # ------------------------------------------------------------------ API
 
-    def enqueue(self, kind: str, args: dict) -> dict:
+    def enqueue(self, kind: str, args: dict, interno: bool = False) -> dict:
+        if kind in self.internos and not interno:
+            raise ValueError(f"El tipo de job {kind} es interno: no se puede encolar desde fuera.")
         if kind not in self.runners:
-            raise ValueError(f"Tipo de job desconocido: {kind}. Validos: {sorted(self.runners)}")
+            validos = sorted(set(self.runners) - self.internos)
+            raise ValueError(f"Tipo de job desconocido: {kind}. Validos: {validos}")
         job_id = secrets.token_urlsafe(8)
         now = _now()
         self._write(
@@ -86,7 +105,7 @@ class Jobs:
             (job_id, kind, json.dumps(args, ensure_ascii=False), "queued", now, now),
         )
         self._done[job_id] = asyncio.Event()
-        self._queue.put_nowait(job_id)
+        self._colas[self.carriles.get(kind, "default")].put_nowait(job_id)
         return self.get(job_id)
 
     def get(self, job_id: str) -> dict:
@@ -123,9 +142,10 @@ class Jobs:
             (round(fraction, 3), _now(), job_id),
         )
 
-    async def _run(self) -> None:
+    async def _run(self, carril: str) -> None:
+        cola = self._colas[carril]
         while True:
-            job_id = await self._queue.get()
+            job_id = await cola.get()
             job = self.get(job_id)
             self._write(
                 "UPDATE jobs SET status='running', updated_at=? WHERE id=?", (_now(), job_id)
@@ -136,6 +156,8 @@ class Jobs:
                     self._finish(job_id, "failed", error=str(result["error"]))
                 else:
                     self._finish(job_id, "done", result=result)
+            except ErrorPublico as e:
+                self._finish(job_id, "failed", error=str(e))
             except Exception as e:  # noqa: BLE001 - el error se guarda en el job
                 self._finish(job_id, "failed", error=f"{type(e).__name__}: {e}")
             finally:

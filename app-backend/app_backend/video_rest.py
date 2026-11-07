@@ -12,16 +12,20 @@ import logging
 import os
 import re
 import secrets
+import threading
+import time
 from collections import defaultdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi import Path as RutaPath
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
+from youtube_mcp.utils import progress
 
 from app_backend import config, preview, video
+from app_backend.jobs import ErrorPublico
 from app_backend.navegador import _borrar, comprobar_ancestros, es_enlace
 
 log = logging.getLogger("app_backend.video")
@@ -32,10 +36,15 @@ PROYECTO = r"^video[0-9]{3}$"  # solo ASCII: `\d` aceptaría dígitos Unicode
 GUION = r"^g-[0-9a-f]{16}$"
 PERFIL = r"^(defecto|p-[0-9a-f]{16})$"
 RECURSO = r"^r-[0-9a-f]{16}$"
-BANDEJA = r"^b-[0-9a-f]{16}$"  # SIMULADO hasta T13
+BANDEJA = r"^[0-9a-f]{32}$"  # formato de T13: `<estado>/video/bandeja/<32hex>.bin` (simulado hasta que llegue T13)
+FRASE = r"^[A-Za-z0-9_-]{1,40}$"  # ids de frase (el motor los acota a 40 caracteres)
+VOZ_ID = r"^[A-Za-z0-9]{10,40}$"  # `VOICE_ID_RE` del motor
 ID_URL = r"^[A-Za-z0-9_-]{1,64}$"  # ids de servidor de las rutas anteriores al módulo de vídeo
 
 LIMITE_CUERPO = 1024 * 1024  # 1 MiB
+DEADLINE_RENDER = 6 * 3600.0  # sobre el peor caso de 180 s de vídeo (T11); los tests lo acortan
+SONDEO_RENDER = 1.0  # segundos entre sondeos de `video_estado_render`
+MAX_FRASES = 540  # 90 escenas × 6 frases
 PROFUNDIDAD_MAXIMA = 16
 CSP = "sandbox; default-src 'none'"
 _RUTA_PROBLEMA = re.compile(r"[A-Za-z0-9_]{1,40}(\.[A-Za-z0-9_]{1,40}){0,8}", re.ASCII)
@@ -43,6 +52,9 @@ _CODIGO_PROBLEMA = re.compile(r"[a-z_]{1,40}", re.ASCII)
 
 IdProyecto = Annotated[str, RutaPath(pattern=PROYECTO)]
 IdGuion = Annotated[str, RutaPath(pattern=GUION)]
+IdPerfil = Annotated[str, RutaPath(pattern=PERFIL)]
+IdRecurso = Annotated[str, RutaPath(pattern=RECURSO)]
+IdFrase = Annotated[str, StringConstraints(pattern=FRASE)]
 
 
 # ------------------------------------------------------------ middleware ASGI
@@ -148,6 +160,59 @@ class PreviewIn(BaseModel):
     webgpu: bool = Field(default=False, strict=True)
 
 
+class CosteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    frases: list[IdFrase] | None = Field(default=None, max_length=MAX_FRASES)
+
+
+class VozIn(BaseModel):
+    """Confirmación de la voz. El plan lo da el motor en `/voz/coste` y el backend nunca lo recalcula."""
+
+    model_config = ConfigDict(extra="forbid")
+    plan_confirmado: str = Field(min_length=1, max_length=100)
+    caracteres_confirmados: int = Field(strict=True, ge=0, le=10**6)
+    frases: list[IdFrase] | None = Field(default=None, max_length=MAX_FRASES)
+    reintentar_facturadas: Any = None  # solo el `true` literal cuenta; cualquier otro valor es false
+
+
+class QuitarSilenciosIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    frase_id: str = Field(pattern=FRASE)
+
+
+class MuestraIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    voiceId: str = Field(pattern=VOZ_ID)
+    plan_confirmado: str = Field(min_length=1, max_length=100)
+    caracteres_confirmados: int = Field(strict=True, ge=0, le=10**6)
+    reintentar_facturada: Any = None
+
+
+class PerfilPutIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    perfil: dict
+
+
+class DuplicarIn(BaseModel):
+    """El id nuevo lo genera siempre el motor (R0-3): el cuerpo no puede pedir uno."""
+
+    model_config = ConfigDict(extra="forbid")
+    nombre: str | None = Field(default=None, max_length=240)
+
+
+class RecursoIn(BaseModel):
+    """La UI nunca envía rutas: solo el id de la bandeja (T13) y la clase."""
+
+    model_config = ConfigDict(extra="forbid")
+    bandeja_id: str = Field(pattern=BANDEJA)
+    clase: Literal["foto", "clip"]
+
+
+class RenderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    modo: Literal["auto", "rapido", "compatible"] = "auto"
+
+
 def _422(mensaje: str, codigo: str = "esquema", problemas: list | None = None) -> HTTPException:
     return HTTPException(422, {"mensaje": mensaje, "codigo": codigo, "problemas": problemas or []})
 
@@ -223,17 +288,39 @@ def _numero_seguro(v: Any, maximo: float) -> float | None:
 
 
 # Mensajes fijos: a la UI nunca llega texto libre del motor ni de una excepción (llevan rutas con el
-# nombre de usuario, p. ej. `C:\\Users\\Marc Serra\\…`). El detalle va solo al log.
+# nombre de usuario, p. ej. `C:\\Users\\Marc Serra\\…`). El detalle va solo al log. TODO error de este módulo
+# lleva `detail: {mensaje, codigo}`: la UI decide por `codigo`, nunca por el texto.
 MENSAJE_503 = "El motor de vídeo no está disponible. Reinicia la aplicación o reinstálala."
 MENSAJE_TIMEOUT = "El motor de vídeo tardó demasiado y se ha reiniciado; vuelve a intentarlo."
 MENSAJE_502 = "El motor de vídeo no pudo completar la acción."
+MENSAJE_SIN_FFMPEG = "Falta ffmpeg en la instalación de SEO Studio: reinstala la aplicación."
+MENSAJE_RENDER_FALLIDO = "El render no se pudo completar. Vuelve a intentarlo; si se repite, reinicia la aplicación."
+MENSAJE_RENDER_TIMEOUT = "El render tardó demasiado y se ha dado por fallido; vuelve a intentarlo."
+MENSAJE_RENDER_CERRADO = "La aplicación se cerró durante el render."
+MENSAJE_FALLO_VOZ = "La generación de la voz se detuvo en una frase; lo ya generado se conserva."
 MENSAJES_503_FIJOS = {video.MENSAJE_DETENIDO, video.MENSAJE_NO_INSTALADO}
+# código del motor -> (HTTP, mensaje fijo, código público). La voz (contrato-voz.md) y los recursos añaden los suyos.
 MENSAJES_POR_CODIGO = {
-    "esquema": (422, "El documento no cumple el esquema."),
-    "conflicto": (409, "El proyecto ha cambiado desde otra fuente; recárgalo."),
-    "coste_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo."),
-    "no_encontrado": (404, "No encontrado."),
+    "esquema": (422, "El documento no cumple el esquema.", "esquema"),
+    "conflicto": (409, "El proyecto ha cambiado desde otra fuente; recárgalo.", "conflicto"),
+    "coste_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo.", "coste_cambiado"),
+    "plan_cambiado": (409, "El coste ha cambiado; revísalo y confirma de nuevo.", "coste_cambiado"),
+    "reintento_facturado": (409, "Hay frases ya cobradas que no se pudieron usar; reintentarlas se cobra otra vez.", "reintento_facturado"),
+    "sin_configurar": (409, "Falta la clave de ElevenLabs: añádela en Ajustes.", "sin_clave"),
+    "voz_pendiente": (409, "Faltan voces por generar.", "voz_pendiente"),
+    "fallo_facturado": (502, "ElevenLabs cobró la muestra, pero no se pudo usar; reintentarla se cobra otra vez.", "fallo_facturado"),
+    "en_uso": (409, "El recurso está en uso en una escena; quítalo de ahí antes de borrarlo.", "recurso_en_uso"),
+    "demasiado_grande": (413, "El archivo supera el tamaño máximo admitido.", "demasiado_grande"),
+    "no_encontrado": (404, "No encontrado.", "no_encontrado"),
 }
+MENSAJE_SIN_VOZ = "Falta elegir la voz: hazlo en el perfil o en Ajustes."
+
+
+def _error(estado: int, mensaje: str, codigo: str, problemas: list | None = None) -> HTTPException:
+    detalle: dict[str, Any] = {"mensaje": mensaje, "codigo": codigo}
+    if problemas is not None:
+        detalle["problemas"] = problemas
+    return HTTPException(estado, detalle)
 
 
 def _problemas_seguros(problemas: list) -> list[dict]:
@@ -253,30 +340,212 @@ def _problemas_seguros(problemas: list) -> list[dict]:
 
 
 def _http(e: video.MotorError) -> HTTPException:
-    """Traduce un error del motor a un mensaje fijo por clase o por `codigo`; el detalle, al log."""
+    """Traduce un error del motor a `{mensaje, codigo}` fijos por clase o por `codigo`; el detalle, al log."""
     if isinstance(e, video.MotorNoDisponible):
         log.warning("Motor de vídeo no disponible: %s", e)
-        return HTTPException(503, str(e) if str(e) in MENSAJES_503_FIJOS else MENSAJE_503)
+        return _error(503, str(e) if str(e) in MENSAJES_503_FIJOS else MENSAJE_503, "no_disponible")
     if isinstance(e, video.MotorTimeout):
         log.warning("Motor de vídeo: timeout: %s", e)
-        return HTTPException(503, MENSAJE_TIMEOUT)
+        return _error(503, MENSAJE_TIMEOUT, "no_disponible")
+    if e.codigo == "sin_configurar" and "Elige la voz" in str(e):
+        return _error(409, MENSAJE_SIN_VOZ, "sin_voz")  # la clave y la voz faltan por motivos distintos
     if e.codigo in MENSAJES_POR_CODIGO:
-        estado, mensaje = MENSAJES_POR_CODIGO[e.codigo]
+        estado, mensaje, codigo = MENSAJES_POR_CODIGO[e.codigo]
         if estado == 422:
-            return HTTPException(
-                422, {"mensaje": mensaje, "codigo": "esquema", "problemas": _problemas_seguros(e.problemas)}
-            )
-        return HTTPException(estado, mensaje)
+            return _error(422, mensaje, codigo, _problemas_seguros(e.problemas))
+        return _error(estado, mensaje, codigo)
+    if e.codigo is None and "ffmpeg" in str(e).lower():
+        log.warning("Motor de vídeo: falta ffmpeg: %s", e)
+        return _error(503, MENSAJE_SIN_FFMPEG, "no_disponible")
     log.warning("Motor de vídeo: error sin tipar: %s", e)
-    return HTTPException(502, MENSAJE_502)
+    return _error(502, MENSAJE_502, "error_motor")
 
 
-async def _llamar(estado, tool: str, args: dict | None = None) -> Any:
+async def _llamar(estado, tool: str, args: dict | None = None, timeout: float | None = None) -> Any:
     try:
-        r = await video.motor_de(estado, tool).llamar(tool, args)
+        r = await video.motor_de(estado, tool).llamar(tool, args, timeout)
     except video.MotorError as e:
         raise _http(e) from None
     return r.datos
+
+
+# ------------------------------------------------- cerrojos de actividad y saneado
+
+_AVISO_CODIGO = re.compile(r"[a-z_]{1,40}", re.ASCII)
+_TEXTO_CORTO = re.compile(r"[A-Za-z0-9_.-]{1,60}", re.ASCII)
+_BASE64 = re.compile(r"[A-Za-z0-9+/=]*", re.ASCII)
+_EXT_RECURSO = {"jpg", "png", "webp", "mp4", "wav", "m4a"}
+_CLASES_RECURSO = {"foto", "clip", "musica"}
+
+
+class Ocupado(Exception):
+    """El proyecto ya tiene una actividad (`render` o `voz`) en curso."""
+
+    def __init__(self, tipo: str) -> None:
+        super().__init__(tipo)
+        self.tipo = tipo
+
+
+class Cerrojos:
+    """`dict[id, "render" | "voz"]` en memoria. Está en el backend porque hay dos procesos de motor.
+
+    Se toma antes de llamar al motor y se suelta siempre en un `finally` (la voz) o al acabar el job (el render).
+    """
+
+    def __init__(self) -> None:
+        self._m: dict[str, str] = {}
+        self._l = threading.Lock()  # el runner del render suelta desde un hilo
+
+    def tomar(self, id: str, tipo: str) -> None:
+        with self._l:
+            actual = self._m.get(id)
+            if actual is not None:
+                raise Ocupado(actual)
+            self._m[id] = tipo
+
+    def soltar(self, id: str, tipo: str) -> None:
+        with self._l:
+            if self._m.get(id) == tipo:
+                del self._m[id]
+
+    def de(self, id: str) -> str | None:
+        with self._l:
+            return self._m.get(id)
+
+
+def _ocupado(e: Ocupado) -> HTTPException:
+    if e.tipo == "render":
+        return _error(409, "Hay un render en curso en este proyecto; espera a que termine.", "render_en_curso")
+    return _error(409, "Se está generando la voz de este proyecto; espera a que termine.", "voz_en_curso")
+
+
+async def _tomar(estado, id: str, tipo: str) -> None:
+    """Toma el cerrojo de actividad bajo el cerrojo del proyecto (el mismo que usan PUT y DELETE)."""
+    async with cerrojo_de(id):
+        try:
+            estado.cerrojos.tomar(id, tipo)
+        except Ocupado as e:
+            raise _ocupado(e) from None
+
+
+def timeout_voz(frases: int) -> float:
+    """Timeout de `video_voz_generar`: `60 + 200 × frases` s, para no matar el motor a media ejecución."""
+    return 60.0 + 200.0 * max(1, frases)
+
+
+def _entero(v: Any, maximo: int = 10**9) -> int:
+    return int(v) if isinstance(v, int | float) and not isinstance(v, bool) and 0 <= v <= maximo else 0
+
+
+def _avisos_seguros(avisos: Any) -> list[dict]:
+    """Solo códigos: un aviso del motor con texto libre (o una ruta) no llega a la UI."""
+    salida = []
+    for a in (avisos if isinstance(avisos, list) else [])[:50]:
+        codigo = a.get("codigo") if isinstance(a, dict) else a
+        if isinstance(codigo, str) and _AVISO_CODIGO.fullmatch(codigo):
+            salida.append({"codigo": codigo})
+    return salida
+
+
+def _inesperada() -> HTTPException:
+    return _error(502, "El motor de vídeo devolvió una respuesta inesperada.", "error_motor")
+
+
+def recurso_seguro(r: Any) -> dict:
+    """Los campos del contrato de un recurso del motor, con tope; cualquier otro (una ruta) se descarta."""
+    if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not re.fullmatch(RECURSO, r["id"]):
+        raise ValueError("recurso sin id válido")
+    if r.get("clase") not in _CLASES_RECURSO or r.get("ext") not in _EXT_RECURSO:
+        raise ValueError("clase o extensión fuera de la lista")
+    nombre = r.get("nombreOriginal")
+    return {
+        "id": r["id"],
+        "clase": r["clase"],
+        "ext": r["ext"],
+        "nombreOriginal": nombre[:120] if isinstance(nombre, str) else "",
+        "ancho": _entero(r.get("ancho"), 8192),
+        "alto": _entero(r.get("alto"), 8192),
+        "duracion": _numero_seguro(r.get("duracion"), 3600) or 0,
+    }
+
+
+def _resultado_render(id: str, modo: str, d: dict) -> dict:
+    """`{ id, duracion, modo, codificador, avisos, reserva }`: nunca la ruta del MP4 ni texto del motor."""
+    cod = d.get("codificador")
+    reserva = d.get("reserva")
+    return {
+        "id": id,
+        "duracion": _numero_seguro(d.get("duracion"), 3600),
+        "modo": d["modo"] if d.get("modo") in ("auto", "rapido", "compatible") else modo,
+        "codificador": cod if isinstance(cod, str) and _TEXTO_CORTO.fullmatch(cod) else None,
+        "avisos": _avisos_seguros(d.get("avisos")),
+        "reserva": [x for x in (reserva if isinstance(reserva, list) else [])[:10] if isinstance(x, str) and _TEXTO_CORTO.fullmatch(x)],
+    }
+
+
+def _estado_proyecto(estado, id: Any, jobs: list[dict]) -> str:
+    """`renderizando` por cerrojo, `listo` si existe el MP4, `error` si el último render falló, `borrador` si no."""
+    if not isinstance(id, str) or not re.fullmatch(PROYECTO, id):
+        return "borrador"
+    if estado.cerrojos.de(id) == "render":
+        return "renderizando"
+    mp4 = config.VIDEO_ROOT / id / "video.mp4"
+    if mp4.is_file() and not es_enlace(mp4):
+        return "listo"
+    ultimo = next((j for j in jobs if j["kind"] == "video_render" and j["args"].get("id") == id), None)
+    return "error" if ultimo is not None and ultimo["status"] == "failed" else "borrador"
+
+
+def crear_runner_render(estado, loop: asyncio.AbstractEventLoop):
+    """Runner `render_job(id, titulo, modo)` del carril `video`: lanza `video_renderizar` y sondea cada segundo.
+
+    Corre en el hilo del job; llama al motor con `run_coroutine_threadsafe`. Suelta el cerrojo del proyecto al acabar,
+    pase lo que pase. Si el motor muere, no responde o supera el deadline, el job falla con un mensaje fijo.
+    """
+
+    def en_el_bucle(coro, espera: float = 600.0):
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(espera)
+
+    def llamar(tool: str, args: dict) -> dict:
+        d = en_el_bucle(video.motor_de(estado, tool).llamar(tool, args)).datos
+        if not isinstance(d, dict):
+            raise video.MotorError("respuesta sin datos")
+        return d
+
+    def render_job(id: str, titulo: str, modo: str) -> dict:
+        try:
+            lanzado = llamar("video_renderizar", {"id": id, "modo": modo})
+            job_id = lanzado.get("job_id")
+            if not isinstance(job_id, str) or not _TEXTO_CORTO.fullmatch(job_id):
+                raise video.MotorError("job_id inválido")
+            limite = time.monotonic() + DEADLINE_RENDER
+            while True:
+                if estado.cierre.is_set():
+                    raise ErrorPublico(MENSAJE_RENDER_CERRADO)
+                if time.monotonic() > limite:
+                    log.warning("Render de %s: deadline superado; se reinicia el motor del render.", id)
+                    try:
+                        en_el_bucle(estado.motor_render.cerrar(), 60.0)
+                    except Exception as e:  # noqa: BLE001 - el job falla igual
+                        log.warning("No se pudo reiniciar el motor del render: %s", e)
+                    raise ErrorPublico(MENSAJE_RENDER_TIMEOUT)
+                d = llamar("video_estado_render", {"job_id": job_id})
+                if d.get("estado") == "terminado":
+                    return _resultado_render(id, modo, d)
+                if d.get("estado") == "error":
+                    log.warning("Render de %s fallido: %s", id, str(d.get("error"))[:300])
+                    raise ErrorPublico(MENSAJE_RENDER_FALLIDO)
+                p = _numero_seguro(d.get("progreso"), 100)
+                if p is not None:
+                    progress.report(p / 100)
+                estado.cierre.wait(SONDEO_RENDER)
+        except (video.MotorError, TimeoutError, OSError, RuntimeError) as e:
+            log.warning("Render de %s: %s", id, e)
+            raise ErrorPublico(MENSAJE_RENDER_FALLIDO) from None
+        finally:
+            estado.cerrojos.soltar(id, "render")
+
+    return render_job
 
 
 # --------------------------------------------------------------------- borrado
@@ -346,7 +615,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
     async def esquema():
         datos = await _llamar(estado, "video_guion_esquema")
         if not isinstance(datos, dict) or not isinstance(datos.get("texto"), str):
-            raise HTTPException(502, "El motor de vídeo devolvió una respuesta inesperada.")
+            raise _inesperada()
         return {"texto": datos["texto"]}
 
     @r.get("/guiones")
@@ -369,7 +638,15 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.get("/proyectos")
     async def listar_proyectos():
-        return await _llamar(estado, "video_proyecto_listar")
+        datos = await _llamar(estado, "video_proyecto_listar")
+        lista = datos.get("proyectos") if isinstance(datos, dict) else datos
+        if not isinstance(lista, list):
+            raise _inesperada()
+        jobs = estado.jobs.list(200) if getattr(estado, "jobs", None) is not None else []
+        for p in lista:
+            if isinstance(p, dict):
+                p["estado"] = await asyncio.to_thread(_estado_proyecto, estado, p.get("id"), jobs)
+        return datos
 
     @r.post("/proyectos", status_code=201)
     async def crear_proyecto(request: Request):
@@ -398,18 +675,20 @@ def crear_router(estado, protegido: list) -> APIRouter:
     @r.delete("/proyectos/{id}")
     async def borrar_proyecto_ruta(id: IdProyecto):
         async with cerrojo_de(id):
+            if (activo := estado.cerrojos.de(id)) is not None:  # render o voz en curso: no se borra por debajo
+                raise _ocupado(Ocupado(activo))
             try:
                 existia = await asyncio.to_thread(borrar_proyecto, id)
             except ProyectoEsEnlace:
-                raise HTTPException(409, "La carpeta del proyecto es un enlace y no se borra.") from None
+                raise _error(409, "La carpeta del proyecto es un enlace y no se borra.", "proyecto_enlace") from None
             except ProyectoEnUso:
-                raise HTTPException(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.") from None
+                raise _error(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.", "proyecto_en_uso") from None
             except OSError as e:
                 log.warning("No se pudo borrar %s: %s", id, e)
-                raise HTTPException(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.") from None
+                raise _error(409, "El proyecto está en uso; ciérralo y vuelve a intentarlo.", "proyecto_en_uso") from None
             estado.claves.cerrar(id)  # la clave de la preview muere con el proyecto
         if not existia:
-            raise HTTPException(404, "Proyecto no encontrado.")
+            raise _error(404, "Proyecto no encontrado.", "no_encontrado")
         return {}
 
     @r.post("/proyectos/{id}/preview")
@@ -418,21 +697,21 @@ def crear_router(estado, protegido: list) -> APIRouter:
         cuerpo = await leer_cuerpo_opcional(request, PreviewIn)
         reserva = estado.reserva_preview
         if reserva is None or reserva.servicio is None:
-            raise HTTPException(503, preview.MENSAJE_SIN_PUERTO)
+            raise _error(503, preview.MENSAJE_SIN_PUERTO, "no_disponible")
         if estado.runtime.obtener() is None:
-            raise HTTPException(503, preview.MENSAJE_RUNTIME)
+            raise _error(503, preview.MENSAJE_RUNTIME, "no_disponible")
         async with cerrojo_de(id):
             datos = await _llamar(estado, "video_montar_preview", {"id": id, "webgpu": cuerpo.webgpu})
             carpeta = datos.get("carpeta") if isinstance(datos, dict) else None
             if not isinstance(carpeta, str) or not re.fullmatch(r"r[0-9]{1,9}", carpeta, re.ASCII):
                 log.warning("video_montar_preview devolvió una carpeta inesperada")
-                raise HTTPException(502, MENSAJE_502)
+                raise _error(502, MENSAJE_502, "error_motor")
             leido = await _llamar(estado, "video_proyecto_leer", {"id": id})
             doc = leido.get("proyecto", leido) if isinstance(leido, dict) else None
             creado = doc.get("creado") if isinstance(doc, dict) else None
             if not isinstance(creado, str) or not 1 <= len(creado) <= 64:
                 log.warning("video_proyecto_leer no devolvió `creado`")
-                raise HTTPException(502, MENSAJE_502)
+                raise _error(502, MENSAJE_502, "error_motor")
             clave = estado.claves.rotar(id, carpeta, creado)
         avisos = [
             {"codigo": a["codigo"]}
@@ -454,5 +733,200 @@ def crear_router(estado, protegido: list) -> APIRouter:
         async with cerrojo_de(id):
             estado.claves.cerrar(id)
         return {}
+
+    # ------------------------------------------------------------------ voz
+    # Contrato: docs/video-fase1/contrato-voz.md. El coste y el `plan` salen del motor; el backend nunca recalcula
+    # el plan tras la confirmación: reenvía lo confirmado y el motor lo compara con su propio cálculo.
+
+    @r.post("/proyectos/{id}/voz/coste")
+    async def coste_voz(id: IdProyecto, request: Request):
+        cuerpo = await leer_cuerpo_opcional(request, CosteIn)
+        args: dict[str, Any] = {"id": id}
+        if cuerpo.frases is not None:
+            args["frases"] = cuerpo.frases
+        d = await _llamar(estado, "video_voz_coste", args)
+        voz = d.get("voz") if isinstance(d, dict) else None
+        vid = voz.get("voiceId") if isinstance(voz, dict) else None
+        if not isinstance(d, dict) or not isinstance(d.get("plan"), str) or len(d["plan"]) > 100 or not (
+            isinstance(vid, str) and re.fullmatch(VOZ_ID, vid)
+        ):
+            raise _inesperada()
+        nombre = vid
+        try:  # el nombre se cruza con el catálogo; sin catálogo (sin clave, sin red) se queda el id
+            catalogo = await _llamar(estado, "video_voces")
+            for v in catalogo.get("voces", []) if isinstance(catalogo, dict) else []:
+                if isinstance(v, dict) and v.get("id") == vid and isinstance(v.get("nombre"), str) and v["nombre"]:
+                    nombre = v["nombre"][:80]
+        except HTTPException:
+            pass
+
+        def ids(xs: list) -> list[str]:
+            return [x for x in xs if isinstance(x, str) and re.fullmatch(FRASE, x)][:MAX_FRASES]
+
+        fallidas = [f.get("fraseId") if isinstance(f, dict) else f for f in d.get("fallidasFacturadas") or []]
+        return {
+            "pendientes": ids(d.get("pendientes") or []),
+            "caracteres": _entero(d.get("caracteres")),
+            "caracteresRefacturados": _entero(d.get("caracteresRefacturados")),
+            "fallidasFacturadas": ids(fallidas),
+            "plan": d["plan"],
+            "voz": {"id": vid, "nombre": nombre},
+        }
+
+    @r.post("/proyectos/{id}/voz")
+    async def generar_voz(id: IdProyecto, request: Request):
+        cuerpo = await leer_cuerpo(request, VozIn)
+        await _tomar(estado, id, "voz")
+        try:
+            args: dict[str, Any] = {
+                "id": id,
+                "caracteresConfirmados": cuerpo.caracteres_confirmados,
+                "planConfirmado": cuerpo.plan_confirmado,
+                "reintentarFacturadas": cuerpo.reintentar_facturadas is True,
+            }
+            if cuerpo.frases is not None:
+                args["frases"] = cuerpo.frases
+            # Cada frase tiene al menos un carácter: sin ámbito, el tope de frases lo da lo confirmado.
+            n = len(cuerpo.frases) if cuerpo.frases is not None else min(MAX_FRASES, max(1, cuerpo.caracteres_confirmados))
+            d = await _llamar(estado, "video_voz_generar", args, timeout=timeout_voz(n))
+        finally:
+            estado.cerrojos.soltar(id, "voz")
+        if not isinstance(d, dict):
+            raise _inesperada()
+        salida: dict[str, Any] = {"generadas": _entero(d.get("generadas")), "caracteresFacturados": _entero(d.get("caracteresFacturados"))}
+        f = d.get("fallo")
+        if isinstance(f, dict):
+            fid = f.get("fraseId")
+            facturada = f.get("facturada") is True
+            log.warning("Voz de %s: la generación se cortó en %s (facturada=%s): %s", id, fid, facturada, str(f.get("mensaje"))[:300])
+            salida["fallo"] = {
+                "fraseId": fid if isinstance(fid, str) and re.fullmatch(FRASE, fid) else "",
+                "facturada": facturada,
+                "codigo": "fallo_facturado" if facturada else "fallo_voz",
+                "mensaje": MENSAJE_FALLO_VOZ,
+            }
+        return salida
+
+    @r.post("/proyectos/{id}/voz/quitar-silencios")
+    async def quitar_silencios(id: IdProyecto, request: Request):
+        """El motor guarda el proyecto (sube su revisión) y no la devuelve: la UI vuelve a pedir el proyecto."""
+        cuerpo = await leer_cuerpo(request, QuitarSilenciosIn)
+        await _tomar(estado, id, "voz")
+        try:
+            async with cerrojo_de(id):
+                d = await _llamar(estado, "video_voz_quitar_silencios", {"id": id, "fraseId": cuerpo.frase_id})
+        finally:
+            estado.cerrojos.soltar(id, "voz")
+        rec = d.get("recorte") if isinstance(d, dict) else None
+        inicio = _numero_seguro(rec.get("inicio"), 3600) if isinstance(rec, dict) else None
+        fin = _numero_seguro(rec.get("fin"), 3600) if isinstance(rec, dict) else None
+        if inicio is None or fin is None:
+            raise _inesperada()
+        return {"recorte": {"inicio": inicio, "fin": fin}}
+
+    @r.get("/voces")
+    async def listar_voces():
+        d = await _llamar(estado, "video_voces")
+        salida = []
+        for v in (d.get("voces") if isinstance(d, dict) else None) or []:
+            if isinstance(v, dict) and isinstance(v.get("id"), str) and re.fullmatch(VOZ_ID, v["id"]):
+                salida.append(
+                    {
+                        "id": v["id"],
+                        "nombre": str(v.get("nombre") or v["id"])[:80],
+                        "idioma": str(v.get("idioma") or "")[:20],
+                        "planMuestra": str(v.get("planMuestra") or "")[:100],
+                    }
+                )
+        return {"voces": salida[:500]}
+
+    @r.post("/voces/muestra")
+    async def muestra_voz(request: Request):
+        cuerpo = await leer_cuerpo(request, MuestraIn)
+        d = await _llamar(
+            estado,
+            "video_voz_muestra",
+            {
+                "voiceId": cuerpo.voiceId,
+                "caracteresConfirmados": cuerpo.caracteres_confirmados,
+                "planConfirmado": cuerpo.plan_confirmado,
+                "reintentarFacturada": cuerpo.reintentar_facturada is True,
+            },
+        )
+        audio = d.get("audioBase64") if isinstance(d, dict) else None
+        if not isinstance(audio, str) or len(audio) > 4_000_000 or not _BASE64.fullmatch(audio):
+            raise _inesperada()
+        return {"audioBase64": audio, "caracteres": _entero(d.get("caracteres")), "cache": d.get("cache") is True}
+
+    # --------------------------------------------------------------- perfiles
+
+    @r.get("/perfiles")
+    async def listar_perfiles():
+        d = await _llamar(estado, "video_perfiles_listar")
+        if not isinstance(d, dict) or not isinstance(d.get("perfiles"), list):
+            raise _inesperada()
+        return d
+
+    @r.post("/perfiles/{pid}/duplicar", status_code=201)
+    async def duplicar_perfil(pid: IdPerfil, request: Request):
+        cuerpo = await leer_cuerpo_opcional(request, DuplicarIn)
+        args: dict[str, Any] = {"id": pid}
+        if cuerpo.nombre is not None:
+            args["nombre"] = cuerpo.nombre
+        d = await _llamar(estado, "video_perfil_duplicar", args)
+        nuevo = d.get("id") if isinstance(d, dict) else None
+        if not isinstance(nuevo, str) or not re.fullmatch(PERFIL, nuevo):
+            raise _inesperada()
+        return {"id": nuevo}
+
+    @r.put("/perfiles/{pid}")
+    async def guardar_perfil(pid: IdPerfil, request: Request):
+        cuerpo = await leer_cuerpo(request, PerfilPutIn)
+        if cuerpo.perfil.get("id", pid) != pid:
+            raise _422("El id del perfil no coincide con el de la ruta.", "id_distinto")
+        d = await _llamar(estado, "video_perfil_guardar", {"id": pid, "perfil": cuerpo.perfil})
+        return {"id": pid} if isinstance(d, dict) else d
+
+    # --------------------------------------------------------------- recursos
+
+    @r.post("/proyectos/{id}/recursos", status_code=201)
+    async def importar_recurso(id: IdProyecto, request: Request):
+        """Importa lo que hay en la bandeja (T13) como recurso del proyecto: `{ recurso, avisos }`.
+
+        Supuesto (T18): el motor escribe `recursos` en `proyecto.json` y **sube la revisión**; la respuesta no la
+        lleva, así que la UI vuelve a pedir `GET /video/proyectos/{id}` antes de seguir editando.
+        """
+        cuerpo = await leer_cuerpo(request, RecursoIn)
+        async with cerrojo_de(id):
+            d = await _llamar(estado, "video_recurso_importar", {"id": id, "bandejaId": cuerpo.bandeja_id, "clase": cuerpo.clase})
+        try:
+            recurso = recurso_seguro(d.get("recurso") if isinstance(d, dict) else None)
+        except ValueError:
+            log.warning("video_recurso_importar devolvió un recurso inesperado")
+            raise _inesperada() from None
+        return {"recurso": recurso, "avisos": _avisos_seguros(d.get("avisos"))}
+
+    @r.delete("/proyectos/{id}/recursos/{rid}")
+    async def borrar_recurso(id: IdProyecto, rid: IdRecurso):
+        async with cerrojo_de(id):
+            await _llamar(estado, "video_recurso_borrar", {"id": id, "recursoId": rid})
+        return {}
+
+    # ----------------------------------------------------------------- render
+
+    @r.post("/proyectos/{id}/render", status_code=202)
+    async def lanzar_render(id: IdProyecto, request: Request):
+        """Encola el render (job interno `video_render`). El cerrojo se suelta al acabar el job."""
+        cuerpo = await leer_cuerpo_opcional(request, RenderIn)
+        await _tomar(estado, id, "render")
+        try:
+            leido = await _llamar(estado, "video_proyecto_leer", {"id": id})
+            doc = leido.get("proyecto", leido) if isinstance(leido, dict) else {}
+            titulo = doc.get("titulo") if isinstance(doc, dict) else None
+            titulo = titulo[:120] if isinstance(titulo, str) else id
+            return estado.jobs.enqueue("video_render", {"id": id, "titulo": titulo, "modo": cuerpo.modo}, interno=True)
+        except BaseException:
+            estado.cerrojos.soltar(id, "render")
+            raise
 
     return r

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -109,9 +110,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        runners = {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()}
+        runners["video_render"] = video_rest.crear_runner_render(app.state, asyncio.get_running_loop())
+        # El render va en su carril y solo lo encola la ruta de render: POST /jobs lo rechaza con 400.
         app.state.jobs = Jobs(
             jobs_path or config.STATE_DIR / "jobs.sqlite",
-            {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()},
+            runners,
+            carriles={"video_render": "video"},
+            internos={"video_render"},
         )
         app.state.jobs.start()
         app.state.agent = Agent(
@@ -144,6 +150,7 @@ def create_app(
         yield
         for t in tareas:
             t.cancel()
+        app.state.cierre.set()  # que los hilos de render dejen de sondear antes de parar el motor
         await app.state.motor.cerrar()
         await app.state.motor_render.cerrar()
         await app.state.jobs.stop()
@@ -162,6 +169,8 @@ def create_app(
     app = FastAPI(title="app-backend", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     # Orden (de dentro a fuera): tope de cuerpo, CORS, CSP. El 413 lleva CORS y todo lleva CSP.
     # Preview (T10): claves y runtime en memoria del proceso; sin reserva (tests) no hay puerto de preview.
+    app.state.cerrojos = video_rest.Cerrojos()  # actividad por proyecto: "render" | "voz"
+    app.state.cierre = threading.Event()
     app.state.claves = preview.Claves()
     app.state.runtime = preview.Runtime()
     app.state.reserva_preview = reserva_preview

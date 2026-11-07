@@ -22,13 +22,22 @@ Todo error lleva `detail: { mensaje: string, codigo: string }`. La UI decide por
 | `coste_cambiado` | 409 | El motor lanza `coste_cambiado` (caracteres) o `plan_cambiado` (contenido): ambos salen con este código | Relee el coste, vuelve a pedir confirmación con la cifra nueva; no reintenta solo |
 | `reintento_facturado` | 409 | Hay frases ya cobradas y no usables y no se envió `reintentar_facturadas: true` | Relee el coste y enseña la casilla de refacturado |
 | `conflicto` | 409 | Revisión del proyecto obsoleta, o el motor ya está generando esa voz | Cierra el diálogo y entra en el flujo de conflicto del editor (reenvía el guardado); no es un error de conexión |
-| `sin_clave` | 409 | El motor lanza `sin_configurar` (falta la clave de ElevenLabs) | Muestra `voz-sin-clave` con enlace a Ajustes |
-| `no_disponible` | 503 | Falta ffmpeg, o el motor de vídeo no responde | Aviso de que la voz no está disponible ahora |
+| `sin_clave` | 409 | El motor lanza `sin_configurar` por la clave de ElevenLabs | Muestra `voz-sin-clave` con enlace a Ajustes |
+| `sin_voz` | 409 | El motor lanza `sin_configurar` porque no hay voz elegida («Elige la voz…») | Pide elegir la voz en el perfil; **no** dice «Falta la clave» |
+| `voz_pendiente` | 409 | Faltan voces por generar (ensamblado) | Ofrece generar |
+| `render_en_curso` | 409 | El proyecto tiene un render en curso (voz, quitar silencios y borrar) | Bloquea el botón y lo explica |
+| `voz_en_curso` | 409 | Se está generando la voz del proyecto (render y borrar) | Bloquea el botón y lo explica |
+| `fallo_facturado` | 502 | Solo en la muestra: ElevenLabs cobró y no se pudo usar | Pide confirmar el reintento |
+| `recurso_en_uso` | 409 | Borrar un recurso que usa una escena | Pide quitarlo de la escena |
+| `no_disponible` | 503 | Falta ffmpeg, el motor de vídeo no responde o no hay puerto de preview | Aviso de que la voz no está disponible ahora |
+| `error_motor` | 502 | Error del motor sin tipar | Error genérico |
 | `esquema` | 422 | Cuerpo inválido (incluye falta de `plan_confirmado`) | Error genérico |
 
-Cualquier otro código se trata como error genérico. T9 debe añadir a su `MENSAJES_POR_CODIGO` las entradas
-`sin_configurar -> sin_clave (409)`, `reintento_facturado (409)`, `plan_cambiado -> coste_cambiado (409)` y
-`conflicto` (también para el «Ya se está generando…» del motor).
+Cualquier otro código se trata como error genérico. Desde T11 **todo** error de `/video/**` (409, 404 y 503 incluidos)
+lleva `detail: { mensaje, codigo }` con mensaje fijo del backend: nunca texto libre del motor. T11 añadió a
+`MENSAJES_POR_CODIGO` `sin_configurar -> sin_clave | sin_voz` (el motor da el mismo código para la clave y para la
+voz; se distingue por su mensaje «Elige la voz…», fijado por un test contra `voz.ts`), `reintento_facturado`,
+`plan_cambiado -> coste_cambiado`, `voz_pendiente`, `fallo_facturado` y `en_uso -> recurso_en_uso`.
 
 ## `POST /video/proyectos/{id}/voz/coste`
 
@@ -69,24 +78,31 @@ Cuerpo:
 - `plan_confirmado`: obligatorio.
 - `caracteres_confirmados`: obligatorio (ver «Diferencias con el motor»).
 - `frases`: opcional; el mismo ámbito que se pidió en `/voz/coste`.
-- `reintentar_facturadas`: obligatorio. `true` solo si la persona marcó la casilla de refacturado.
+- `reintentar_facturadas`: opcional. El backend lo envía al motor como `true` **solo** si llega el `true` literal de
+  JSON; cualquier otro valor (`"true"`, `1`, ausente…) equivale a `false`. La UI lo manda a `true` solo si la persona
+  marcó la casilla de refacturado.
 
-200: `{ "revision": 7, "generadas": 2, "caracteresFacturados": 120, "fallo": { "fraseId", "mensaje", "facturada" } }`
-(`fallo` solo si el lote se cortó; `facturada: true` = ElevenLabs cobró la frase y no se pudo usar). Generar no
-modifica el proyecto: `revision` es informativa.
+200: `{ "generadas": 2, "caracteresFacturados": 120, "fallo": { "fraseId", "facturada", "codigo", "mensaje" } }`
+(`fallo` solo si el lote se cortó; `facturada: true` = ElevenLabs cobró la frase y no se pudo usar, `codigo` es
+`fallo_facturado` o `fallo_voz`, y `mensaje` es un texto fijo: el del motor va al log). El motor **no** devuelve
+`revision` al generar (no modifica el proyecto), así que la REST tampoco.
 
 ## `POST /video/proyectos/{id}/voz/quitar-silencios`
 
 Cuerpo: `{ "frase_id": "f0" }`. No gasta: **no lleva** `plan_confirmado` ni `caracteres_confirmados`.
 
-El motor (`vozQuitarSilencios`) **guarda** el proyecto y sube la revisión. 200: `{ "revision": 8, "recorte": { "inicio", "fin" } }`.
-La UI, tras el 200, vuelve a pedir el proyecto al servidor (`GET /video/proyectos/{id}`) y lo carga; no aplica el
-recorte con `editar()` sobre la revisión vieja. Antes de llamar guarda lo pendiente (el motor guarda con la
+El motor (`vozQuitarSilencios`) **guarda** el proyecto y sube la revisión, pero **no la devuelve**. 200:
+`{ "recorte": { "inicio", "fin" } }` (la versión anterior de este contrato prometía `revision`; el backend no la
+inventa). La UI, tras el 200, vuelve a pedir el proyecto al servidor (`GET /video/proyectos/{id}`) y lo carga: ahí
+está la revisión nueva. No aplica el recorte con `editar()` sobre la revisión vieja. Antes de llamar guarda lo pendiente (el motor guarda con la
 revisión que ve en disco). Mismos códigos de error que arriba (`conflicto`, `no_disponible`, `esquema`).
 
 ## `POST /video/voces/muestra`
 
-Cuerpo: `{ "voiceId": "...", "plan_confirmado": "<planMuestra de /video/voces>", "caracteres_confirmados": 60, "reintentar_facturada": false }`.
+`GET /video/voces` → `{ voces: [{ id, nombre, idioma, planMuestra }] }`.
+
+Cuerpo: `{ "voiceId": "...", "plan_confirmado": "<planMuestra de /video/voces>", "caracteres_confirmados": 60, "reintentar_facturada": false }`
+(`reintentar_facturada` opcional, solo cuenta el `true` literal).
 200: `{ "audioBase64", "caracteres", "cache" }` (`caracteres: 0` si salió de la caché). Mismos códigos; con una
 muestra ya cobrada y no usable, `reintento_facturado` hasta que llegue `reintentar_facturada: true`.
 
@@ -104,3 +120,19 @@ muestra ya cobrada y no usable, `reintento_facturado` hasta que llegue `reintent
   `plan_cambiado`); el REST los unifica en `coste_cambiado`.
 - `conflicto` del motor («Ya se está generando…») y el de revisión de T9 comparten código: para la UI son lo mismo
   (la versión del servidor no es la que se vio), y el flujo del editor lo resuelve.
+
+## Cerrojos por proyecto (T11)
+
+`Cerrojos` es un `dict[id, "render" | "voz"]` en el backend. Voz (generar y quitar silencios) con render activo da
+`render_en_curso`; render con voz activa da `voz_en_curso`; borrar el proyecto con cualquiera de las dos, lo mismo.
+`PUT` sigue permitido durante un render (compone en `_render/`). El cerrojo se suelta siempre (`finally`; el del render,
+al acabar el job, falle como falle). `/voz/coste` y la muestra no lo toman: no escriben nada.
+
+Timeout de `video_voz_generar`: `60 + 200 × frases` s; sin `frases`, el número de frases se acota por
+`min(540, caracteres_confirmados)`.
+
+## Pendiente de integración (fuera del carril del backend)
+
+- El motor lee la voz de `ELEVENLABS_VOICE_ID` (`voiceIdDe(cfg)`), no del `voz` del perfil que usa el proyecto. T11 reenvía
+  esa variable solo en desarrollo (`not FROZEN`); en el producto instalado no hay forma de elegir la voz hasta que el motor
+  la tome del perfil (`sin_voz` es lo que verá la persona). Es trabajo de T5/T8 en `video-mcp-server`.

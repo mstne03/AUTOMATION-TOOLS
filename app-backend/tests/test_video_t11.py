@@ -1,3 +1,4 @@
+# ruff: noqa: F811  (las fixtures `api` y `real` se importan de test_video_rest)
 """Voz, recursos, perfiles y render por REST (T11).
 
 Todo contra `motor_falso.py` (ElevenLabs y el render, simulados; nunca red real), salvo los `test_real_*`,
@@ -10,13 +11,11 @@ import json
 import os
 import re
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
 
-from app_backend import config, jobs as jobs_mod, video, video_rest
-from app_backend.jobs import Jobs
+from app_backend import config, video, video_rest
 from tests.test_video_rest import (  # noqa: F401  (fixtures y ayudas compartidas)
     CENTINELA,
     DIST,
@@ -705,7 +704,13 @@ def test_real_render_de_extremo_a_extremo():
 # ================================================================== motor real: mensajes y códigos reales
 
 
-async def test_real_sin_clave_en_voces_es_409_sin_clave(real):
+@pytest.fixture
+def sin_clave_guardada(monkeypatch):
+    """Otros tests dejan una clave en el almacén de secretos compartido (fuga previa a T11): aquí no hay ninguna."""
+    monkeypatch.setattr(config, "elevenlabs_api_key", lambda store: None)
+
+
+async def test_real_sin_clave_en_voces_es_409_sin_clave(real, sin_clave_guardada):
     r = await real.get("/video/voces")
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "sin_clave", r.text
     assert "Añade tu clave" not in r.text
@@ -718,14 +723,14 @@ async def _proyecto_real(real) -> str:
     return r.json()["id"]
 
 
-async def test_real_sin_voz_es_otro_codigo_que_sin_clave(real, monkeypatch):
+async def test_real_sin_voz_es_otro_codigo_que_sin_clave(real, monkeypatch, sin_clave_guardada):
     monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
     pid = await _proyecto_real(real)
     r = await real.post(f"/video/proyectos/{pid}/voz/coste", json={})
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "sin_voz", r.text
 
 
-async def test_real_coste_plan_y_errores_del_motor(real, monkeypatch):
+async def test_real_coste_plan_y_errores_del_motor(real, monkeypatch, sin_clave_guardada):
     monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
     pid = await _proyecto_real(real)
     r = await real.post(f"/video/proyectos/{pid}/voz/coste", json={})

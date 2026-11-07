@@ -50,8 +50,9 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
 # Por el segundo proceso del motor: un render largo no tapa la vista previa ni la voz, y su timeout no
-# los tumba. `video_estado` va aquí porque lee los jobs de la memoria del proceso que los lanzó.
-TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render", "video_estado"})
+# los tumba. Los jobs de render viven en la memoria del proceso que los lanzó, así que lanzar y sondear
+# van por el mismo canal. (`video_estado` ya no existe en el motor integrado.)
+TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render"})
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -424,6 +425,11 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
             navegador.verificar(carpeta)
     except navegador.NavegadorError as e:
         raise MotorNoDisponible(str(e)) from None
+    if not config.FROZEN:
+        # Solo desarrollo y E2E: nunca en el producto instalado (el motor, además, lo ignora fuera de VIDEO_E2E).
+        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID"):
+            if os.environ.get(nombre):
+                env[nombre] = os.environ[nombre]
     clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave
