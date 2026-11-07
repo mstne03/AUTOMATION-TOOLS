@@ -29,10 +29,11 @@ const nombreFichero = (job: { args: Record<string, unknown> }) => {
 function JobActivo() {
   const job = useJobs((st) => Object.values(st.jobs).find(jobActivo));
   if (!job) return null;
-  const verbo = job.kind === "upload" ? "Subiendo" : "Transcribiendo";
+  const verbo = job.kind === "upload" ? "Subiendo" : job.kind === "video_render" ? "Renderizando" : "Transcribiendo";
+  const nombre = job.kind === "video_render" ? String(job.args.titulo ?? "") : nombreFichero(job);
   return (
     <div className={s.job} data-testid="nav-job" role="status">
-      <Progress label={`${verbo} ${nombreFichero(job)}`.trim()} value={job.status === "queued" ? undefined : job.progress} />
+      <Progress label={`${verbo} ${nombre}`.trim()} value={job.status === "queued" ? undefined : job.progress} />
     </div>
   );
 }

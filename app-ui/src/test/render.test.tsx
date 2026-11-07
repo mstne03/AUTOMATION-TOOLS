@@ -174,6 +174,15 @@ describe("modo de render", () => {
     await waitFor(() => expect(client.videoRender).toHaveBeenCalledWith(ID, "compatible"));
   });
 
+  it("«Rápido» guardado: mientras no llega el estado del navegador el botón espera", async () => {
+    setRenderModo("rapido");
+    montar({ videoNavegador: vi.fn(() => new Promise(() => {})) as never });
+    await abrir();
+    await waitFor(() => expect(screen.getByTestId("render-lanzar")).toBeTruthy());
+    expect((screen.getByTestId("render-lanzar") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/no está disponible en este equipo/);
+  });
+
   it("la UI no manda nada más que el id del proyecto y el modo (ninguna ruta)", async () => {
     const { client } = montar();
     await abrir();
@@ -221,14 +230,34 @@ describe("progreso y resultado", () => {
 });
 
 describe("reserva_visible", () => {
-  it("render-avisos pinta la reserva, el codificador y los avisos", async () => {
-    jobsServidor = [job("done", { progress: 1, result: { ...RESULTADO, reserva: "Rápido falló (sin GPU); se repite en Compatible.", avisos: ["Foto pequeña en la escena 2"] } })];
+  it("reserva_lista_de_codigos: forma real del backend (reserva = códigos, aviso = {codigo})", async () => {
+    jobsServidor = [job("done", { progress: 1, result: { ...RESULTADO, modo: "rapido", avisos: [{ codigo: "fondo_degradado" }, { codigo: "foto_pequena" }], reserva: ["fondo_degradado"] } })];
     montar();
     await abrir();
     const a = await screen.findByTestId("render-avisos");
     expect(a.textContent).toContain("h264_mf");
-    expect(a.textContent).toContain("Rápido falló (sin GPU); se repite en Compatible.");
-    expect(a.textContent).toContain("Foto pequeña en la escena 2");
+    expect(a.textContent).toMatch(/Reserva: .*degradado/i);
+    expect(a.textContent).toMatch(/foto.*pequeña/i);
+    expect(a.textContent).not.toContain("fondo_degradado");
+  });
+
+  it("un código desconocido se enseña como aviso genérico, nunca se descarta", async () => {
+    jobsServidor = [job("done", { progress: 1, result: { ...RESULTADO, avisos: [{ codigo: "algo_nuevo" }], reserva: ["otro_nuevo", "C:\\Users\\Marc\\x"] } })];
+    montar();
+    await abrir();
+    const a = await screen.findByTestId("render-avisos");
+    expect(a.textContent).toMatch(/Reserva: .*no reconocid/i);
+    expect(a.textContent).toContain("algo_nuevo");
+    expect(a.textContent).toContain("otro_nuevo");
+    expect(a.textContent).not.toContain("Marc");
+  });
+
+  it("si Rápido cae a Compatible sin reserva, igualmente se ve", async () => {
+    jobsServidor = [job("done", { progress: 1, args: { id: ID, titulo: "T", modo: "rapido" }, result: { ...RESULTADO, modo: "compatible", reserva: [] } })];
+    montar();
+    await abrir();
+    const a = await screen.findByTestId("render-avisos");
+    expect(a.textContent).toMatch(/Rápido.*Compatible/);
   });
 
   it("sin reserva ni avisos enseña solo el codificador", async () => {

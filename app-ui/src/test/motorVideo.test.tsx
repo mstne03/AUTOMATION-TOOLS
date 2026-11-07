@@ -264,7 +264,7 @@ describe("Clave de ElevenLabs", () => {
     expect((await screen.findByTestId("ajustes-eleven-estado")).textContent).toBe("No configurada");
     expect(campo().type).toBe("password");
     expect(campo().value).toBe("");
-    expect(campo().autocomplete).toBe("off");
+    expect(campo().autocomplete).toBe("new-password");
     expect(t("ajustes-eleven-borrar")).toBeNull();
     expect((screen.getByTestId("ajustes-eleven-guardar") as HTMLButtonElement).disabled).toBe(true);
   });

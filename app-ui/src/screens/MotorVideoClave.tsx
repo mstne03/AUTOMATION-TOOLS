@@ -75,7 +75,7 @@ export function ClaveElevenLabs() {
       </div>
       <form className={s.altaClave} onSubmit={(e) => void guardar(e)} aria-labelledby="s-eleven">
         <Field label={configurada ? "Nueva clave" : "Clave de la API"} className={s.flex}>
-          <Input type="password" mono data-testid="ajustes-eleven-clave" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="off" />
+          <Input type="password" mono data-testid="ajustes-eleven-clave" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="new-password" name="elevenlabs-api-key" data-1p-ignore data-lpignore="true" />
         </Field>
         <Button type="submit" variant="primary" data-testid="ajustes-eleven-guardar" disabled={!clave.trim() || trabajando}>
           Guardar clave

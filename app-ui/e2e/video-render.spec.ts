@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { simularRutas, type Peticion } from "./sidecar-falso";
 import { irAlEditor, limpiarVideo, proyectoDeCocina } from "./video-comun";
 
-const RESULTADO = { id: "", duracion: 12.5, modo: "compatible", codificador: "h264_mf", avisos: ["Foto pequeña en la escena 2"], reserva: "Rápido falló (sin GPU); se repite en Compatible." };
+const RESULTADO = { id: "", duracion: 12.5, modo: "compatible", codificador: "h264_mf", avisos: [{ codigo: "foto_pequena" }], reserva: ["fondo_degradado"] };
 
 interface Estado {
   job: Record<string, unknown> | null;
@@ -96,8 +96,8 @@ test.describe("Render", () => {
     await expect(page.getByTestId("render-progreso")).toHaveCount(0);
     const avisos = page.getByTestId("render-avisos");
     await expect(avisos).toContainText("h264_mf");
-    await expect(avisos).toContainText("Rápido falló (sin GPU); se repite en Compatible.");
-    await expect(avisos).toContainText("Foto pequeña en la escena 2");
+    await expect(avisos).toContainText("degradado");
+    await expect(avisos).toContainText("foto es pequeña");
     await expect(page.getByTestId("render-error")).toHaveCount(0);
     await expect(page.getByTestId("render-exportar")).toBeVisible();
     expect(est.renders).toHaveLength(1);

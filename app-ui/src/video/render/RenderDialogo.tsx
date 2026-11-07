@@ -52,7 +52,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
   const cap = useCapacidadesVideo(navegadorListo);
   const hayGpu = hayGpuDe(cap.data);
   const efectivo = modoEfectivo(modo, hayGpu);
-  const esperandoCap = modo === "rapido" && navegadorListo && cap.isPending;
+  const esperandoCap = modo === "rapido" && (nav.isPending || (navegadorListo && cap.isPending));
 
   // Retoma un render en curso (o el último) tras recargar: el store de jobs empieza vacío.
   useEffect(() => {
@@ -121,7 +121,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
     }
   };
 
-  const r = hecho ? aResultadoRender(job.result) : null;
+  const r = hecho ? aResultadoRender(job.result, job.args.modo) : null;
   const textoError = error ?? (fallido ? sinRutas(job.error ?? "El render ha fallado.") : null);
   const descripcion = DESCRIPCION[efectivo] + (modo === "rapido" && efectivo !== "rapido" && !esperandoCap ? " «Rápido» no está disponible en este equipo." : "");
 
@@ -159,7 +159,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
             <p>{r.duracion === null ? "Vídeo listo." : `Vídeo listo · ${segundos(r.duracion)}`}</p>
             <ul className={s.avisos} data-testid="render-avisos">
               {r.codificador && <li>Codificador: {sinRutas(r.codificador)}{r.modo ? ` (modo ${sinRutas(r.modo)})` : ""}</li>}
-              {r.reserva && <li className={s.reserva}>Reserva: {sinRutas(r.reserva)}</li>}
+              {r.reserva.length > 0 && <li className={s.reserva}>Reserva: {sinRutas(r.reserva.join(" "))}</li>}
               {r.avisos.map((a, i) => (
                 <li key={i}>{sinRutas(a)}</li>
               ))}
