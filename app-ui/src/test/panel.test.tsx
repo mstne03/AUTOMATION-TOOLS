@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "../api/client";
 import { ClientContext } from "../api/context";
-import { cargar, desvincularCliente, reiniciarEditor, seleccionar, useEditor, vincularCliente } from "../state/editor";
+import { cargar, deshacer, desvincularCliente, reiniciarEditor, seleccionar, useEditor, vincularCliente } from "../state/editor";
 import type { Proyecto, Recurso } from "../video/modelo";
 import { Panel } from "../video/panel/Panel";
 
@@ -261,6 +261,34 @@ describe("recursos", () => {
     expect(borrar).toHaveBeenLastCalledWith("video001", "r-0123456789abcdef");
   });
 
+  it("borrar y añadir vacían el historial: deshacer no reintroduce un recurso borrado", async () => {
+    montar({ videoRecursoBorrar: vi.fn(async () => ({})) }, proyecto({ recursos: [recurso()] }));
+    act(() => seleccionar("e1"));
+    fireEvent.change(g("escena-tipo"), { target: { value: "cifra" } }); // una edición deshacible previa
+    expect(useEditor.getState().historial).toHaveLength(1);
+    pestana("Recursos");
+    fireEvent.click(g("recurso-borrar-r-0123456789abcdef"));
+    await waitFor(() => expect(proy().recursos).toHaveLength(0));
+    expect(useEditor.getState().historial).toHaveLength(0);
+    expect(useEditor.getState().futuro).toHaveLength(0);
+    act(() => deshacer());
+    expect(proy().recursos).toHaveLength(0);
+  });
+
+  it("el botón de borrar se bloquea con el borrado en vuelo", async () => {
+    let soltar!: (v: unknown) => void;
+    const borrar = vi.fn(() => new Promise((r) => (soltar = r)));
+    montar({ videoRecursoBorrar: borrar as unknown as Client["videoRecursoBorrar"] }, proyecto({ recursos: [recurso()] }));
+    pestana("Recursos");
+    const b = g("recurso-borrar-r-0123456789abcdef") as HTMLButtonElement;
+    fireEvent.click(b);
+    await waitFor(() => expect(b.disabled).toBe(true));
+    fireEvent.click(b);
+    expect(borrar).toHaveBeenCalledTimes(1);
+    soltar({});
+    await waitFor(() => expect(proy().recursos).toHaveLength(0));
+  });
+
   it("avisa de la foto por debajo de la resolución mínima", () => {
     montar({}, proyecto({ recursos: [recurso({ ancho: 800, alto: 1200 })] }));
     pestana("Recursos");
@@ -308,7 +336,7 @@ describe("perfil", () => {
     expect(duplicar).toHaveBeenCalledWith("defecto");
   });
 
-  it("editar un color guarda el perfil y vuelve a cargar la preview", async () => {
+  it("editar un color guarda el perfil y no ensucia el historial", async () => {
     const guardarPerfil = vi.fn(async (_id: string, p: unknown) => p);
     montar({ videoPerfilGuardar: guardarPerfil as unknown as Client["videoPerfilGuardar"] });
     pestana("Perfil");
@@ -321,8 +349,39 @@ describe("perfil", () => {
     expect(pid).toBe("defecto");
     expect(cuerpo.colores).toEqual({ ...PERFIL.colores, acento: "#00ff00" });
     expect(cuerpo.id).toBe("defecto");
-    // el proyecto cambia (revisión nueva) y la preview se recarga
-    await waitFor(() => expect(useEditor.getState().guardado).toBe("pendiente"));
+    expect(useEditor.getState().historial).toHaveLength(0);
+  });
+
+  it("un color inválido no se envía y se marca", async () => {
+    const guardarPerfil = vi.fn(async (_id: string, p: unknown) => p);
+    montar({ videoPerfilGuardar: guardarPerfil as unknown as Client["videoPerfilGuardar"] });
+    pestana("Perfil");
+    const input = within(await screen.findByTestId("perfil-color-acento")).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "red;}body{" } });
+    fireEvent.blur(input);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(guardarPerfil).not.toHaveBeenCalled();
+  });
+
+  it("dos guardados seguidos no se pisan: color y luego fuente", async () => {
+    let soltar!: (v: unknown) => void;
+    const primera = new Promise((r) => (soltar = r));
+    const guardarPerfil = vi.fn(async (_id: string, p: unknown) => {
+      if (guardarPerfil.mock.calls.length === 1) await primera;
+      return p;
+    });
+    montar({ videoPerfilGuardar: guardarPerfil as unknown as Client["videoPerfilGuardar"] });
+    pestana("Perfil");
+    const input = within(await screen.findByTestId("perfil-color-fondo")).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "#123456" } });
+    fireEvent.blur(input);
+    fireEvent.change(g("perfil-fuente"), { target: { value: "JetBrains Mono" } });
+    await waitFor(() => expect(guardarPerfil).toHaveBeenCalledTimes(1));
+    soltar(null);
+    await waitFor(() => expect(guardarPerfil).toHaveBeenCalledTimes(2));
+    const segundo = guardarPerfil.mock.calls[1][1] as typeof PERFIL;
+    expect(segundo.colores.fondo).toBe("#123456");
+    expect(segundo.fuente).toBe("JetBrains Mono");
   });
 
   it("cambiar la fuente guarda el perfil", async () => {
@@ -342,32 +401,28 @@ describe("perfil", () => {
     expect(e.textContent).not.toContain("marc");
   });
 
-  it("muestra_voz_pide_coste: escuchar no gasta hasta confirmar los 60 caracteres", async () => {
+  it("escuchar_no_gasta: el botón está deshabilitado y no llama a la muestra", async () => {
     const muestra = vi.fn(async () => ({}));
     montar({ videoVozMuestra: muestra });
     pestana("Perfil");
-    await screen.findByTestId("perfil-voz");
     await waitFor(() => expect((g("perfil-voz") as HTMLSelectElement).options.length).toBe(2));
-    fireEvent.click(g("perfil-voz-escuchar"));
-    const dialogo = await screen.findByRole("dialog");
-    expect(dialogo.textContent).toMatch(/60 caracteres/);
+    const boton = g("perfil-voz-escuchar") as HTMLButtonElement;
+    expect(boton.disabled).toBe(true);
+    expect(g("panel-perfil").textContent).toMatch(/Disponible cuando el backend sirva la muestra \(T11\)/);
+    fireEvent.click(boton);
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(muestra).not.toHaveBeenCalled();
-    // cancelar tampoco gasta
-    fireEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
-    expect(muestra).not.toHaveBeenCalled();
-    fireEvent.click(g("perfil-voz-escuchar"));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /Generar muestra/ }));
-    await waitFor(() => expect(muestra).toHaveBeenCalledWith("VozUno12345", 60));
   });
 
-  it("el error de la muestra se ve sin rutas", async () => {
-    montar({ videoVozMuestra: vi.fn(async () => Promise.reject(new Error("Falta la clave en /home/marc/x/y"))) });
+  it("un nombre de perfil o de voz que no es texto no rompe el panel", async () => {
+    montar({
+      videoPerfiles: vi.fn(async () => [{ ...PERFIL, nombre: { x: 1 } }]),
+      videoVoces: vi.fn(async () => [{ id: "VozUno12345", nombre: { x: 1 } }, { id: "VozDos67890", nombre: "Mateo" }]),
+    } as unknown as Partial<Client>);
     pestana("Perfil");
-    await waitFor(() => expect((g("perfil-voz") as HTMLSelectElement).options.length).toBe(2));
-    fireEvent.click(g("perfil-voz-escuchar"));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /Generar muestra/ }));
-    const e = await screen.findByTestId("perfil-error");
-    expect(e.textContent).not.toContain("marc");
+    const sel = await screen.findByTestId("perfil-selector");
+    await waitFor(() => expect(sel.textContent).toContain("defecto"));
+    expect(g("perfil-voz").textContent).toContain("Mateo");
   });
 
   it("el nombre del perfil es texto", async () => {

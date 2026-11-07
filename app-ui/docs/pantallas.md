@@ -520,6 +520,7 @@ Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.
     `recurso-pendiente-<escenaId>`, `recursos-error`.
   - Perfil: `perfil-selector`, `perfil-duplicar`, `perfil-color-<campo>`, `perfil-fuente`,
     `perfil-voz`, `perfil-voz-escuchar`, `perfil-error`.
+    `perfil-voz-escuchar` está deshabilitado hasta que T11 fije la muestra de voz (no se llama ni se gasta).
 - **Timeline:** `timeline`, `timeline-regla`, `timeline-cabezal`, `pista-escenas`,
   `pista-recursos`, `pista-voz`, `pista-musica`, `pista-subtitulos`, `clip-escena-<id>`,
   `clip-recurso-<escenaId>`, `clip-voz-<fraseId>`, `clip-subtitulo-<i>`, `voz-generar`,

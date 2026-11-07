@@ -32,6 +32,14 @@ function leerRecurso(v: unknown): Recurso | null {
   return { id, clase, ext, nombreOriginal, ancho, alto, duracion };
 }
 
+/** Añadir o borrar un recurso cambia el disco del servidor, que deshacer no puede revertir: una
+ *  instantánea anterior reintroduciría un recurso borrado (inexistente) o dejaría huérfano uno
+ *  añadido. Opción robusta: tras la operación se vacía el historial de deshacer/rehacer, y el
+ *  panel lo avisa. Las ediciones anteriores siguen en el proyecto; solo dejan de poder deshacerse. */
+function vaciarHistorial() {
+  useEditor.setState({ historial: [], futuro: [] });
+}
+
 const mensaje = (e: unknown, defecto: string) => sinRutas(e instanceof Error ? e.message : typeof e === "string" ? e : defecto);
 
 export function PanelRecursos() {
@@ -41,6 +49,7 @@ export function PanelRecursos() {
   const escenas = useEditor((e) => e.proyecto?.escenas);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [borrando, setBorrando] = useState<ReadonlySet<string>>(new Set());
   const [avisos, setAvisos] = useState<Record<string, string[]>>({});
 
   const anadir = async (clase: "foto" | "clip") => {
@@ -58,6 +67,7 @@ export function PanelRecursos() {
       editar((p) => {
         if (!p.recursos.some((x) => x.id === nuevo.id)) p.recursos.push(nuevo);
       });
+      vaciarHistorial();
       const textos = Array.isArray(r.avisos) ? r.avisos.flatMap((a) => (esObjeto(a) && typeof a.mensaje === "string" ? [sinRutas(a.mensaje)] : [])) : [];
       setAvisos((a) => ({ ...a, [nuevo.id]: textos }));
     } catch (e) {
@@ -69,15 +79,24 @@ export function PanelRecursos() {
 
   const borrar = async (rid: string) => {
     if (!proyectoId) return;
+    if (borrando.has(rid)) return;
     setError(null);
+    setBorrando((b) => new Set(b).add(rid));
     try {
       await client.videoRecursoBorrar(proyectoId, rid);
       if (useEditor.getState().proyecto?.id !== proyectoId) return;
       editar((p) => {
         p.recursos = p.recursos.filter((x) => x.id !== rid);
       });
+      vaciarHistorial();
     } catch (e) {
       setError(mensaje(e, "No se pudo borrar el recurso."));
+    } finally {
+      setBorrando((b) => {
+        const n = new Set(b);
+        n.delete(rid);
+        return n;
+      });
     }
   };
 
@@ -96,6 +115,9 @@ export function PanelRecursos() {
           Añadir clip
         </Button>
       </div>
+      <p className={s.meta}>
+        Añadir o borrar un recurso vacía el historial de deshacer.
+      </p>
       {error && (
         <p className={s.error} role="alert" data-testid="recursos-error">
           {error}
@@ -132,7 +154,7 @@ export function PanelRecursos() {
               <li key={r.id} className={s.item} data-testid={`recurso-${r.id}`}>
                 <div className={s.itemFila}>
                   <span className={s.nombre}>{r.nombreOriginal}</span>
-                  <IconButton icon={Trash2} size="sm" variant="ghost" aria-label={`Borrar ${r.nombreOriginal}`} data-testid={`recurso-borrar-${r.id}`} onClick={() => void borrar(r.id)} />
+                  <IconButton icon={Trash2} size="sm" variant="ghost" aria-label={`Borrar ${r.nombreOriginal}`} data-testid={`recurso-borrar-${r.id}`} disabled={borrando.has(r.id)} onClick={() => void borrar(r.id)} />
                 </div>
                 <span className={s.meta}>
                   {r.clase === "foto" ? "Foto" : r.clase === "clip" ? "Clip" : "Música"} · {r.ancho}×{r.alto}
