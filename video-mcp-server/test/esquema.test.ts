@@ -13,7 +13,7 @@ import {
   validarGuionVideo,
   validarProyecto,
 } from "../src/esquema.js";
-import { urlsDeRed } from "../src/composicion.js";
+import { escaparHtml, hallazgosDeRed, jsonParaScript, urlsDeRed } from "../src/composicion.js";
 import { resolverZona } from "../src/mapas.js";
 
 // ---------- Fixtures ----------
@@ -319,6 +319,49 @@ describe("esquema de guion y proyecto", () => {
     }
   });
 
+  it("texto_control_unicode: invisibles, bidi, etiquetas, separadores y no-caracteres (M2)", () => {
+    const malos = [
+      "a\u200Eb", "a\u200Fb", "a\u061Cb", // LRM, RLM, ALM
+      "a\u{E0041}b", "a\u{E0001}b", "a\u{E007F}b", // etiquetas (ASCII smuggling)
+      "a\u200Bb", "a\u200Cb", "a\u200Db", "a\u2060b", "a\u00ADb", "a\uFEFFb", // ZWSP, ZWNJ, ZWJ suelto, WJ, SHY, BOM
+      "a\u2028b", "a\u2029b", // separadores de línea y de párrafo
+      "a\uFFF9b", "a\uFFFAb", "a\uFFFBb", // anotaciones interlineales
+      "a\uFFFEb", "a\uFFFFb", "a\uFDD0b", "a\u{1FFFE}b", "a\u{10FFFF}b", // no-caracteres
+      "a\uE000b", "a\u{F0000}b", // uso privado
+      "\u200D", "\u200Da", "a\u200D", "👨\u200D\u200D👩", "👨\u200Da", "a\u200D👩", // ZWJ fuera de una secuencia emoji
+    ];
+    for (const malo of malos) {
+      const g = clon(GUION_FUTBOL);
+      g.titulo = malo;
+      expect({ malo, c: codigos(() => validarGuionVideo(g)) }).toEqual({ malo, c: expect.arrayContaining(["texto_inseguro"]) });
+      const p = proyectoBase();
+      p.frases[0].texto = malo;
+      expect(codigos(() => validarProyecto(p))).toContain("texto_inseguro");
+    }
+  });
+
+  it("los emoji con ZWJ y VS16 legítimos siguen pasando (M2)", () => {
+    // Decisión: se rechaza todo Cf salvo U+200D entre dos Extended_Pictographic (con VS16 o modificador de tono
+    // en medio). Las etiquetas U+E0020–E007F (banderas de Inglaterra o Escocia) se rechazan: son el vector del smuggling.
+    for (const bueno of ["👨\u200D👩\u200D👧", "❤\uFE0F\u200D🔥", "🏳\uFE0F\u200D🌈", "👩\u{1F3FD}\u200D🚀", "👍🏽", "Gol ⚽ ¡vamos! ñ é 日本"]) {
+      const g = clon(GUION_FUTBOL);
+      g.titulo = bueno;
+      expect({ bueno, titulo: validarGuionVideo(g).titulo }).toEqual({ bueno, titulo: bueno.normalize("NFC") });
+    }
+  });
+
+  it("texto_nfc_tope: el máximo se mide tras NFC (L1)", () => {
+    // U+FB2C se normaliza a 3 caracteres: 14 * 3 = 42 > 40.
+    const g = clon(GUION_FUTBOL) as any;
+    g.escenas[0].base = { tipo: "cartel", texto: "\uFB2C".repeat(14) };
+    expect(codigos(() => validarGuionVideo(g))).toContain("too_big");
+    g.escenas[0].base.texto = "\uFB2C".repeat(13); // 39
+    expect(validarGuionVideo(g).escenas[0].base).toMatchObject({ texto: "\uFB2C".normalize("NFC").repeat(13) });
+    const p = proyectoBase();
+    p.frases[0].texto = "\u{1D160}".repeat(LIMITES.fraseChars / 4); // 2 -> 6 unidades: 600 > 400
+    expect(codigos(() => validarProyecto(p))).toContain("too_big");
+  });
+
   it("texto_nfc", () => {
     const g = clon(GUION_FUTBOL);
     g.titulo = "Cafe\u0301";
@@ -460,28 +503,82 @@ describe("esquema de guion y proyecto", () => {
     ];
     const SEGURAS = ["ejemplo.com", "Nota: lo vimos ayer", "50 // 100", "a/b", "https", "El 12:30 llegó", "<script>x</script>"];
 
-    it("rechaza cada muestra que urlsDeRed marcaría", () => {
+    /** Lo que la composición ve de un texto: escapado en el HTML y como JSON en el script. */
+    const composicionMarca = (texto: string): boolean => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "esquema-url-"));
       try {
-        for (const m of [...MUESTRAS, ...SEGURAS]) {
-          fs.writeFileSync(path.join(dir, "t.html"), m);
-          const marcada = urlsDeRed(dir).length > 0;
-          const g = clon(GUION_FUTBOL);
-          g.titulo = m;
-          const rechazada = (() => {
-            try {
-              validarGuionVideo(g);
-              return false;
-            } catch (e) {
-              return (e as ErrorEsquema).problemas.some((p) => p.codigo === "url_en_texto");
-            }
-          })();
-          expect({ m, rechazada }).toEqual({ m, rechazada: marcada });
-          if (MUESTRAS.includes(m)) expect({ m, marcada }).toEqual({ m, marcada: true });
-        }
+        fs.writeFileSync(path.join(dir, "t.html"), `<p>${escaparHtml(texto)}</p>`);
+        fs.writeFileSync(path.join(dir, "t.json"), `{"t":${jsonParaScript(texto)}}`);
+        fs.writeFileSync(path.join(dir, "t.js"), `const t = ${jsonParaScript(texto)};`);
+        return urlsDeRed(dir).length > 0;
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
+    };
+    const esquemaRechaza = (texto: string): boolean => {
+      const g = clon(GUION_FUTBOL);
+      g.titulo = texto;
+      try {
+        validarGuionVideo(g);
+        return false;
+      } catch (e) {
+        return (e as ErrorEsquema).problemas.some((p) => p.codigo === "url_en_texto");
+      }
+    };
+    // Divergencias de la revisión de seguridad (M1): el texto crudo no se marca, el escapado sí.
+    const DIVERGENTES = ["<//host", ">//host", "<//h", ">//h", "&constructor;//h", "&valueOf;//h", "&toString;//h", "&hasOwnProperty;//h", "&__proto__;//h", "a<//h", "&lt;//h"];
+
+    it("todo texto que la composición marcaría una vez escapado lo rechaza el esquema (M1)", () => {
+      for (const m of [...MUESTRAS, ...DIVERGENTES, ...SEGURAS]) {
+        const marcada = composicionMarca(m);
+        if (marcada) expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: true });
+        if (SEGURAS.includes(m)) expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: false });
+      }
+      for (const m of MUESTRAS) expect({ m, marcada: composicionMarca(m) }).toEqual({ m, marcada: true });
+      for (const m of DIVERGENTES) expect({ m, marcada: composicionMarca(m) || hallazgosDeRed(m, "x.html").length > 0, rechazada: esquemaRechaza(m) }).toEqual({ m, marcada: true, rechazada: true });
+    });
+
+    it("rechaza esquemas genéricos y peligrosos, y deja pasar los usos normales (L2)", () => {
+      for (const m of ["ftp://host", "FTP://host/x", "javascript://x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "blob:x", "vbscript:x", "sftp://h", "x:////host", "z+y.w-v://h", "x:\\\\h", "mira ftp://h"]) {
+        expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: true });
+      }
+      for (const m of ["Nota: lo vimos ayer", "10:30", "El 12:30 llegó", "Gol: 3", "Resultado:3-1", "Data: cinco filas", "Mundial:2026", "Hora 9:05", "a:b", "ftp", "Datos: 5"]) {
+        expect({ m, rechazada: esquemaRechaza(m) }).toEqual({ m, rechazada: false });
+      }
+    });
+
+    it("nombreOriginal no admite rutas (L7)", () => {
+      for (const malo of ["C:\\Users\\marc\\x.jpg", "/home/marc/x.jpg", "a/b.jpg", "a\\b.jpg", "D:x.jpg", "..", "a..b.jpg", "../x.jpg"]) {
+        const p = proyectoBase();
+        p.recursos[0].nombreOriginal = malo;
+        expect({ malo, c: codigos(() => validarProyecto(p)) }).toEqual({ malo, c: expect.arrayContaining(["nombre_con_ruta"]) });
+      }
+      for (const bueno of ["estadio.jpg", "Foto final (2).png", "gol_1-2 ñ.webp", ""]) {
+        const p = proyectoBase();
+        p.recursos[0].nombreOriginal = bueno;
+        expect(validarProyecto(p).recursos[0].nombreOriginal).toBe(bueno);
+      }
+    });
+
+    it("entradas patológicas no cuestan tiempo cuadrático (M3)", () => {
+      const grande = "http:".repeat(40_000); // 200 KB
+      for (const [t, f] of [
+        [grande, (x: string) => hallazgosDeRed(x, "t.html")],
+        [grande, (x: string) => hallazgosDeRed(x, "t.json")],
+        ["http:".repeat(8_000) + "a".repeat(100_000), (x: string) => hallazgosDeRed(x, "t.html")],
+        [grande, (x: string) => recomendaciones({ gancho: x, escenas: [{ frases: [x] }] } as any)],
+        [grande, (x: string) => recomendaciones({ escenas: Array.from({ length: 5000 }, () => ({ frases: [x.slice(0, 400)] })) } as any)],
+      ] as [string, (x: string) => unknown][]) {
+        const t0 = performance.now();
+        f(t);
+        expect(performance.now() - t0).toBeLessThan(500);
+      }
+    });
+
+    it("hallazgosDeRed sigue viendo los hosts largos razonables y no usa Object.prototype (M1, M3)", () => {
+      expect(hallazgosDeRed("http:" + "a".repeat(60) + ".com", "t.html").length).toBe(1);
+      expect(hallazgosDeRed("http:abc.com", "t.html").length).toBe(1);
+      expect(hallazgosDeRed("&constructor;//h", "t.html").length).toBe(1);
     });
 
     it("cubre los cuatro casos de la R0-8 y todos los campos de texto", () => {

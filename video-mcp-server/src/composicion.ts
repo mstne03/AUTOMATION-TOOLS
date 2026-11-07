@@ -711,7 +711,9 @@ const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/
 const ENTIDADES: Record<string, string> = {
   colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
 };
-const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/]*\.)/gi;
+// El host (rama `.`) excluye el punto y se acota a 253 caracteres, el máximo de un nombre DNS: así `http:http:http:…` no
+// recorre el resto de la cadena en cada `http:` (coste cuadrático).
+const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/.]{0,253}\.)/gi;
 const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
 // Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
 const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
@@ -727,7 +729,7 @@ function sinEntidades(t: string): string {
   return t.replace(/&#[xX]([0-9a-fA-F]+);?|&#([0-9]+);?|&([a-zA-Z]+);|&amp/g, (m, hex?: string, dec?: string, nombre?: string) => {
     if (hex) return caracter(parseInt(hex, 16));
     if (dec) return caracter(parseInt(dec, 10));
-    return nombre ? (ENTIDADES[nombre] ?? m) : "&";
+    return nombre ? (Object.hasOwn(ENTIDADES, nombre) ? ENTIDADES[nombre] : m) : "&";
   });
 }
 

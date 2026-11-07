@@ -3,7 +3,7 @@
 // los campos de estilo son enums. El texto es dato: se normaliza a NFC y se rechaza lo que pueda
 // colarse como control, bidi o URL. `<` no se rechaza: lo cubre el escape en la composición.
 import { z } from "zod";
-import { hallazgosDeRed } from "./composicion.js";
+import { escaparHtml, hallazgosDeRed, jsonParaScript } from "./composicion.js";
 import { ESCENAS_SOBRE_FONDO, ESTILOS_SUBTITULOS, FONDOS, LOOKS, normalizarPalabra } from "./formato.js";
 import { REGIONES, resolverZona } from "./mapas.js";
 
@@ -36,23 +36,49 @@ const FECHA_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 // ---------- Piezas ----------
 
-// C0, DEL, C1 y bidi (U+202A–202E, U+2066–2069).
-const PROHIBIDOS_RE = /[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/;
+// Rechazo por categoría Unicode (con `u`, un sustituto suelto cuenta como Cs):
+//  Cc controles (C0, DEL, C1, también \n y \t), Cf formato (bidi LRM/RLM/ALM y 202A–202E/2066–2069, ZWSP/ZWNJ/ZWJ,
+//  WJ, SHY, BOM, anotaciones FFF9–FFFB, etiquetas E0000–E007F), Cs sustitutos, Co uso privado, Zl/Zp (U+2028/2029)
+//  y no-caracteres (FDD0–FDEF, xFFFE/xFFFF). Los selectores de variación (VS16) son Mn y no entran.
+const PROHIBIDOS_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Noncharacter_Code_Point}]/u;
 
-const SURROGADO_SUELTO_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+// Decisión (M2, Review Focus 1): U+200D es Cf, pero sin él se rompen 👨‍👩‍👧 o 🏳️‍🌈. Se admite SOLO entre dos
+// Extended_Pictographic (con VS16 o un tono de piel en medio). Cualquier otro ZWJ sigue siendo inseguro. Las etiquetas
+// de las banderas de Inglaterra o Escocia (🏴󠁧󠁢󠁥󠁮󠁧󠁿) se rechazan: son el canal del «ASCII smuggling».
+const ZWJ_DE_EMOJI_RE = /(?<=\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]?)\u200D(?=\p{Extended_Pictographic})/gu;
 
-/** Texto libre: NFC, sin control ni bidi ni surrogados sueltos, y sin nada que `urlsDeRed` marcaría. */
+// Esquemas que la R0-8 manda rechazar (L2). Cualquier `esquema://` cae (con o sin barras de más), y los esquemas sin
+// `//` que ejecutan o incrustan, solo si lo siguiente no es un espacio: «Data: cinco filas», «Nota: …» y «10:30» pasan;
+// «data:text/html,x» y «javascript:alert(1)» no. Los demás esquemas sin `//` (mailto:, tel:) son texto inofensivo.
+const ESQUEMA_GENERICO_RE = /\b[a-z][a-z0-9+.-]{0,31}:[\\/]{2}|\b(?:javascript|vbscript|data|blob|ftps?|sftp|about):(?=\S)/i;
+
+/** Lo que `urlsDeRed` marcaría de este texto tal como llega a la composición: en el HTML, escapado, y en el script, como JSON. */
+function contieneUrl(s: string): boolean {
+  return (
+    ESQUEMA_GENERICO_RE.test(s) ||
+    hallazgosDeRed(s, "texto.html").length > 0 ||
+    hallazgosDeRed(escaparHtml(s), "texto.html").length > 0 ||
+    hallazgosDeRed(jsonParaScript(s), "texto.json").length > 0
+  );
+}
+
+/** Máximo que una cadena puede crecer al pasar a NFC (U+FB2C, U+1D160: ×3). Corta antes de normalizar. */
+const CRECIMIENTO_NFC = 4;
+
+/** Texto libre: NFC, sin invisibles ni control ni bidi ni surrogados sueltos, y sin nada que `urlsDeRed` marcaría. */
 function textoSeguro(max: number, min = 0) {
   return z
     .string()
     .min(min)
-    .max(max)
+    .max(max * CRECIMIENTO_NFC)
     .transform((s) => s.normalize("NFC"))
     .superRefine((s, ctx) => {
-      if (PROHIBIDOS_RE.test(s) || SURROGADO_SUELTO_RE.test(s)) {
+      // El tope se mide tras NFC, que puede alargar el texto (L1).
+      if (s.length > max) ctx.addIssue({ code: "too_big", origin: "string", maximum: max, inclusive: true, input: s });
+      if (PROHIBIDOS_RE.test(s.replace(ZWJ_DE_EMOJI_RE, ""))) {
         ctx.addIssue({ code: "custom", message: "texto_inseguro", params: { codigo: "texto_inseguro" } });
-      } else if (hallazgosDeRed(s, "texto.html").length > 0) {
-        // Mismos patrones que la barrera de la composición: lo que ella marcaría, no entra.
+      } else if (contieneUrl(s)) {
+        // Mismos patrones que la barrera de la composición, sobre el texto crudo y sobre cómo se inserta: lo que ella marcaría, no entra.
         ctx.addIssue({ code: "custom", message: "url_en_texto", params: { codigo: "url_en_texto" } });
       }
     });
@@ -181,7 +207,8 @@ const Recurso = z.strictObject({
   id: z.string().max(40).regex(RECURSO_ID_RE),
   clase: z.enum(["foto", "clip", "musica"]),
   ext: z.enum(["jpg", "png", "webp", "mp4", "wav"]),
-  nombreOriginal: textoSeguro(120),
+  // Solo el nombre: sin separadores de ruta, `:` de unidad ni `..` (L7).
+  nombreOriginal: textoSeguro(120).refine((n) => !/[\\/:]|\.\./.test(n), { message: "nombre_con_ruta", params: { codigo: "nombre_con_ruta" } }),
   ancho: entero(1, 8192),
   alto: entero(1, 8192),
   duracion: numero(0, 3600),
@@ -299,15 +326,20 @@ const segundos = (t: string) => t.length / CARACTERES_POR_SEGUNDO;
 const palabrasClave = (t: string) =>
   new Set(t.split(/\s+/).map(normalizarPalabra).filter((p) => p.length >= 4));
 
-/** Frases de cada escena, venga de un guion o de un proyecto. */
+/**
+ * Frases de cada escena, venga de un guion o de un proyecto. Pensada para entrada ya validada, pero nunca lanza ni
+ * se vuelve cara con basura: como mucho `LIMITES.escenas` escenas, `frasesPorEscena` frases por escena y
+ * `fraseChars` caracteres por frase (M3).
+ */
 function frasesPorEscena(g: unknown): string[][] {
   const o = g as { escenas?: unknown; frases?: unknown } | null | undefined;
   if (!o || typeof o !== "object" || !Array.isArray(o.escenas)) return [];
+  const recorta = (t: string) => t.slice(0, LIMITES.fraseChars);
   const porId = new Map<string, string>();
-  if (Array.isArray(o.frases)) for (const f of o.frases) if (f && typeof f.id === "string" && typeof f.texto === "string") porId.set(f.id, f.texto);
-  return o.escenas.map((e: any) => {
-    if (Array.isArray(e?.frases)) return e.frases.filter((t: unknown): t is string => typeof t === "string");
-    if (Array.isArray(e?.fraseIds)) return e.fraseIds.map((id: unknown) => porId.get(String(id))).filter((t: unknown): t is string => typeof t === "string");
+  if (Array.isArray(o.frases)) for (const f of o.frases.slice(0, MAX_FRASES)) if (f && typeof f.id === "string" && typeof f.texto === "string") porId.set(f.id.slice(0, 40), recorta(f.texto));
+  return o.escenas.slice(0, LIMITES.escenas).map((e: any) => {
+    if (Array.isArray(e?.frases)) return e.frases.slice(0, LIMITES.frasesPorEscena).filter((t: unknown): t is string => typeof t === "string").map(recorta);
+    if (Array.isArray(e?.fraseIds)) return e.fraseIds.slice(0, LIMITES.frasesPorEscena).map((id: unknown) => porId.get(String(id).slice(0, 40))).filter((t: unknown): t is string => typeof t === "string");
     return [];
   });
 }
@@ -317,7 +349,7 @@ export function recomendaciones(g: GuionVideo | Proyecto): Aviso[] {
   try {
     const escenas = frasesPorEscena(g);
     const todas = escenas.flat();
-    const gancho = typeof (g as { gancho?: unknown })?.gancho === "string" ? (g as { gancho: string }).gancho : "";
+    const gancho = typeof (g as { gancho?: unknown })?.gancho === "string" ? (g as { gancho: string }).gancho.slice(0, LIMITES.ganchoChars) : "";
     escenas.forEach((fs, i) => {
       const s = segundos(narracion(fs));
       if (s > 4) avisos.push({ codigo: "corte_largo", ruta: `escenas.${i}`, mensaje: `La escena ${i + 1} dura unos ${s.toFixed(1)} s; conviene un corte cada 2 a 4 s.` });
@@ -337,7 +369,7 @@ export function recomendaciones(g: GuionVideo | Proyecto): Aviso[] {
       avisos.push({ codigo: "duracion_excesiva", mensaje: `La narración se estima en más de ${LIMITES.duracionS} s (14 caracteres por segundo).` });
     }
     const textos = [gancho, ...todas];
-    if (textos.some((t) => hallazgosDeRed(t, "texto.html").length > 0)) {
+    if (textos.some((t) => contieneUrl(t))) {
       avisos.push({ codigo: "url_en_texto", mensaje: "Hay una dirección web en el texto: escribe solo el dominio, sin esquema (ejemplo.com)." });
     }
   } catch {
