@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Client } from "../api/client";
 import { ClientContext } from "../api/context";
-import { cargar, deshacer, desvincularCliente, reiniciarEditor, useEditor } from "../state/editor";
+import { cargar, deshacer, desvincularCliente, reiniciarEditor, useEditor, vincularCliente } from "../state/editor";
 import { Toaster, reiniciarToasts } from "../ui";
 import type { Proyecto } from "../video/modelo";
 import { Timeline } from "../video/timeline/Timeline";
@@ -31,10 +31,20 @@ function proyecto(n = 3, extra: Partial<Proyecto> = {}): Proyecto {
   };
 }
 
+const coste = (extra: Record<string, unknown> = {}) => ({
+  pendientes: ["f0"],
+  caracteres: 120,
+  caracteresRefacturados: 0,
+  fallidasFacturadas: [] as string[],
+  plan: "plan-A",
+  voz: { id: "v1", nombre: "Lucía" },
+  ...extra,
+});
+
 function montar(p: Proyecto, extra: Partial<Client> = {}) {
   const client = {
     videoVozForma: vi.fn(async () => ({ picos: [0.1, 0.8, 0.3, 0.6], segundos: 9 })),
-    videoVozCoste: vi.fn(async () => ({ pendientes: ["f0"], caracteres: 120, voz: "Lucía" })),
+    videoVozCoste: vi.fn(async () => coste()),
     videoVozGenerar: vi.fn(async () => ({ generadas: 1 })),
     videoVozQuitarSilencios: vi.fn(async () => ({ recorte: { inicio: 0.2, fin: 1.1 } })),
     videoMusica: vi.fn(async () => [{ id: "m1", nombre: "Ritmo suave" }, { id: "m2", nombre: "Épica" }]),
@@ -163,51 +173,193 @@ describe("edición con deshacer", () => {
 });
 
 describe("voz y coste (I10)", () => {
-  it("voz-generar abre el diálogo con los caracteres del servidor y no gasta hasta confirmar", async () => {
+  const confirmar = () => fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
+
+  it("voz-generar abre el diálogo con lo del servidor y no gasta hasta confirmar; envía su plan", async () => {
     const { client } = montar(proyecto(2));
     fireEvent.click(screen.getByTestId("voz-generar"));
-    const coste = await screen.findByTestId("voz-confirmar-coste");
-    expect(coste.textContent).toContain("120");
+    const c = await screen.findByTestId("voz-confirmar-coste");
+    expect(c.textContent).toContain("120");
     expect(screen.getByTestId("voz-confirmar").textContent).toContain("Lucía");
     expect(client.videoVozGenerar).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
+    confirmar();
     await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledTimes(1));
-    expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { caracteres_confirmados: 120 });
+    expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { plan_confirmado: "plan-A", caracteres_confirmados: 120, reintentar_facturadas: false });
     await waitFor(() => expect(t("voz-confirmar")).toBeNull());
   });
 
-  it("regenerar una frase envía solo esa frase", async () => {
-    const { client } = montar(proyecto(3), { videoVozCoste: vi.fn(async () => ({ pendientes: ["f1"], caracteres: 25, voz: "Lucía" })) });
+  it("regenerar una frase pide el coste de esa frase al servidor (con emoji) y envía su plan", async () => {
+    const videoVozCoste = vi.fn(async () => coste({ pendientes: ["f1"], caracteres: 25, plan: "plan-f1" }));
+    const { client } = montar(proyecto(3, { frases: [{ id: "f0", texto: "a" }, { id: "f1", texto: "hola 😀 mundo" }, { id: "f2", texto: "c" }] }), { videoVozCoste });
     fireEvent.click(screen.getByTestId("voz-regenerar-f1"));
     expect((await screen.findByTestId("voz-confirmar-coste")).textContent).toContain("25");
-    fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
-    await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { frases: ["f1"], caracteres_confirmados: 25 }));
+    expect(videoVozCoste).toHaveBeenLastCalledWith("p1", ["f1"]);
+    expect(screen.getByTestId("voz-confirmar").textContent).toContain("hola 😀 mundo");
+    confirmar();
+    await waitFor(() =>
+      expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { frases: ["f1"], plan_confirmado: "plan-f1", caracteres_confirmados: 25, reintentar_facturadas: false }),
+    );
   });
 
-  it("coste_409_reabre: si el coste cambió, vuelve a pedir confirmación con la cifra nueva y no reintenta solo", async () => {
-    const videoVozCoste = vi.fn().mockResolvedValueOnce({ pendientes: ["f0"], caracteres: 120, voz: "Lucía" }).mockResolvedValue({ pendientes: ["f0", "f1"], caracteres: 200, voz: "Lucía" });
-    const videoVozGenerar = vi.fn().mockRejectedValueOnce(new ApiError(409, "coste_cambiado")).mockResolvedValue({ generadas: 2 });
+  it("contenido cambiado con el mismo total no factura: reabre con el plan nuevo y no reintenta solo", async () => {
+    let plan = "plan-A";
+    const videoVozCoste = vi.fn(async () => coste({ plan }));
+    const videoVozGenerar = vi.fn().mockRejectedValueOnce(new ApiError(409, "El contenido a generar ha cambiado", "coste_cambiado")).mockResolvedValue({ generadas: 1 });
     montar(proyecto(2), { videoVozCoste, videoVozGenerar });
     fireEvent.click(screen.getByTestId("voz-generar"));
     await screen.findByTestId("voz-confirmar-coste");
-    fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
-    await waitFor(() => expect(screen.getByTestId("voz-confirmar-coste").textContent).toContain("200"));
+    plan = "plan-B"; // el contenido cambió en el servidor con el mismo total de caracteres
+    confirmar();
+    await waitFor(() => expect(screen.getByTestId("voz-confirmar").textContent).toMatch(/ha cambiado/i));
+    // La misma cifra (120) no cuela: sigue sin reintentarse hasta que la persona confirme otra vez.
     expect(videoVozGenerar).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("voz-confirmar").textContent).toMatch(/ha cambiado/i);
-    fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
+    confirmar();
     await waitFor(() => expect(videoVozGenerar).toHaveBeenCalledTimes(2));
-    expect(videoVozGenerar).toHaveBeenLastCalledWith("p1", { caracteres_confirmados: 200 });
+    expect(videoVozGenerar.mock.calls[0][1].plan_confirmado).toBe("plan-A");
+    expect(videoVozGenerar.mock.calls[1][1].plan_confirmado).toBe("plan-B");
   });
 
-  it("sin clave de ElevenLabs enseña voz-sin-clave con enlace a Ajustes", async () => {
-    const videoVozGenerar = vi.fn().mockRejectedValue(new ApiError(409, "sin_clave_elevenlabs"));
+  it("refacturado: el diálogo dice la cifra y no se envía sin marcar la casilla", async () => {
+    const videoVozCoste = vi.fn(async () => coste({ fallidasFacturadas: ["f0"], caracteresRefacturados: 40 }));
+    const { client } = montar(proyecto(2), { videoVozCoste });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    expect(screen.getByTestId("voz-confirmar-refacturado").textContent).toContain("40");
+    expect(screen.getByTestId("voz-confirmar").textContent).not.toMatch(/solo factura lo que falta/i);
+    const ok = screen.getByTestId("voz-confirmar-ok") as HTMLButtonElement;
+    expect(ok.disabled).toBe(true);
+    fireEvent.click(ok);
+    expect(client.videoVozGenerar).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("voz-confirmar-reintentar"));
+    expect((screen.getByTestId("voz-confirmar-ok") as HTMLButtonElement).disabled).toBe(false);
+    confirmar();
+    await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { plan_confirmado: "plan-A", caracteres_confirmados: 120, reintentar_facturadas: true }));
+  });
+
+  it("sin refacturado no hay casilla ni se envía reintentar_facturadas: true", async () => {
+    const { client } = montar(proyecto(2));
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    expect(t("voz-confirmar-refacturado")).toBeNull();
+    expect(t("voz-confirmar-reintentar")).toBeNull();
+    confirmar();
+    await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalled());
+    expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", expect.objectContaining({ reintentar_facturadas: false }));
+  });
+
+  it("un fallo facturado no promete que reintentar solo factura lo que falta", async () => {
+    const videoVozGenerar = vi.fn(async () => ({ generadas: 0, fallo: { fraseId: "f0", mensaje: "x", facturada: true } }));
     montar(proyecto(2), { videoVozGenerar });
     fireEvent.click(screen.getByTestId("voz-generar"));
     await screen.findByTestId("voz-confirmar-coste");
-    fireEvent.click(screen.getByTestId("voz-confirmar-ok"));
+    confirmar();
+    const aviso = await screen.findByText(/volverá a cobrar|se cobrará de nuevo|cobró/i);
+    expect(aviso.closest("[role=status],[role=alert],li,div")?.textContent ?? "").not.toMatch(/solo factura lo que falta/i);
+  });
+
+  it("los errores se distinguen por codigo, no por texto: sin_clave", async () => {
+    // El texto habla de «coste» pero el código manda.
+    const videoVozGenerar = vi.fn().mockRejectedValue(new ApiError(409, "Añade tu clave; el coste no cambia", "sin_clave"));
+    montar(proyecto(2), { videoVozGenerar });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    confirmar();
     const aviso = await screen.findByTestId("voz-sin-clave");
     expect(within(aviso).getByRole("link").getAttribute("href")).toBe("/ajustes");
     expect(t("voz-confirmar")).toBeNull();
+    expect(videoVozGenerar).toHaveBeenCalledTimes(1);
+  });
+
+  it("coste_cambiado con un texto que habla de «clave» sigue reabriendo, no enseña voz-sin-clave", async () => {
+    const videoVozGenerar = vi.fn().mockRejectedValueOnce(new ApiError(409, "La clave de caché cambió", "coste_cambiado"));
+    const { client } = montar(proyecto(2), { videoVozGenerar });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    confirmar();
+    await waitFor(() => expect(client.videoVozCoste).toHaveBeenCalledTimes(2));
+    expect(t("voz-sin-clave")).toBeNull();
+    expect(t("voz-confirmar")).not.toBeNull();
+  });
+
+  it("conflicto entra en el flujo de conflicto del editor, no en el toast de conexión", async () => {
+    const videoVozGenerar = vi.fn().mockRejectedValue(new ApiError(409, "Ya se está generando la voz de este proyecto.", "conflicto"));
+    const remoto = proyecto(2, { revision: 5 });
+    const videoProyectoGuardar = vi.fn().mockRejectedValue(new ApiError(409, "revisión obsoleta", "conflicto"));
+    const videoProyecto = vi.fn(async () => remoto);
+    vincularCliente({ videoProyectoGuardar, videoProyecto } as unknown as Client);
+    montar(proyecto(2), { videoVozGenerar });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    confirmar();
+    await waitFor(() => expect(useEditor.getState().conflicto).toBe(true));
+    expect(videoProyectoGuardar).toHaveBeenCalled();
+    expect(t("voz-sin-clave")).toBeNull();
+    expect(screen.queryByText(/revisa tu conexión/i)).toBeNull();
+  });
+
+  it("conflicto sin revisión obsoleta (ya se está generando) lo cuenta, sin culpar a la conexión", async () => {
+    const videoVozGenerar = vi.fn().mockRejectedValue(new ApiError(409, "Ya se está generando la voz de este proyecto.", "conflicto"));
+    const videoProyectoGuardar = vi.fn(async () => ({ revision: 2, avisos: [] }));
+    vincularCliente({ videoProyectoGuardar, videoProyecto: vi.fn() } as unknown as Client);
+    montar(proyecto(2), { videoVozGenerar });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    confirmar();
+    await waitFor(() => expect(t("voz-confirmar")).toBeNull());
+    await screen.findByText(/ya se está generando/i);
+    expect(screen.queryByText(/revisa tu conexión/i)).toBeNull();
+  });
+
+  it("no_disponible no se confunde con un fallo de conexión ni con la clave", async () => {
+    const videoVozGenerar = vi.fn().mockRejectedValue(new ApiError(503, "x", "no_disponible"));
+    montar(proyecto(2), { videoVozGenerar });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    confirmar();
+    await screen.findByText(/no está disponible/i);
+    expect(t("voz-sin-clave")).toBeNull();
+  });
+
+  it("la cifra y el plan vienen siempre del servidor: nada de coste local", async () => {
+    // El texto local de f0 mide 24 caracteres; el servidor dice 7. Gana el servidor.
+    const videoVozCoste = vi.fn(async () => coste({ caracteres: 7 }));
+    const { client } = montar(proyecto(2), { videoVozCoste });
+    fireEvent.click(screen.getByTestId("voz-regenerar-f0"));
+    expect((await screen.findByTestId("voz-confirmar-coste")).textContent).toBe("7");
+    confirmar();
+    await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", expect.objectContaining({ caracteres_confirmados: 7, plan_confirmado: "plan-A" })));
+  });
+
+  it("con cambios sin guardar, guarda antes de leer el coste", async () => {
+    const orden: string[] = [];
+    const videoProyectoGuardar = vi.fn(async () => {
+      orden.push("guardar");
+      return { revision: 2, avisos: [] };
+    });
+    vincularCliente({ videoProyectoGuardar, videoProyecto: vi.fn() } as unknown as Client);
+    const videoVozCoste = vi.fn(async () => {
+      orden.push("coste");
+      return coste();
+    });
+    montar(proyecto(2), { videoVozCoste });
+    await waitFor(() => expect(orden).toContain("coste"));
+    orden.length = 0;
+    useEditor.setState({ guardado: "pendiente" });
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    expect(orden[0]).toBe("guardar");
+    expect(orden).toContain("coste");
+  });
+
+  it("el diálogo de gasto no se puede confirmar durante un conflicto", async () => {
+    const { client } = montar(proyecto(2));
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    act(() => useEditor.setState({ conflicto: true }));
+    const ok = screen.getByTestId("voz-confirmar-ok") as HTMLButtonElement;
+    expect(ok.disabled).toBe(true);
+    fireEvent.click(ok);
+    expect(client.videoVozGenerar).not.toHaveBeenCalled();
   });
 
   it("cancelar el diálogo no gasta nada", async () => {
@@ -231,13 +383,22 @@ describe("voz y coste (I10)", () => {
     expect(client.videoVozQuitarSilencios).not.toHaveBeenCalled();
   });
 
-  it("voz-quitar-silencios aplica el recorte devuelto, con deshacer", async () => {
-    const { client } = montar(proyecto(1));
+  it("quitar silencios recarga el proyecto del servidor y no edita la revisión vieja", async () => {
+    const remoto = proyecto(1, { revision: 2, frases: [{ id: "f0", texto: "frase número 0 de prueba", recorte: { inicio: 0.2, fin: 1.1 } }] });
+    const videoProyecto = vi.fn(async () => remoto);
+    const videoProyectoGuardar = vi.fn(async () => ({ revision: 3, avisos: [] }));
+    vincularCliente({ videoProyecto, videoProyectoGuardar } as unknown as Client);
+    const { client } = montar(proyecto(1), { videoProyecto });
     fireEvent.click(screen.getByTestId("voz-quitar-silencios-f0"));
-    await waitFor(() => expect(client.videoVozQuitarSilencios).toHaveBeenCalledWith("p1", { frases: ["f0"], caracteres_confirmados: 0 }));
-    await waitFor(() => expect(useEditor.getState().proyecto!.frases[0].recorte).toEqual({ inicio: 0.2, fin: 1.1 }));
-    deshacer();
-    expect(useEditor.getState().proyecto!.frases[0].recorte).toBeUndefined();
+    await waitFor(() => expect(client.videoVozQuitarSilencios).toHaveBeenCalledWith("p1", { frase_id: "f0" }));
+    await waitFor(() => expect(videoProyecto).toHaveBeenCalledWith("p1"));
+    await waitFor(() => expect(useEditor.getState().revision).toBe(2));
+    expect(useEditor.getState().proyecto!.frases[0].recorte).toEqual({ inicio: 0.2, fin: 1.1 });
+    // Sin edición sobre la revisión vieja: no hay nada pendiente que provoque un PUT con la revisión obsoleta.
+    expect(useEditor.getState().guardado).toBe("guardado");
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(videoProyectoGuardar).not.toHaveBeenCalled();
+    expect(useEditor.getState().conflicto).toBe(false);
   });
 
   it("voz-coste muestra los caracteres pendientes del servidor", async () => {

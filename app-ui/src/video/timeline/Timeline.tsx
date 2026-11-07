@@ -15,6 +15,8 @@ import s from "./Timeline.module.css";
 import { useCosteVoz, useFormaVoz, useGastoVoz, useQuitarSilencios } from "./useVoz";
 
 const MARGEN_FINAL = 48;
+/** Mismo tope que el motor: la UI no se fía del tamaño que llegue. */
+const MAX_PICOS = 2000;
 const PASO_FINO = 0.1;
 const PASO_GRUESO = 1;
 const redondear = (n: number) => Math.round(n * 1000) / 1000;
@@ -88,8 +90,12 @@ export function Timeline() {
   const coste = useCosteVoz(id);
   const voz = useGastoVoz();
   const silencios = useQuitarSilencios();
+  const conflicto = useEditor((e) => e.conflicto);
   const layout = useMemo(() => (proyecto ? planificar(proyecto, forma.data?.segundos) : null), [proyecto, forma.data?.segundos]);
   const pendientes = useMemo(() => new Set(coste.data?.pendientes ?? []), [coste.data]);
+
+  const frasesDelGasto = useMemo(() => (voz.gasto?.frases ?? []).flatMap((fid) => proyecto?.frases.find((f) => f.id === fid) ?? []), [voz.gasto?.frases, proyecto]);
+  const puedeConfirmar = !!voz.gasto && (voz.gasto.caracteres > 0 || voz.gasto.fallidasFacturadas.length > 0) && (voz.gasto.fallidasFacturadas.length === 0 || voz.gasto.reintentar);
 
   if (!proyecto || !layout) return null;
   const ancho = tiempoAX(layout.total) + MARGEN_FINAL;
@@ -132,7 +138,7 @@ export function Timeline() {
             )}
           </div>
           <div className={s.carril}>
-            <PistaVoz layout={layout} picos={forma.data?.picos} pendientes={pendientes} ocupadas={silencios.ocupadas} alRegenerar={(f) => void voz.pedir([f])} alQuitarSilencios={(f) => void silencios.quitar(f)} />
+            <PistaVoz layout={layout} picos={forma.data?.picos?.slice(0, MAX_PICOS)} pendientes={pendientes} ocupadas={silencios.ocupadas} alRegenerar={(f) => void voz.pedir([f])} alQuitarSilencios={(f) => void silencios.quitar(f)} />
           </div>
         </div>
         <div className={s.fila}>
@@ -165,17 +171,40 @@ export function Timeline() {
             <Button variant="ghost" data-testid="voz-confirmar-cancelar" disabled={voz.enviando} onClick={voz.cerrar}>
               Cancelar
             </Button>
-            <Button variant="primary" data-testid="voz-confirmar-ok" loading={voz.enviando} onClick={() => void voz.confirmar()}>
+            <Button variant="primary" data-testid="voz-confirmar-ok" loading={voz.enviando} disabled={conflicto || !puedeConfirmar} onClick={() => void voz.confirmar()}>
               Confirmar y generar
             </Button>
           </>
         }
       >
         <div data-testid="voz-confirmar" className={s.confirmar}>
-          {voz.gasto?.cambio && <p role="alert">El coste ha cambiado desde que lo viste. Revisa la cifra y confirma de nuevo.</p>}
-          <p>
-            Se facturarán <strong data-testid="voz-confirmar-coste">{voz.gasto?.caracteres}</strong> caracteres a tu cuenta de ElevenLabs con la voz «{voz.gasto?.voz}».
-          </p>
+          {conflicto && <p role="alert">El proyecto ha cambiado en otro sitio. Resuelve el aviso del editor antes de generar la voz.</p>}
+          {voz.gasto?.cambio && <p role="alert">Lo que se va a generar ha cambiado desde que lo viste. Revisa la cifra y confirma de nuevo.</p>}
+          {frasesDelGasto.length > 0 && (
+            <p>
+              {frasesDelGasto.map((f) => (
+                <q key={f.id}>{f.texto}</q>
+              ))}
+            </p>
+          )}
+          {voz.gasto && voz.gasto.caracteres === 0 && voz.gasto.fallidasFacturadas.length === 0 ? (
+            <p>No hay nada que generar: la voz de esta selección ya existe y no se facturará nada.</p>
+          ) : (
+            <p>
+              Se facturarán <strong data-testid="voz-confirmar-coste">{voz.gasto?.caracteres}</strong> caracteres a tu cuenta de ElevenLabs con la voz «{voz.gasto?.voz.nombre}».
+            </p>
+          )}
+          {voz.gasto && voz.gasto.fallidasFacturadas.length > 0 && (
+            <>
+              <p role="alert" data-testid="voz-confirmar-refacturado">
+                {voz.gasto.fallidasFacturadas.length} frase(s) ya se cobraron y no se pudieron usar. Generarlas otra vez cobra de nuevo{" "}
+                <strong>{voz.gasto.caracteresRefacturados}</strong> caracteres (incluidos en la cifra de arriba).
+              </p>
+              <label>
+                <input type="checkbox" data-testid="voz-confirmar-reintentar" checked={voz.gasto.reintentar} disabled={voz.enviando || conflicto} onChange={(e) => voz.marcarReintento(e.target.checked)} /> Entiendo que se cobrarán otra vez
+              </label>
+            </>
+          )}
         </div>
       </Dialog>
     </section>

@@ -263,21 +263,40 @@ export interface PreviewVideo {
 
 export type ModoRender = "auto" | "rapido" | "compatible";
 
-/** `GET /video/proyectos/{id}/voz/coste` (T5). */
+/** `POST /video/proyectos/{id}/voz/coste` (contrato: `docs/video-fase1/contrato-voz.md`). La UI no calcula
+ *  nada: cifra, refacturado y `plan` salen de aquí. */
 export interface CosteVoz {
   pendientes: string[];
   caracteres: number;
-  voz: string;
+  /** Caracteres de frases ya cobradas y no usables que se cobrarían otra vez. */
+  caracteresRefacturados: number;
+  fallidasFacturadas: string[];
+  /** Opaco: huella del contenido que da el motor; se devuelve tal cual en `plan_confirmado`. */
+  plan: string;
+  voz: { id: string; nombre: string };
 }
 /** `GET /video/proyectos/{id}/voz/forma` (T5). */
 export interface FormaVoz {
   picos: number[];
   segundos: number;
 }
-/** Cuerpo de las acciones que gastan: el servidor compara con su propio cálculo. */
+/** Cuerpo de `POST .../voz`: el motor compara plan y cifra con su propio cálculo; el backend no recalcula. */
 export interface CuerpoVoz {
-  frases?: string[];
+  plan_confirmado: string;
   caracteres_confirmados: number;
+  frases?: string[];
+  /** `true` solo si la persona marcó de forma explícita volver a pagar frases ya cobradas. */
+  reintentar_facturadas: boolean;
+}
+/** Cuerpo de `POST .../voz/quitar-silencios`: no gasta, no lleva plan. */
+export interface CuerpoQuitarSilencios {
+  frase_id: string;
+}
+/** Cuerpo de `POST /video/voces/muestra` (además de `voiceId`). */
+export interface CuerpoMuestra {
+  plan_confirmado: string;
+  caracteres_confirmados: number;
+  reintentar_facturada: boolean;
 }
 
 export interface PerfilVideo {
@@ -288,6 +307,8 @@ export interface PerfilVideo {
 export interface VozVideo {
   id: string;
   nombre: string;
+  /** Plan de la muestra (lo da el motor en `/video/voces`); se devuelve en `plan_confirmado`. */
+  planMuestra?: string;
   [k: string]: unknown;
 }
 export interface PistaMusica {

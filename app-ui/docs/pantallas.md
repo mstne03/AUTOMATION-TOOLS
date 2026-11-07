@@ -527,7 +527,10 @@ Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.
   `voz-confirmar`, `voz-confirmar-coste`, `voz-confirmar-ok`, `musica-elegir`, `musica-inicio`,
   `musica-volumen`, `musica-ducking`, `subtitulo-texto`.
   Añadidos por T19: `voz-onda` (forma de onda en SVG), `voz-confirmar-cancelar`, `subtitulo-dividir`,
-  `subtitulo-unir` y `subtitulo-error` (`role=alert`). Teclado: en `timeline-regla` (`role=slider`)
+  `subtitulo-unir` y `subtitulo-error` (`role=alert`). Añadidos por el contrato de la voz
+  (`docs/video-fase1/contrato-voz.md`): `voz-confirmar-refacturado` (cifra de frases ya cobradas que se
+  cobrarían otra vez) y `voz-confirmar-reintentar` (casilla expresa; sin ella no se envía
+  `reintentar_facturadas: true` y el botón de confirmar queda deshabilitado). Teclado: en `timeline-regla` (`role=slider`)
   flechas ±0,1 s, Mayús ±1 s, Inicio y Fin; en `clip-escena-<id>` Alt+flecha reordena; en
   `clip-voz-<fraseId>` Mayús+flecha ajusta el final del recorte a una palabra; en
   `clip-recurso-<escenaId>` Alt+flecha mueve la entrada y Mayús+flecha la salida.
