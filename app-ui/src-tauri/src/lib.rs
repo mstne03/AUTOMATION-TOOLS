@@ -346,15 +346,19 @@ fn abrir_regular(ruta: &Path, limite: u64) -> Result<File, String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_TYPE_DISK,
+        GetFileInformationByHandle, GetFileType,
     };
 
     const NO: &str = "El fichero elegido no se puede importar.";
     let file = std::fs::OpenOptions::new()
         .read(true)
-        // Lectura, escritura y borrado ajenos permitidos: no bloquea al backend ni al motor.
-        .share_mode(0x1 | 0x2 | 0x4)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        // Otros pueden leer y borrar/renombrar (el render sustituye `video.mp4` con rename), pero
+        // no escribir: no se copia un fichero a medio escribir.
+        .share_mode(0x1 | 0x4)
+        // BACKUP_SEMANTICS deja abrir carpetas y junctions: así los rechaza la comprobación de
+        // atributos de abajo, no un fallo incidental de `open`.
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
         .open(ruta)
         .map_err(|_| NO.to_string())?;
     let h = file.as_raw_handle();
@@ -371,7 +375,10 @@ fn abrir_regular(ruta: &Path, limite: u64) -> Result<File, String> {
         return Err(NO.into());
     }
     if info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) != 0 {
-        return Err("No se admiten enlaces ni carpetas.".into());
+        return Err(
+            "No se admiten enlaces, carpetas ni ficheros solo en la nube (descárgalo en local)."
+                .into(),
+        );
     }
     if info.nNumberOfLinks != 1 {
         return Err("No se admiten enlaces duros.".into());
@@ -663,7 +670,8 @@ b",
     use std::io::Read;
 
     use super::{
-        clase_info, copiar_a_bandeja, copiar_limitado, dir_estado_desde, exportar_a, validar_id,
+        clase_info, copiar_a_bandeja, copiar_a_destino_nuevo, copiar_limitado, dir_estado_desde,
+        exportar_a, validar_id,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -785,6 +793,20 @@ b",
         let mut salida = Vec::new();
         assert!(copiar_limitado(&mut leido, &mut salida, 10).is_err());
         assert!(salida.len() <= 11);
+    }
+
+    #[test]
+    fn rechaza_dispositivos_y_no_deja_destino_a_medias() {
+        let t = Tmp::nueva();
+        // `NUL` abre como dispositivo de caracteres, no como fichero de disco.
+        assert!(copiar_a_bandeja(Path::new("NUL"), &t.bandeja(), 100).is_err());
+        // Si la copia falla a medias (el fichero creció tras la comprobación), se borra el destino.
+        let o = t.fichero("crece.bin", &[1u8; 20]);
+        let mut f = fs::File::open(&o).unwrap();
+        let d = t.0.join("parcial.bin");
+        assert!(copiar_a_destino_nuevo(&mut f, &d, 10).is_err());
+        assert!(!d.exists());
+        assert!(vacia(&t.bandeja()));
     }
 
     #[test]
