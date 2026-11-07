@@ -50,8 +50,9 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
 # Por el segundo proceso del motor: un render largo no tapa la vista previa ni la voz, y su timeout no
-# los tumba. `video_estado` va aquí porque lee los jobs de la memoria del proceso que los lanzó.
-TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render", "video_estado"})
+# los tumba. Los jobs de render viven en la memoria del proceso que los lanzó, así que lanzar y sondear
+# van por el mismo canal. (`video_estado` ya no existe en el motor integrado.)
+TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render"})
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -59,11 +60,32 @@ MENSAJE_NO_INSTALADO = (
 
 
 class MotorError(Exception):
-    """Error legible para la UI. Nunca lleva la clave de ElevenLabs."""
+    """Error legible para la UI. Nunca lleva la clave de ElevenLabs.
+
+    `codigo` y `problemas` salen del bloque JSON de los errores tipados del motor (T4):
+    `esquema`, `conflicto`, `no_encontrado`, `coste_cambiado`. `problemas` solo lleva
+    `{ruta, codigo}`, nunca valores. Un error sin tipar tiene `codigo=None`.
+    """
+
+    def __init__(self, mensaje: str = "", codigo: str | None = None, problemas: list | None = None) -> None:
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.problemas = list(problemas or [])
 
 
 class MotorNoDisponible(MotorError):
     """El motor no arranca o ha muerto."""
+
+
+class MotorTimeout(MotorError):
+    """Una llamada venció su timeout; el motor se ha reiniciado."""
+
+
+class MotorOcupado(MotorTimeout):
+    """Una llamada ajena venció su timeout mientras el motor tenía una generación o un render en curso.
+
+    No se reinicia el proceso (cortaría la voz o el render de otro proyecto): solo falla esa llamada.
+    """
 
 
 @dataclass(frozen=True)
@@ -95,6 +117,23 @@ if _spawn_original is not None:
     _stdio._create_platform_compatible_process = _spawn_anotado
 else:  # pragma: no cover - depende de la versión del SDK
     log.warning("mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None.")
+
+
+def _error_tipado(textos: list[str], clave: str | None) -> tuple[str | None, list]:
+    """`(codigo, problemas)` del bloque JSON `{codigo, problemas}` de un error tipado, si lo hay."""
+    for t in reversed(textos):
+        try:
+            v = json.loads(_ocultar(t, clave))
+        except ValueError:
+            continue
+        if isinstance(v, dict) and isinstance(v.get("codigo"), str):
+            problemas = [
+                {"ruta": str(p.get("ruta", ""))[:80], "codigo": str(p.get("codigo", ""))[:60]}
+                for p in (v.get("problemas") or [])[:50]
+                if isinstance(p, dict)
+            ]
+            return v["codigo"], problemas
+    return None, []
 
 
 def _ocultar(texto: str, clave: str | None) -> str:
@@ -160,6 +199,7 @@ class MotorVideo:
         cwd: Path,
         env: Callable[[], dict[str, str]],
         timeout_llamada: float = 120.0,
+        actividad: Callable[[], bool] | None = None,
     ) -> None:
         if not comando:
             raise ValueError("comando vacío")
@@ -167,6 +207,10 @@ class MotorVideo:
         self._cwd = Path(cwd)
         self._env = env
         self._timeout = timeout_llamada
+        # `actividad()`: ¿hay trabajo largo en curso fuera de este objeto (voz o render de algún proyecto)? Mientras lo haya,
+        # el timeout de una llamada ajena no reinicia el proceso (revisión T11, Medium 1).
+        self._actividad = actividad
+        self._protegidas = 0  # llamadas largas en vuelo (`protegida=True`); solo se toca desde el bucle de eventos
         self._lock = asyncio.Lock()
         self._sesion: _Sesion | None = None
 
@@ -177,11 +221,32 @@ class MotorVideo:
             return None
         return s.proceso.pid
 
+    def pids_conocidos(self) -> list[int]:
+        """PID del proceso del motor y de sus descendientes (Chrome, ffmpeg) en este instante; vacío si no hay motor."""
+        s = self._sesion
+        if s is None or s.proceso is None:
+            return []
+        return [s.proceso.pid, *_descendientes(s.proceso.pid)]
+
+    def en_actividad(self) -> bool:
+        """¿Hay una llamada larga en vuelo o trabajo en curso que un reinicio cortaría?"""
+        return self._protegidas > 0 or bool(self._actividad is not None and self._actividad())
+
     # ----------------------------------------------------------- llamadas
 
-    async def llamar(self, tool: str, args: dict | None = None, timeout: float | None = None) -> RespuestaMotor:
+    async def llamar(
+        self, tool: str, args: dict | None = None, timeout: float | None = None, protegida: bool = False
+    ) -> RespuestaMotor:
+        """`protegida=True`: llamada larga que un reinicio cortaría (generar voz, muestra). Mientras esté en vuelo,
+        el timeout de cualquier otra llamada falla esa llamada (`MotorOcupado`) pero no reinicia el proceso."""
         s, sesion = await self._sesion_lista()
-        r = await self._esperar(s, sesion.call_tool(tool, args or {}), timeout)
+        if protegida:
+            self._protegidas += 1
+        try:
+            r = await self._esperar(s, sesion.call_tool(tool, args or {}), timeout, protegida)
+        finally:
+            if protegida:
+                self._protegidas -= 1
         return self._respuesta(r, s.clave)
 
     async def herramientas(self) -> list[str]:
@@ -190,15 +255,21 @@ class MotorVideo:
         r = await self._esperar(s, sesion.list_tools(), None)
         return [t.name for t in r.tools]
 
-    async def _esperar(self, s: _Sesion, peticion, timeout: float | None):
+    async def _esperar(self, s: _Sesion, peticion, timeout: float | None, propia: bool = False):
         """Espera una petición MCP de la sesión `s` y traduce sus fallos a MotorError."""
         limite = self._timeout if timeout is None else timeout
         try:
             return await asyncio.wait_for(peticion, limite)
         except TimeoutError:
-            # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero.
+            # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero... salvo que ese reinicio
+            # corte el trabajo de otro. Una llamada ajena no reinicia con trabajo en curso; una protegida que vence sí
+            # (está colgada de verdad), pero solo si no hay otra protegida distinta en vuelo.
+            otras = self._protegidas - (1 if propia else 0)
+            if otras > 0 or (not propia and self.en_actividad()):
+                log.warning("Motor de vídeo: la llamada no respondió en %g s; no se reinicia porque hay trabajo en curso.", limite)
+                raise MotorOcupado(f"El motor de vídeo no respondió en {limite:g} s (ocupado con otra tarea).") from None
             await self._descartar(s)
-            raise MotorError(f"El motor de vídeo no respondió en {limite:g} s.") from None
+            raise MotorTimeout(f"El motor de vídeo no respondió en {limite:g} s.") from None
         except MCPError as e:
             if e.error.code == CONNECTION_CLOSED or not s.viva():
                 await self._descartar(s)
@@ -213,7 +284,8 @@ class MotorVideo:
         textos = [c.text for c in r.content if isinstance(c, TextContent)]
         texto = _ocultar(textos[0], clave) if textos else ""
         if r.is_error:
-            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.")
+            codigo, problemas = _error_tipado(textos, clave)
+            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.", codigo, problemas)
         datos = None
         if len(textos) > 1:
             try:
@@ -322,6 +394,37 @@ class MotorVideo:
                 await self._descartar(s)
 
 
+def _descendientes(raiz: int) -> list[int]:
+    """PID de los descendientes de `raiz`: con psutil si está; si no, por /proc (Linux). Sin ninguno: vacío."""
+    try:
+        import psutil
+
+        return [p.pid for p in psutil.Process(raiz).children(recursive=True)]
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - el proceso pudo morir entre medias
+        return []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return []
+    hijos: dict[int, list[int]] = {}
+    for d in proc.iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            stat = (d / "stat").read_text(encoding="utf-8", errors="replace")
+            ppid = int(stat.rpartition(")")[2].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        hijos.setdefault(ppid, []).append(int(d.name))
+    salida, pila = [], [raiz]
+    while pila:
+        for h in hijos.get(pila.pop(), []):
+            salida.append(h)
+            pila.append(h)
+    return salida
+
+
 def _describir(e: BaseException) -> str:
     """Mensaje corto de una excepción, desenvolviendo los ExceptionGroup de anyio."""
     while isinstance(e, BaseExceptionGroup) and e.exceptions:
@@ -364,7 +467,7 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
     estado = config.STATE_DIR / "video"
     env = {
         "VIDEO_ENGINE_EMBEDDED": "1",
-        "VIDEO_ROOT": str(estado / "proyectos"),
+        "VIDEO_ROOT": str(config.VIDEO_ROOT),
         "VIDEO_STATE_DIR": str(estado / "estado"),
         "HYPERFRAMES_NO_TELEMETRY": "1",
         "DO_NOT_TRACK": "1",
@@ -392,6 +495,11 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
             navegador.verificar(carpeta)
     except navegador.NavegadorError as e:
         raise MotorNoDisponible(str(e)) from None
+    if not config.FROZEN:
+        # Solo desarrollo y E2E: nunca en el producto instalado (el motor, además, lo ignora fuera de VIDEO_E2E).
+        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID"):
+            if os.environ.get(nombre):
+                env[nombre] = os.environ[nombre]
     clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave

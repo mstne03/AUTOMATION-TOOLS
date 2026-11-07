@@ -10,7 +10,7 @@
 
 **Spec:** `SPEC-video.md` (D3–D11, Seguridad I1–I15, criterios de la fase 1). Modelo de amenazas y protocolo R0/R1/R2: `HANDOFF-video-fase1.md` §2 y §3. Contrato de UI: `app-ui/docs/pantallas.md`.
 
-**Estado de este plan:** borrador para la revisión R0 y la aprobación de Marc. No se implementa nada hasta entonces.
+**Estado de este plan:** R0 aprobada con cambios (2026-11-07) e incorporada en la Task 0; Marc ha respondido las decisiones. Falta la R0 de T1, T3 y T9 sobre el esquema antes de escribir código.
 
 ## Global Constraints
 
@@ -19,7 +19,7 @@
 - La salida del modelo nunca se pinta como HTML. Nada de `innerHTML` ni `dangerouslySetInnerHTML` en `app-ui/src/video/`.
 - El WebView sigue con `core:default`: lo nativo va por comandos Rust. La UI nunca envía rutas (I6).
 - `data-testid` nuevos en `pantallas.md`, con su E2E en el mismo commit. Solo componentes del catálogo `ui/` y tokens.
-- Sin dependencias nuevas en npm, pnpm ni uv. La única candidata es la de la decisión M-D4. `zod` ya está en el motor.
+- Sin dependencias nuevas en npm, pnpm ni uv. M-D4 está aplazada, así que no hay ninguna candidata. `zod` ya está en el motor.
 - Node, ffmpeg y Chrome solo desde rutas fijas (I4). Hijos con `ejecutar()`, entorno por lista blanca (I5, I13). Toda entrada de ffmpeg con `argsEntrada()`.
 - Salidas de red: solo las de I14. Nada de `npx` sin versión ni `@latest`.
 - ffmpeg LGPL: encoders `prores_ks h264_mf h264_nvenc h264_amf aac png pcm_s16le rawvideo`. Sin `libmp3lame`, `mjpeg`, `silencedetect`, `boxblur` ni filtro `concat`. Filtros disponibles en `ffmpeg-build/componentes.conf`.
@@ -38,19 +38,21 @@
 
 ## Decisiones que necesitan a Marc
 
-Sin M-D1, M-D2 y M-D5 no empieza la implementación. En las demás se aplica la recomendación salvo que digas otra cosa, y M-D4 necesita además tu permiso de descarga.
+Sin M-D1, M-D2 y M-D5 no empieza la implementación. En las demás se aplica la recomendación salvo que digas otra cosa. Las respuestas de Marc están debajo de la tabla.
 
 | ID | Decisión | Recomendación y motivo | Qué se sacrifica |
 |---|---|---|---|
-| **M-D1** | Origen de la preview. El ruling W1.2 LOW-9 pide `frame-src` exacto «ajustado al recibir la URL», pero **una página no puede relajar su propia CSP**, y el puerto del sidecar es aleatorio. | **Puerto propio de una lista fija** (`47810–47813`) en `tauri.conf.json`. Es estático, se prueba leyendo el fichero, funciona igual en desarrollo y separa la preview de la API: la composición no alcanza la API ni sin bearer. Descartados: `127.0.0.1:*` (una composición comprometida navegaría su iframe a Ollama o LM Studio) y el hook `on_web_resource_request` (exige `create:false`, recargar la app al conocer el puerto, y no lo cubre ningún E2E). | Si los cuatro puertos están ocupados, no hay preview y se dice. Enmienda I8. |
+| **M-D1** | Origen de la preview. El ruling W1.2 LOW-9 pide `frame-src` exacto «ajustado al recibir la URL», pero **una página no puede relajar su propia CSP**, y el puerto del sidecar es aleatorio. | **Puerto propio de una lista fija** (`47810–47813`) en `tauri.conf.json`. Es estático, se prueba leyendo el fichero, funciona igual en desarrollo y separa la preview de la API: `frame-src` no incluye el puerto de la API, así que la composición no puede navegar a ella; la API exige bearer. Descartados: `127.0.0.1:*` (una composición comprometida navegaría su iframe a Ollama o LM Studio) y el hook `on_web_resource_request` (exige `create:false`, recargar la app al conocer el puerto, y no lo cubre ningún E2E). | Si los cuatro puertos están ocupados, no hay preview y se dice. Enmienda I8. |
 | **M-D2** | CA1 pide dos perfiles y D8 dice uno en la fase 1. | **Lista simple de perfiles** (`perfiles/<id>.json`, «Duplicar», y el proyecto referencia uno). Es lo que D8 llama fase 3, sin importar ni IA: evita migrar datos. | Enmienda D8. Algo más de UI en la fase 1. |
 | **M-D3** | Botón de escuchar voz (D7). `preview_url` de ElevenLabs apunta a un host fuera de I14. | **Muestra generada con la voz** (60 caracteres fijos, coste visible, caché por voz). No abre salidas de red nuevas. | Gasta créditos del usuario. La alternativa es ampliar I14 con un host que elige una respuesta no confiable. |
 | **M-D4** | Dos instancias de la app (M-4, condición de `VIDEO_ENGINE=1`). | **`tauri-plugin-single-instance`**, como pidió la R0: enfoca la ventana abierta. Necesita descargarlo: **pide tu permiso** y justificación I9. Si no lo das: mutex con `windows-sys` (`CreateMutexW`, ya disponible), sin enfocar la ventana. | Una dependencia y una descarga. |
 | **M-D5** | Enmiendas pendientes de la spec: M-1 (I2 b, bypass solo al puerto), M-2 (I4, `debug.log`), M-3 (I7, barrido), W1.3 y W1.6 (riesgos residuales), W1.5 (I4 ffmpeg sustituible, frontera de construcción). | Aprobarlas con T0: el código ya las cumple y la spec vinculante no. | Nada: alinea texto y realidad. |
 | **M-D6** | Automático = Compatible y bitrate (D11). `h264_mf` ignora el bitrate. | Mantener Compatible y medir con fotos reales antes de publicar. La medición es tuya, en tu GPU. | Renders más lentos (782 s frente a 517 s por 50 s). |
-| **M-D7** | Clips horizontales «sobre fondo desenfocado» (D9). El ffmpeg LGPL no tiene `boxblur` ni `gblur`. | **CSS `filter: blur()` sobre un fotograma fijo del clip** en `capa-clip.html`. No toca el build de ffmpeg. | El fondo no se mueve. Añadir `gblur` exige recompilar y volver a pasar W3.2. |
+| **M-D7** | Clips horizontales «sobre fondo desenfocado» (D9). `boxblur` es GPL y el build LGPL propio no incluye `gblur`. | **CSS `filter: blur()` sobre un fotograma fijo del clip** en `capa-clip.html`. No toca el build de ffmpeg. | El fondo no se mueve. Añadir `gblur` exige recompilar y volver a pasar W3.2. |
 | **M-D8** | `tunel` no está en la lista de D4 pero la pieza existe. | **Fuera del esquema del modelo en la fase 1**, porque exige tres fotos. La pieza sigue probada por el adaptador. | Una escena menos. Entra en la fase 2 sin coste. |
 | **M-D9** | Formato `guion.md` y 6 bloques. | **Sin registrar en integrado** y conservado como adaptador de tests hasta la fase 2: las SSIM siguen protegiendo las piezas. | Código viejo vivo una fase. |
+
+**Respuestas de Marc (2026-11-07):** M-D1 puertos fijos 47810–47813; M-D2 lista simple de perfiles; M-D5 aprobadas; M-D3, M-D6, M-D7, M-D8 y M-D9 según la recomendación; M-D4 aplazada (sin descarga en la nube; respaldo de mutex en T12, en local).
 
 **Pasos manuales de Marc:** M2 (preview en WebView2 con la RTX, necesaria para CA4 con WebGPU), M-5 (test de sockets desde un terminal externo), clips H.264 en WebView2 (Playwright y CfT no traen H.264), CA8 en un equipo sin GPU, y pruebas con la app instalada.
 
@@ -98,10 +100,12 @@ Sin M-D1, M-D2 y M-D5 no empieza la implementación. En las demás se aplica la 
 
 **Files:** Modify `SPEC-video.md` (I2 b, I4, I7, I8, D8, D9, D4, diagrama de fronteras). Crear subtareas en Plane.
 
-- [ ] **Step 1:** Registrar las respuestas de Marc a M-D1…M-D9. Sin M-D1, M-D2 y M-D5, parar.
-- [ ] **Step 2:** Aplicar en la spec solo lo aprobado. I8 con el texto: «`frame-src` lista exactamente los puertos de preview fijados en `tauri.conf.json`; nunca `127.0.0.1:*`».
-- [ ] **Step 3:** Lanzar la R0 de este plan con el `cyber-security-auditor`, pasándole §2 del handoff y los archivos, no estas conclusiones. Incorporar los cambios aquí.
+- [x] **Step 1:** Registrar las respuestas de Marc a M-D1…M-D9. Sin M-D1, M-D2 y M-D5, parar.
+- [x] **Step 2:** Aplicar en la spec solo lo aprobado. I8 con el texto: «`frame-src` lista exactamente los puertos de preview fijados en `tauri.conf.json`; nunca `127.0.0.1:*`».
+- [x] **Step 3:** Lanzar la R0 de este plan con el `cyber-security-auditor`, pasándole §2 del handoff y los archivos, no estas conclusiones. Incorporar los cambios aquí.
 - [ ] **Step 4: Commit.** `Spec: enmiendas de seguridad de la fase 1 (SEO-xx)`
+
+**R0:** aprobada con cambios (0 Critical, 0 High tras verificar R0-1, 7 Medium incorporados, 5 Low a Plane).
 
 ---
 
@@ -130,8 +134,10 @@ export class ErrorEsquema extends Error { problemas: { ruta: string; codigo: str
 - `EscenaBase`: unión discriminada por `tipo`, con los campos de `formato.ts` y `series` como **array** `{ nombre, valores }`, no mapa.
 
 **Seguridad.** I1, I6. El esquema **no tiene campos de ruta ni URL**. Todo objeto va con `.strict()`. El texto pasa por `textoSeguro`: NFC y sin C0, C1, bidi (`U+202A–202E`, `U+2066–2069`) ni surrogados sueltos. No se rechaza `<`: lo cubre el escape, y la spec pide verlo escapado. Números finitos y acotados (`valor` en ±1e12). `ErrorEsquema` nunca lleva el valor, para que no llegue a logs ni a la UI como texto del atacante.
+**Topes (R0-4).** Toda cadena lleva `.max()` y todo array `.max()`; `fondo`, `look`, `subtitulos.estilo`, `recursos[].clase`, `recursos[].ext` y la región de `mapa` son `z.enum` de listas cerradas; `ext` ∈ `{jpg,png,webp,mp4,wav}` según `clase`. Números: enteros donde toque (`ancho`, `alto` ≤ 8192), tiempos finitos, ≥ 0 y crecientes (`recorte`, `ajusteCorte`, `inicio`). Test `sin_cadena_sin_tope`, que recorre el esquema de zod igual que `sin_campos_ruta` y falla con cualquier `ZodString`/`ZodArray` sin `max` o cualquier campo de estilo que no sea enum. Test `ext_libre_rechazada` en `validarProyecto`.
+**URLs en el texto (R0-8).** `textoSeguro` **rechaza** en los campos de texto los patrones que `urlsDeRed` detectaría (`[a-z][a-z0-9+.-]*://`, `//host`, `file:`), con `codigo: "url_en_texto"`, y `recomendaciones` sugiere escribir el dominio sin esquema.
 
-- [ ] **Step 1: Escribir los tests, que fallan.** `guion_valido_pasa` (fixtures de fútbol y cocina). `sobra_un_campo` (`{ruta: "x"}` en cualquier nivel → `unrecognized_keys`). `sin_campos_ruta`: recorre el esquema y falla si existe `ruta`, `url`, `path`, `src` o `archivo`. `limites_exactos`: 90 escenas pasan, 91 no; 3000 caracteres pasan, 3001 no. `numero_no_finito` (`1e400`, `"12"`, `null`). `proto` (`JSON.parse('{"__proto__":{"x":1}}')` → rechazado). `color_malo_rechazado` en `validarProyecto`. `texto_control` (`"a\u202Eb"`, `"a\u0000"`). `script_pasa_como_texto` (`<script>` válido). `error_sin_valor`: `JSON.stringify(e.problemas)` no contiene el centinela. `mapa_fuera_de_atlas` usa `resolverZona`. `tunel_rechazado`. `recurso_id_regex`: `../x`, `C:\x`, `a:b`.
+- [ ] **Step 1: Escribir los tests, que fallan.** `guion_valido_pasa` (fixtures de fútbol y cocina). `sobra_un_campo` (`{ruta: "x"}` en cualquier nivel → `unrecognized_keys`). `sin_campos_ruta`: recorre el esquema y falla si existe `ruta`, `url`, `path`, `src` o `archivo`. `limites_exactos`: 90 escenas pasan, 91 no; 3000 caracteres pasan, 3001 no. `numero_no_finito` (`1e400`, `"12"`, `null`). `proto` (`JSON.parse('{"__proto__":{"x":1}}')` → rechazado). `color_malo_rechazado` en `validarProyecto`. `texto_control` (`"a\u202Eb"`, `"a\u0000"`). `script_pasa_como_texto` (`<script>` válido). `error_sin_valor`: `JSON.stringify(e.problemas)` no contiene el centinela. `mapa_fuera_de_atlas` usa `resolverZona` e incluye `constructor`, `__proto__` y `toString` (`ALIAS_PAISES[q]` sobre un objeto literal los resolvería; usar `Object.hasOwn` o un `Map`). `tunel_rechazado`. `recurso_id_regex`: `../x`, `C:\x`, `a:b`.
 - [ ] **Step 2: Ejecutar.** `npx vitest run test/esquema.test.ts`. Esperado: FAIL, módulo inexistente.
 - [ ] **Step 3: Implementar con zod.** `recomendaciones`: corte cada 2–4 s, gancho en los 3 primeros segundos, última frase que enlace con el inicio. Se estima con 14 caracteres/s y nunca lanza.
 - [ ] **Step 4: Ejecutar.** Esperado: PASS.
@@ -181,7 +187,7 @@ Cambios fijados:
 - `construirLinea` suma los tiempos de cada frase aplicando `recorte` y `ajusteCorte` ajustado a la palabra más cercana.
 
 **Seguridad.** I1, I2. Cada valor con el escape de su contexto, sustitución en una pasada. El plan valida el tema y los tiempos antes de escribir nada. `escribirPlan` no cambia: rechaza que `rel` salga de `destino`.
-**Negativas:** `script_y_llaves_escapados` (`<script>`, `{{ID}}`, `</script>` y `"><img>` en cada campo de texto de cada tipo: ninguno aparece sin escapar en ningún fichero). `sin_url_de_red` (`http://x` en todos los textos: `urlsDeRed` solo ve datos escapados y el render no lo interpreta). `clave_no_llega` (centinela en `ELEVENLABS_API_KEY`: ausente de `archivos`). `numero_no_finito_lanza`.
+**Negativas:** `script_y_llaves_escapados` (`<script>`, `{{ID}}`, `</script>` y `"><img>` en cada campo de texto de cada tipo: ninguno aparece sin escapar en ningún fichero). `sin_url_de_red` (un `Proyecto` cargado a mano con `http://x` en un texto: `planificarComposicion` lo rechaza antes de escribir nada; `urlsDeRed` no cambia, y un test fija su comportamiento sobre `DATOS` y nodos de texto). Prohibido excluir texto o `DATOS` de `urlsDeRed` (R0-8). `clave_no_llega` (centinela en `ELEVENLABS_API_KEY`: ausente de `archivos`). `numero_no_finito_lanza`.
 
 - [ ] **Step 1: Tests que fallan.** Las negativas anteriores, más `n_escenas` (1, 6, 12, 90), `noventa_escenas_orden_z` (subtítulos por encima de `esc90`), `ids_por_indice`, `test_texto_limite_cabe` (palabra de 80 letras, emoji, árabe: `tamanoGancho` ≥ mínimo y aviso si no cabe) y `sin_6_literal`.
 - [ ] **Step 2: Ejecutar.** Esperado: FAIL.
@@ -270,6 +276,9 @@ Los errores tipados salen como `isError` con un bloque JSON `{ codigo: "esquema"
 - Preview: `gpu` lo decide la UI con `navigator.gpu?.requestAdapter()`, porque WebView2 y CfT pueden diferir. Si difieren, aviso.
 
 **Seguridad.** I2, I7, I11, I13. La carpeta `r<n>` sale de un contador del motor, nunca de la UI. El render sigue pasando por `comprobarComposicion` con `ok: true` obligatorio.
+**Barrido (R0-6).** La spec (I7) exige barrer también tras una cancelación y al arrancar el motor, para recoger lo que dejó un motor muerto. `src/proceso.ts` hoy solo barre tras un timeout o un error de la CLI (`r.timeout || (cli && r.code !== 0)`): la implementación debe cumplir la spec. Test `barrido_al_arrancar`.
+**Puerto CDP (R0-1).** Chrome va solo por pipe (`pipe: true` en todas las vías de HyperFrames 0.8.206, verificado). Trabajo local en T6 o T21: endurecer el parche para rechazar `--remote-debugging-port` y `--remote-debugging-address` (error, como `SEO_STUDIO_UN_PROCESO`) y el test `render_sin_puerto_cdp`, que durante un render real enumera los sockets en escucha de los PID con imagen bajo la carpeta del CfT (`Get-NetTCPConnection -State Listen -OwningProcess`) y falla si hay alguno.
+**Servidor de ficheros (R0-2).** Test `servidor_hf_solo_render`: pedir `../proyecto.json` o `../../` al servidor de HyperFrames da 404.
 **Negativas:** `render_no_pisa_preview` (preview montada durante un render: `_render/` intacto). `fondo_degradado_visible` (`VIDEO_FORZAR_SIN_GPU=1`: `reserva` no vacío). `modo_invalido`. `clave_en_composicion` (barrido de `_composicion` y `_render`). `timeout_sin_procesos` sigue pasando con `_render/`.
 
 - [ ] **Step 1: Tests que fallan.** Las negativas, más `edicion_texto_no_normaliza` (espía de `ejecutar`: 0 llamadas a `loudnorm`), `montaje_edicion_rapido` (< 1 s sin ffmpeg), `voz_pendiente_lista` y `modo_llega_a_job`.
@@ -317,10 +326,10 @@ Capa: `{ recursoId, modo: "encima"|"detras", encuadre: "marco"|"zoom"|"paneo", e
 - Modify: `src/herramientas-proyecto.ts`
 - Test: `video-mcp-server/test/perfil.test.ts`, `test/generico.test.ts`
 
-**Interfaces.** `Perfil = { id, nombre, voz, idioma, colores: { fondo, texto, acento, contorno, secundario }, fuente: "Anton"|"Inter Tight"|"JetBrains Mono" }`, en `<estado>/video/perfiles/<id>.json`. `temaDePerfil(p): Tema` pasa por `validarTema`. Tools `video_perfiles_listar`, `video_perfil_guardar`, `video_perfil_duplicar`.
+**Interfaces.** `Perfil = { id, nombre, voz, idioma, colores: { fondo, texto, acento, contorno, secundario }, fuente: "Anton"|"Inter Tight"|"JetBrains Mono" }`, en `<estado>/video/perfiles/<id>.json`. `PERFIL_ID_RE = /^(defecto|p-[0-9a-f]{16})$/`. El id lo genera **siempre el motor** (`video_perfil_duplicar` devuelve el nuevo); `video_perfil_guardar` exige que el perfil exista (si no, `no_encontrado`) y, si el cuerpo trae un `id` distinto del de la ruta o del argumento, **rechaza con 422** (`id_distinto`) sin escribir nada: falla visible antes que ignorar en silencio (misma regla que T9). `voz` con la misma regex que T5 (`^[A-Za-z0-9]{10,40}$`), `idioma` de una lista cerrada, `nombre` con `textoSeguro` y ≤ 60. `temaDePerfil(p): Tema` pasa por `validarTema`. Tools `video_perfiles_listar`, `video_perfil_guardar`, `video_perfil_duplicar`.
 
 **Seguridad.** I1 y G1. Validación al cargar: el `color()` silencioso ya no aplica, porque W3.1 lo convierte en rechazo. El perfil por defecto es neutro.
-**Negativas:** `perfil_color_css_rechazado`, `perfil_fuente_fuera_de_lista`, `perfil_con_campo_de_mas`, `perfil_id_recorrido`. `sin_futbol` en `generico.test.ts`, ampliado a prompts, descripción del esquema y perfil por defecto.
+**Negativas:** `perfil_color_css_rechazado`, `perfil_fuente_fuera_de_lista`, `perfil_con_campo_de_mas`, `perfil_id_recorrido`, `perfil_id_cuerpo_distinto_422`, `perfil_guardar_inexistente_404`, `duplicar_no_acepta_id`, `perfil_voz_regex`. `sin_futbol` en `generico.test.ts`, ampliado a prompts, descripción del esquema y perfil por defecto.
 
 - [ ] **Step 1: Tests que fallan.** Las negativas, más `dos_perfiles_dos_temas` (mismo guion con dos perfiles: CSS distinto, sin tocar nada más).
 - [ ] **Step 2: Ejecutar.** Esperado: FAIL.
@@ -360,7 +369,7 @@ Capa: `{ recursoId, modo: "encima"|"detras", encuadre: "marco"|"zoom"|"paneo", e
 
 **Interfaces.**
 - `crear_router(estado, protegido) -> APIRouter`, montado en `create_app`.
-- Patrones de ruta: `id` `^video\d{3}$`, `gid` `^g-[0-9a-f]{16}$`.
+- Patrones de ruta: `id` `^video\d{3}$`, `gid` `^g-[0-9a-f]{16}$`, `pid` `^(defecto|p-[0-9a-f]{16})$`, `rid` (regex de recurso de T1), `bandeja_id` (formato de T13). Test `todas_las_rutas_con_patron`: recorre `app.routes` y falla con cualquier parámetro de ruta sin regex. En `PUT /video/proyectos/{id}`, el `id` del cuerpo debe coincidir con el de la ruta (si no, 422); lo mismo en perfiles.
 - `MotorError` gana `codigo: str | None` y `problemas: list`. `_respuesta` los lee del bloque JSON de T4. Mapa: `esquema` → 422, `conflicto` → 409, `no_encontrado` → 404, `coste_cambiado` → 409. `MotorNoDisponible` → 503.
 - `LimiteCuerpo`: middleware ASGI puro para `/video/`, con **1 MiB** contando el flujo real, no solo `Content-Length`. Puro, porque `BaseHTTPMiddleware` interfiere con el SSE del chat.
 
@@ -400,9 +409,10 @@ Capa: `{ recursoId, modo: "encima"|"detras", encuadre: "marco"|"zoom"|"paneo", e
 
 **Interfaces.**
 - `PUERTOS_PREVIEW = (47810, 47811, 47812, 47813)` en `config.py`. Test: coincide con `frame-src` de `tauri.conf.json`.
-- `class Claves: abrir(id, carpeta) -> str; rotar(id, carpeta); cerrar(id); buscar(clave) -> Entrada | None`. Solo en memoria, una por proyecto, `secrets.token_urlsafe(32)`, comparación con `compare_digest` recorriendo todas.
+- `class Claves: abrir(id, carpeta, creado) -> str; rotar(id, carpeta, creado); cerrar(id); buscar(clave) -> Entrada | None`. La clave se ata a `(id, carpeta, creado)` del proyecto, no solo al `id`, para que un id reutilizado por `siguienteId` no herede una clave (R0-5). Solo en memoria, una por proyecto, `secrets.token_urlsafe(32)`, comparación con `compare_digest` recorriendo todas.
 - `crear_app(claves, puerto) -> FastAPI`: **app aparte, una sola ruta** `GET|HEAD /p/{clave}/{ruta:path}`, sin documentos ni bearer.
-- `main()`: `uvicorn.Server(Config(despachar(api, preview), log_level="info", access_log=False)).run(sockets=[api, preview])`. `despachar` es ASGI puro y elige por `scope["server"][1]`. Sin puerto libre: la API arranca igual y `POST preview` da 503 legible.
+- **Reserva de puertos (R0-7).** Al arrancar, el backend **vincula los cuatro puertos** de `PUERTOS_PREVIEW` en `127.0.0.1` con `SO_EXCLUSIVEADDRUSE` (Windows; nunca `SO_REUSEADDR`) y los mantiene mientras viva: sirve en el primero y los demás responden 404 con la CSP, como reserva. Si alguno no se puede vincular, la preview funciona en el que haya, pero `POST …/preview` devuelve el aviso `puertos_preview_ajenos` (visible en la UI y en el log) con los puertos afectados. Si no hay ninguno, da 503. El puerto de la API (efímero) se comprueba fuera de `PUERTOS_PREVIEW`; si coincide, se vuelve a vincular. Tests: `reserva_cuatro_puertos`, `segundo_bind_falla`, `api_fuera_de_lista`, `puerto_ajeno_avisa`.
+- `main()`: `uvicorn.Server(Config(despachar(api, preview), log_level="info", access_log=False)).run(sockets=[api, *preview])`, con los cuatro sockets reservados de `PUERTOS_PREVIEW` (R0-7): el primero sirve y los demás responden 404 con la CSP. `despachar` es ASGI puro y elige por `scope["server"][1]`. Sin puerto libre: la API arranca igual y `POST preview` da 503 legible.
 - Runtime: `<VIDEO_ENGINE_DIR>/app/node_modules/hyperframes/dist/hyperframe.runtime.iife.js`, SHA-256 fijado en `config.py` y comprobado al abrir. Si no cuadra: 503, nunca servir otro (I4, I11).
 - `CONTROL_JS` en `preview.py`, derivado del spike sin las órdenes de medición.
 - Mensajes hacia dentro: `seek { id, t }`, `play`, `pause`. Hacia fuera: `listo { duracion }`, `seek-hecho { id, t }`, `tiempo { t, reproduciendo }` (≤ 30 por segundo), `error { id }` sin texto.
@@ -436,7 +446,7 @@ Capa: `{ recursoId, modo: "encima"|"detras", encuadre: "marco"|"zoom"|"paneo", e
 **Reglas de 409 (L-4):** voz con render activo; render con voz activa; borrar proyecto con render activo; borrar recurso en uso. PUT sigue permitido durante un render, porque compone en `_render/`.
 
 **Seguridad.** I5, I7, I10, CA6, CA7. La clave nunca en respuestas ni en `args` del job. El canal de render sigue sin clave.
-**Negativas:** `render_colgado_falla_y_cola_sigue` (motor falso que no acaba; deadline: job `failed`, legible, y un upload posterior corre), `motor_muere_en_render`, `voz_con_render_409`, `render_con_voz_409`, `borrar_con_render_409`, `borrar_invalida_clave`, `recurso_en_uso_409`, `jobs_rechaza_video_render`, `clave_no_en_jobs`, `resultado_sin_rutas`, `coste_cambiado_409`, `sin_clave_elevenlabs_409`.
+**Negativas:** `render_colgado_falla_y_cola_sigue` (motor falso que no acaba; deadline: job `failed`, legible, y un upload posterior corre), `motor_muere_en_render` (tras el relanzamiento, además, no queda ningún proceso con imagen bajo el CfT ni el ffmpeg del bundle: barrido al arrancar, R0-6), `voz_con_render_409`, `render_con_voz_409`, `borrar_con_render_409`, `borrar_invalida_clave`, `recurso_en_uso_409`, `jobs_rechaza_video_render`, `clave_no_en_jobs`, `resultado_sin_rutas`, `coste_cambiado_409`, `sin_clave_elevenlabs_409`.
 
 - [ ] **Step 1: Tests que fallan.**
 - [ ] **Step 2: Ejecutar.** Esperado: FAIL.
@@ -451,13 +461,13 @@ Capa: `{ recursoId, modo: "encima"|"detras", encuadre: "marco"|"zoom"|"paneo", e
 ### Task 12: CSP de la preview, WebRTC e instancia única
 
 **Files:**
-- Modify: `app-ui/src-tauri/tauri.conf.json`, `app-ui/src-tauri/src/lib.rs`, `app-ui/src-tauri/Cargo.toml` (según M-D4)
+- Modify: `app-ui/src-tauri/tauri.conf.json`, `app-ui/src-tauri/src/lib.rs`, `app-ui/src-tauri/Cargo.toml` (solo las características de `windows-sys` que hagan falta)
 - Test: `app-backend/tests/test_preview.py` (lee el JSON), `#[cfg(test)]` en `lib.rs`
 
 **Cambios fijados:**
 - `csp` y `devCsp`: añadir `frame-src http://127.0.0.1:47810 http://127.0.0.1:47811 http://127.0.0.1:47812 http://127.0.0.1:47813`. `devCsp` pierde `127.0.0.1:*` en `frame-src`; si W3.5 no se ha integrado, el spike usa un puerto de esa lista.
 - `app.windows[0].additionalBrowserArgs`: `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-webrtc-ip-handling-policy=disable_non_proxied_udp`. Al fijarlo, Tauri deja de poner sus valores por defecto, así que van explícitos.
-- Instancia única según M-D4. Debe enfocar o cerrar antes de lanzar el sidecar.
+- Instancia única: **M-D4 aplazada (sin plugin)**. Se aplica el respaldo ya previsto, que no añade dependencias: `CreateMutexW` con nombre `Local\SEOStudio-<identifier>` (nunca `Global\`) en `setup`, **antes de lanzar el sidecar**; si ya existe, se muestra un diálogo y la segunda instancia sale sin lanzar el sidecar. Test `#[cfg(test)]`: el segundo `adquirir` falla. Si tampoco se hace esto, M-4 sigue abierta y `VIDEO_ENGINE=1` no se activa (T21, paso 5). Sin él, dos backends comparten `<estado>/video/` con cerrojos y claves separados (borrados durante un render, voz facturada dos veces, claves de preview reutilizadas).
 
 **Seguridad.** I8 y M-4. El test falla con cualquier `*` en `frame-src`, o si `connect-src` y `frame-src` admiten otro host. `capabilities/default.json` sigue con `core:default` solo.
 **Negativas:** `frame_src_sin_comodin`, `puertos_coinciden`, `capacidades_sin_cambios`. La sonda de navegación de `csp-integracion` con marco que lista 4 puertos: navegar a un quinto se bloquea. WebRTC en WebView2: comprobación manual de Marc, porque Playwright no aplica estos argumentos.
@@ -690,3 +700,10 @@ Fuera de Tauri los dos comandos no existen. Los E2E siembran la bandeja desde `g
 - **Sin WebGPU en el iframe de WebView2 con la RTX** no hay dato todavía: M2.
 - **Playwright no prueba Tauri:** `frame-src`, WebRTC y comandos Rust se cubren con tests de fichero, `cargo test` y comprobación manual.
 - **Tope de ElevenLabs:** D7 dice 20 MB y W3.4 fija 64 MiB. T5 aplica D7.
+
+**Low de la R0 pendientes de Plane** (no se aplican en este plan):
+
+- R0-9: `frame-ancestors` admite `http://localhost:1420` también en producción (T10). Propuesta: solo si `not config.FROZEN`; test `frame_ancestors_produccion`.
+- R0-10: el runtime de la preview se lee una vez, se verifica y se sirve desde memoria (sin TOCTOU), y la reescritura de la CSP sustituye exactamente la cadena del `<meta>` de `composicion.ts` (constante compartida) y falla si no aparece una vez; test `meta_csp_unica` (T10).
+- R0-11: en la preview, `script-src` con los `sha256-…` de los `<script>` en línea en lugar de `'unsafe-inline'` si las piezas lo permiten, y `control.js` borra `RTCPeerConnection`, `RTCDataChannel` y `WebSocket` del `window` antes de la composición (defensa en profundidad, opcional en la fase 1).
+- R0-12: W1.3 (c) se justifica en la spec (nivel inicial antes de `LowerToken()`), pero el test de I3 debe exigir además que todos los renderers vivos estén en Untrusted en la primera captura de fotograma.

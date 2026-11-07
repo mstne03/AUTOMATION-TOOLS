@@ -1085,7 +1085,8 @@ async def test_post_mientras_descarga_409(cft_falso, tmp_path, fake_anthropic):
     async with _app(tmp_path, fake_anthropic, t) as (_, c):
         assert (await c.post("/video/navegador/descarga", headers=AUTH)).status_code == 202
         r = await c.post("/video/navegador/descarga", headers=AUTH)
-        assert r.status_code == 409 and "en curso" in r.json()["detail"]
+        assert r.status_code == 409 and r.json()["detail"]["codigo"] == "descarga_en_curso"
+        assert "en curso" in r.json()["detail"]["mensaje"]
         soltar.set()
         assert (await _hasta_fin(c))["estado"] == "listo"
     assert len(t.peticiones) == 1
@@ -1140,7 +1141,8 @@ async def test_post_sin_modulo_instalado_503(cft_falso, tmp_path, fake_anthropic
     t = _sirve(b"")
     async with _app(tmp_path, fake_anthropic, t) as (_, c):
         r = await c.post("/video/navegador/descarga", headers=AUTH)
-        assert r.status_code == 503 and r.json()["detail"] == video.MENSAJE_NO_INSTALADO
+        assert r.status_code == 503
+        assert r.json()["detail"] == {"mensaje": video.MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
         assert (await c.get("/video/navegador", headers=AUTH)).json()["estado"] == "ausente"
     assert t.peticiones == []
 
@@ -1354,7 +1356,7 @@ def test_el_detector_de_usos_ve_alias_e_imports_relativos(fuente):
 
 
 def test_quien_puede_usar_el_navegador():
-    """I10: solo main.py descarga; video.py solo consulta; nada más (registry, tools) lo importa."""
+    """I10: solo main.py descarga; video.py solo consulta; video_rest.py solo borra; nada más (registry, tools) lo importa."""
     carpeta = Path(navegador.__file__).parent
     usos = {
         p.name: _referencias_a_navegador(p.read_text(encoding="utf-8"))
@@ -1363,4 +1365,8 @@ def test_quien_puede_usar_el_navegador():
     }
     assert usos.pop("main.py") - {"<módulo>"} <= {"Descargador", "limpiar_restos"}
     assert usos.pop("video.py") - {"<módulo>"} <= {"instalado", "verificar", "comprobar_ancestros", "NavegadorError"}
+    # video_rest.py borra la carpeta de un proyecto sin seguir enlaces con los mismos ayudantes (T9).
+    assert usos.pop("video_rest.py") - {"<módulo>"} <= {"es_enlace", "_borrar", "comprobar_ancestros"}
+    # preview.py (T10) solo comprueba que lo que sirve no cuelga de un enlace (no descarga ni lanza nada).
+    assert usos.pop("preview.py") - {"<módulo>"} <= {"es_enlace", "comprobar_ancestros", "NavegadorError"}
     assert {m: u for m, u in usos.items() if u} == {}

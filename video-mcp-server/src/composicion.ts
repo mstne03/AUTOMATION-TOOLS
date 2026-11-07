@@ -46,7 +46,7 @@ const DIRECCIONES: [number, number][] = [
 // "nebula" usa FractalNoise: el shader Nebula del catálogo es un efecto de forma (una esfera de cristal), no un fondo.
 const SHADERS: Record<string, string> = { aurora: "Aurora", plasma: "Plasma", nebula: "FractalNoise", mesh: "MeshGradient" };
 
-const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+export const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const Color = z.string().regex(COLOR_RE);
 // Lista cerrada: una familia solo existe con la cara que trae plantilla/fuentes/.
 const cara = <F extends string, A extends string, P extends number>(familia: F, archivo: A, peso: P) =>
@@ -56,6 +56,12 @@ const Fuente = z.union([
   cara("Inter Tight", "inter-tight-latin-800-normal.woff2", 800),
   cara("JetBrains Mono", "jetbrains-mono-latin-700-normal.woff2", 700),
 ]);
+/** Archivo y peso de cada familia de la lista cerrada (los que trae plantilla/fuentes/). */
+export const CARAS_FUENTE = {
+  Anton: { archivo: "anton-latin-400-normal.woff2", peso: 400 },
+  "Inter Tight": { archivo: "inter-tight-latin-800-normal.woff2", peso: 800 },
+  "JetBrains Mono": { archivo: "jetbrains-mono-latin-700-normal.woff2", peso: 700 },
+} as const;
 const Tamano = z.number().int().min(8).max(400);
 const TEMA = z.strictObject({
   nombre: z.string().max(200).optional(),
@@ -711,7 +717,10 @@ const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/
 const ENTIDADES: Record<string, string> = {
   colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
 };
-const ESQUEMA_RE = /\b(?:https?|wss?):(?:[\\/]+[^\s"'<>)]|[^\s"'<>)\\/]*\.)/gi;
+// Esquema de red seguido de cualquier carácter que no corte la URL: cubre `http://x`, `http:\\x`, `http:intranet` y
+// `http:` + usuario largo + `@evil.com`. Sin cuantificadores anidados ni tope de host: lineal en la entrada.
+// Solo dígitos tras `:` (`http:2`, `ws:80`) es un puerto o una razón, no una URL: hace falta algo más detrás.
+const ESQUEMA_RE = /\b(?:https?|wss?):(?=\d*[^\s"'<>)\d])/gi;
 const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
 // Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
 const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
@@ -727,7 +736,7 @@ function sinEntidades(t: string): string {
   return t.replace(/&#[xX]([0-9a-fA-F]+);?|&#([0-9]+);?|&([a-zA-Z]+);|&amp/g, (m, hex?: string, dec?: string, nombre?: string) => {
     if (hex) return caracter(parseInt(hex, 16));
     if (dec) return caracter(parseInt(dec, 10));
-    return nombre ? (ENTIDADES[nombre] ?? m) : "&";
+    return nombre ? (Object.hasOwn(ENTIDADES, nombre) ? ENTIDADES[nombre] : m) : "&";
   });
 }
 
@@ -735,11 +744,11 @@ function sinEscapesCss(t: string): string {
   return t.replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([^\r\n\f]))/gi, (_, hex?: string, c?: string) => (hex ? caracter(parseInt(hex, 16)) : c!));
 }
 
-function hallazgosDeRed(texto: string, nombre: string): string[] {
+export function hallazgosDeRed(texto: string, nombre: string): string[] {
   const hallados = new Set<string>();
   const anotar = (t: string, re: RegExp) => {
     for (const m of t.matchAll(re)) {
-      const ficha = /[^\s"'<>)]*/y;
+      const ficha = /[^\s"'<>)]{0,201}/y; // tope: solo se guardan 200 y así `http:http:…` no es cuadrático.
       ficha.lastIndex = m.index;
       const url = ficha.exec(t)![0];
       if (!W3_PERMITIDAS.has(url.toLowerCase())) hallados.add(url.slice(0, 200));

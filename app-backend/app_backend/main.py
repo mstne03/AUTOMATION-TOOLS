@@ -10,10 +10,10 @@ import json
 import logging
 import os
 import secrets
-import socket
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 from anthropic import (
@@ -24,16 +24,21 @@ from anthropic import (
     PermissionDeniedError,
 )
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Path as RutaPath
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 from youtube_mcp.auth import AuthError, ClientSecretConflict
 from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, navegador, registry, video
+from app_backend import config, navegador, preview, registry, video, video_rest
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -96,6 +101,7 @@ def create_app(
     conversaciones_dir: str | Path | None = None,
     elevenlabs_transport: httpx.AsyncBaseTransport | None = None,
     navegador_transport: httpx.BaseTransport | None = None,
+    reserva_preview: preview.Reserva | None = None,
 ) -> FastAPI:
     specs = registry.build()
     tools = registry.by_name(specs)
@@ -105,9 +111,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        runners = {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()}
+        runners["video_render"] = video_rest.crear_runner_render(app.state, asyncio.get_running_loop())
+        # El render va en su carril y solo lo encola la ruta de render: POST /jobs lo rechaza con 400.
         app.state.jobs = Jobs(
             jobs_path or config.STATE_DIR / "jobs.sqlite",
-            {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()},
+            runners,
+            carriles={"video_render": "video"},
+            internos={"video_render"},
         )
         app.state.jobs.start()
         app.state.agent = Agent(
@@ -122,7 +133,10 @@ def create_app(
         )
         # Motor de vídeo: se crea sin lanzar el proceso (arranque perezoso en la primera llamada).
         argv, cwd = video.comando_motor()
-        app.state.motor = video.MotorVideo(argv, cwd, lambda: video.entorno_motor(yt_auth.store))
+        # `actividad`: con una voz o un render en curso, el timeout de una llamada ajena no reinicia este proceso.
+        app.state.motor = video.MotorVideo(
+            argv, cwd, lambda: video.entorno_motor(yt_auth.store), actividad=app.state.cerrojos.alguno
+        )
         # Segundo proceso para las tools de video.TOOLS_CANAL_RENDER, sin la clave de ElevenLabs.
         app.state.motor_render = video.MotorVideo(
             argv, cwd, lambda: video.entorno_motor(yt_auth.store, con_clave=False)
@@ -140,6 +154,7 @@ def create_app(
         yield
         for t in tareas:
             t.cancel()
+        app.state.cierre.set()  # que los hilos de render dejen de sondear antes de parar el motor
         await app.state.motor.cerrar()
         await app.state.motor_render.cerrar()
         await app.state.jobs.stop()
@@ -154,7 +169,16 @@ def create_app(
                 log.warning("KB: %s", e)
         await asyncio.to_thread(_calentar_kb)
 
-    app = FastAPI(title="app-backend", lifespan=lifespan)
+    # Sin /docs, /redoc ni /openapi.json: son documentos HTML servidos desde el puerto de la API.
+    app = FastAPI(title="app-backend", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # Orden (de dentro a fuera): tope de cuerpo, CORS, CSP. El 413 lleva CORS y todo lleva CSP.
+    # Preview (T10): claves y runtime en memoria del proceso; sin reserva (tests) no hay puerto de preview.
+    app.state.cerrojos = video_rest.Cerrojos()  # actividad por proyecto: "render" | "voz"
+    app.state.cierre = threading.Event()
+    app.state.claves = preview.Claves()
+    app.state.runtime = preview.Runtime()
+    app.state.reserva_preview = reserva_preview
+    app.add_middleware(video_rest.LimiteCuerpo)
     # El WebView de Tauri tiene origen propio (tauri.localhost; localhost:1420 en desarrollo),
     # asi que el navegador exige CORS. Solo esos origenes; el token sigue siendo obligatorio.
     app.add_middleware(
@@ -163,12 +187,61 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+    app.add_middleware(video_rest.CabeceraCSP)
+
+    def _es_video(request: Request) -> bool:
+        return request.url.path.startswith("/video/")
+
+    @app.exception_handler(Exception)
+    async def error_inesperado(request: Request, exc: Exception):
+        # `ServerErrorMiddleware` envuelve a los middleware de usuario: la CSP se pone aquí.
+        log.exception("Error no controlado en %s", request.url.path, exc_info=exc)
+        detalle = {"mensaje": "Error interno.", "codigo": "interno"} if _es_video(request) else "Error interno."
+        return JSONResponse({"detail": detalle}, status_code=500, headers={"Content-Security-Policy": video_rest.CSP})
+
+    @app.exception_handler(RequestValidationError)
+    async def validacion(request: Request, exc: RequestValidationError):
+        # Un id de ruta con forma mala es "no encontrado", no un error de formulario.
+        if all(e["loc"][:1] == ("path",) for e in exc.errors()):
+            if _es_video(request):
+                return JSONResponse({"detail": {"mensaje": "No encontrado.", "codigo": "no_encontrado"}}, status_code=404)
+            return JSONResponse({"detail": "No encontrado."}, status_code=404)
+        if _es_video(request):  # sin `input`: es texto del cliente o del modelo
+            problemas = [{"ruta": ".".join(str(x) for x in e["loc"][1:]), "codigo": e["type"]} for e in exc.errors()]
+            detalle = {
+                "mensaje": "La petición no tiene la forma esperada.",
+                "codigo": "esquema",
+                "problemas": video_rest._problemas_seguros(problemas),
+            }
+            return JSONResponse({"detail": detalle}, status_code=422)
+        return await request_validation_exception_handler(request, exc)
+
+    _CODIGOS_HTTP_VIDEO = {
+        401: ("no_autorizado", "Token inválido o ausente."),
+        404: ("no_encontrado", "No encontrado."),
+        405: ("metodo_no_permitido", "Método no permitido."),
+        413: ("demasiado_grande", "El cuerpo es demasiado grande."),
+    }
+
+    @app.exception_handler(StarletteHTTPException)
+    async def error_http(request: Request, exc: StarletteHTTPException):
+        # Desde T11 todo error de /video/** lleva `detail: {mensaje, codigo}`; los de las rutas ya lo traen, los de
+        # FastAPI/Starlette (401, ruta o método inexistentes) se convierten aquí. Fuera de /video/ no cambia nada.
+        if _es_video(request) and not isinstance(exc.detail, dict):
+            codigo, mensaje = _CODIGOS_HTTP_VIDEO.get(exc.status_code, ("error", "La petición no se pudo completar."))
+            return JSONResponse(
+                {"detail": {"mensaje": mensaje, "codigo": codigo}},
+                status_code=exc.status_code,
+                headers=getattr(exc, "headers", None),
+            )
+        return await http_exception_handler(request, exc)
 
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:  # noqa: B008
         if creds is None or not secrets.compare_digest(creds.credentials, token):
             raise HTTPException(status_code=401, detail="Token invalido o ausente.")
 
     protegido = [Depends(require_token)]
+    app.include_router(video_rest.crear_router(app.state, protegido))
 
     # ------------------------------------------------------------------- chat
 
@@ -219,14 +292,14 @@ def create_app(
         return await asyncio.to_thread(app.state.agent.listar)
 
     @app.get("/conversations/{conversation_id}", dependencies=protegido)
-    async def get_conversation(conversation_id: str):
+    async def get_conversation(conversation_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         datos = await asyncio.to_thread(app.state.agent.detalle, conversation_id)
         if datos is None:
             raise HTTPException(status_code=404, detail="Conversación no encontrada.")
         return datos
 
     @app.delete("/conversations/{conversation_id}", dependencies=protegido)
-    async def delete_conversation(conversation_id: str):
+    async def delete_conversation(conversation_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         try:
             borrada = app.state.agent.borrar(conversation_id)
         except ConversacionOcupada:
@@ -246,7 +319,7 @@ def create_app(
         return [a.to_dict() for a in approvals.pending()]
 
     @app.post("/approvals/{approval_id}", dependencies=protegido)
-    async def resolve_approval(approval_id: str, body: ApprovalIn):
+    async def resolve_approval(approval_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)], body: ApprovalIn):
         try:
             return approvals.resolve(approval_id, body.decision, body.confirm_id).to_dict()
         except KeyError:
@@ -272,7 +345,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/jobs/{job_id}", dependencies=protegido)
-    async def get_job(job_id: str):
+    async def get_job(job_id: Annotated[str, RutaPath(pattern=video_rest.ID_URL)]):
         try:
             return app.state.jobs.get(job_id)
         except KeyError:
@@ -436,10 +509,9 @@ def create_app(
             r = await app.state.motor.llamar(
                 "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
             )
-        except video.MotorNoDisponible as e:
-            raise HTTPException(status_code=503, detail=str(e)) from None
         except video.MotorError as e:
-            raise HTTPException(status_code=502, detail=str(e)) from None
+            # R1 T1→T9 (N2): mensajes fijos, como en video_rest; el detalle (con rutas) solo al log.
+            raise video_rest._http(e) from None
         if not isinstance(r.datos, dict):
             raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
         return r.datos
@@ -456,10 +528,15 @@ def create_app(
     async def video_navegador_descarga():
         # Instalación sin motor de vídeo: bajar ~120 MB no serviría de nada.
         if config.FROZEN and not (config.VIDEO_ENGINE_DIR / "node" / "node.exe").is_file():
-            raise HTTPException(status_code=503, detail=video.MENSAJE_NO_INSTALADO)
+            raise HTTPException(
+                status_code=503, detail={"mensaje": video.MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
+            )
         d: navegador.Descargador = app.state.navegador
         if not d.reservar():
-            raise HTTPException(status_code=409, detail="Ya hay una descarga del navegador en curso.")
+            raise HTTPException(
+                status_code=409,
+                detail={"mensaje": "Ya hay una descarga del navegador en curso.", "codigo": "descarga_en_curso"},
+            )
         tarea = asyncio.create_task(asyncio.to_thread(d.ejecutar))
         tareas_navegador.add(tarea)  # que el GC no recoja la tarea
         tarea.add_done_callback(tareas_navegador.discard)
@@ -554,6 +631,21 @@ def create_app(
 
     @app.put("/settings", dependencies=protegido)
     async def put_settings(body: SettingsIn):
+        # Cambiar la clave de ElevenLabs reinicia el motor (la recibe por su entorno). Con una generación de voz o un
+        # render en curso eso los cortaría (ElevenLabs ya cobró la frase en vuelo): se rechaza ANTES de tocar nada, con
+        # un 409 de mensaje fijo, y la persona repite el cambio cuando acabe. (Se eligió el 409 y no aplazar el
+        # reinicio: aplazar deja la clave guardada pero sin efecto, justo el estado confuso que se quiere evitar.)
+        clave_cambia = body.elevenlabs_api_key is not None and (body.elevenlabs_api_key or None) != (
+            yt_auth.store.get(config.ELEVENLABS_KEY) or None
+        )
+        if clave_cambia and app.state.motor.en_actividad():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "mensaje": "Hay una generación en curso: espera a que termine para cambiar la clave.",
+                    "codigo": "generacion_en_curso",
+                },
+            )
         s = config.load_settings()
         if body.model is not None:
             if body.model not in config.MODELS:
@@ -583,7 +675,8 @@ def create_app(
                 yt_auth.store.delete(config.ELEVENLABS_KEY)
             # El motor recibe la clave por su entorno al arrancar: se para y la siguiente llamada lo
             # relanza con la nueva (o sin ninguna). Si no, seguiría usando y ocultando la revocada.
-            await app.state.motor.cerrar()
+            if clave_cambia:
+                await app.state.motor.cerrar()
         config.save_settings(s)
         config.apply_env(s)
         return settings_out()
@@ -671,15 +764,19 @@ def main() -> None:
     import uvicorn
 
     token = os.environ.get("APP_BACKEND_TOKEN") or secrets.token_urlsafe(32)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))  # nunca 0.0.0.0: el sidecar es local
+    # R0-7: los cuatro puertos de la preview se vinculan primero y se mantienen mientras viva el
+    # proceso; el de la API (efímero) se vincula después y fuera de esa lista.
+    reserva = preview.reservar_puertos()
+    sock = preview.vincular_api()
     port = sock.getsockname()[1]
     # listen() antes de anunciar el puerto: las conexiones que lleguen mientras uvicorn
     # termina de arrancar (varios segundos de imports) quedan en cola en vez de rechazarse.
-    sock.listen(128)
     print(json.dumps({"port": port, "token": token}), flush=True)
-    app = create_app(token)
-    uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=[sock])
+    app = create_app(token, reserva_preview=reserva)
+    destino = preview.despachar(app, preview.apps_preview(app.state.claves, reserva, app.state.runtime))
+    # El primer socket de la preview sirve; los demás responden 404 con la CSP. Sin puerto libre la API
+    # arranca igual y `POST …/preview` da 503.
+    uvicorn.Server(preview.config_servidor(destino)).run(sockets=[sock, *reserva.sockets])
 
 
 if __name__ == "__main__":

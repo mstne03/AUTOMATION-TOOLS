@@ -64,6 +64,58 @@ describe("servidor stdio", () => {
   );
 
   it(
+    "sin_tools_antiguas_en_integrado: con VIDEO_ENGINE_EMBEDDED=1 solo quedan las tools nuevas del almacén",
+    async () => {
+      expect(fs.existsSync(SERVIDOR), "Ejecuta npm run build antes").toBe(true);
+      const hijo = spawn(process.execPath, [SERVIDOR], {
+        cwd: os.tmpdir(),
+        env: {
+          SYSTEMROOT: process.env.SYSTEMROOT,
+          PATH: process.env.PATH,
+          TEMP: process.env.TEMP,
+          TMP: process.env.TMP,
+          VIDEO_ENGINE_EMBEDDED: "1",
+          VIDEO_ROOT: path.join(RAIZ, "integrado", "proyectos"),
+          VIDEO_STATE_DIR: path.join(RAIZ, "integrado", "estado"),
+        },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      let buffer = "";
+      const respuestas = new Map<number, any>();
+      hijo.stdout.on("data", (d: Buffer) => {
+        buffer += d.toString("utf8");
+        for (const linea of buffer.split("\n").slice(0, -1)) if (linea.trim()) respuestas.set(JSON.parse(linea).id, JSON.parse(linea));
+        buffer = buffer.slice(buffer.lastIndexOf("\n") + 1);
+      });
+      const esperar = async (id: number) => {
+        for (let i = 0; i < 1200 && !respuestas.has(id); i++) await new Promise((r) => setTimeout(r, 50));
+        expect(respuestas.has(id), `sin respuesta a ${id}`).toBe(true);
+        return respuestas.get(id);
+      };
+      const enviar = (m: object) => hijo.stdin.write(JSON.stringify(m) + "\n");
+      try {
+        enviar({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } });
+        await esperar(1);
+        enviar({ jsonrpc: "2.0", method: "notifications/initialized" });
+        enviar({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+        const nombres: string[] = (await esperar(2)).result.tools.map((t: { name: string }) => t.name);
+        for (const vieja of ["video_guardar_guion", "video_generar_voz", "video_estado", "video_listar", "video_musica", "video_catalogo"]) {
+          expect(nombres, vieja).not.toContain(vieja);
+        }
+        expect(nombres).toEqual(expect.arrayContaining(["video_guion_esquema", "video_guion_guardar", "video_proyecto_crear", "video_proyecto_guardar", "video_proyecto_leer"]));
+        // Un error tipado llega como isError con el bloque JSON { codigo, problemas }.
+        enviar({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "video_proyecto_leer", arguments: { id: "video1" } } });
+        const r = await esperar(3);
+        expect(r.result.isError).toBe(true);
+        expect(JSON.parse(r.result.content.at(-1).text)).toEqual({ codigo: "esquema", problemas: [{ ruta: "id", codigo: "id_invalido" }] });
+      } finally {
+        hijo.kill();
+      }
+    },
+    60000,
+  );
+
+  it(
     "responde a initialize, tools/list y tools/call con stdout limpio",
     async () => {
       expect(fs.existsSync(SERVIDOR), "Ejecuta npm run build antes").toBe(true);
@@ -111,10 +163,28 @@ describe("servidor stdio", () => {
         "video_fotograma",
         "video_generar_voz",
         "video_guardar_guion",
+        "video_guion_borrar",
+        "video_guion_esquema",
+        "video_guion_guardar",
+        "video_guion_leer",
+        "video_guion_listar",
         "video_listar",
         "video_musica",
+        "video_perfil_duplicar",
+        "video_perfil_guardar",
+        "video_perfiles_listar",
+        "video_proyecto_crear",
+        "video_proyecto_guardar",
+        "video_proyecto_leer",
+        "video_proyecto_listar",
         "video_renderizar",
         "video_vista_previa",
+        "video_voces",
+        "video_voz_coste",
+        "video_voz_forma",
+        "video_voz_generar",
+        "video_voz_muestra",
+        "video_voz_quitar_silencios",
       ]);
       const guardar = lista.result.tools.find((t: { name: string }) => t.name === "video_guardar_guion");
       expect(guardar.description).toMatch(/video_ayuda/);

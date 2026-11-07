@@ -185,6 +185,8 @@ jobs:
   # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
   # las rutas del navegador del render (SEO-108) y del motor de vídeo solo cuentan aquí; en el job
   # `python` (ubuntu) los de junctions se saltan.
+  # También la frontera REST (T9) y la preview (T10): la reserva de los puertos de preview con
+  # SO_EXCLUSIVEADDRUSE (R0-7) solo se puede probar en Windows.
   backend-windows:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
@@ -203,7 +205,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: app-backend/uv.lock
       - run: uv sync --locked --extra dev
-      - run: uv run --no-sync --extra dev pytest -q -rs tests/test_navegador.py tests/test_video.py
+      - run: uv run --no-sync --extra dev pytest -q -rs tests/test_navegador.py tests/test_video.py tests/test_video_rest.py tests/test_preview.py
 
   # Windows: el shell enlaza win32job y windows-sys, y es la única plataforma que se publica.
   tauri-rust:

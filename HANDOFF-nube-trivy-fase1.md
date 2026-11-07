@@ -101,10 +101,11 @@ la spec). **M-D4** (`tauri-plugin-single-instance`) necesita además permiso de 
 respuestas, pídeselas en la sesión antes de tocar código, con el resumen y la recomendación de la tabla del plan.
 Respuestas de Marc (rellenar al disparar la sesión):
 
-- M-D1:
-- M-D2:
-- M-D5:
-- M-D3, M-D4, M-D6–M-D9 (vale la recomendación salvo que diga otra cosa):
+- M-D1: puertos fijos `47810–47813` en `tauri.conf.json` (la recomendación del plan).
+- M-D2: lista simple de perfiles (`perfiles/<id>.json`, «Duplicar», el proyecto referencia uno), enmendando D8.
+- M-D5: aprobadas las enmiendas M-1, M-2, M-3, W1.3, W1.5 y W1.6 de la spec. Se escriben en T0, con su R0.
+- M-D3, M-D6, M-D7, M-D8 y M-D9: vale la recomendación del plan.
+- M-D4 (`tauri-plugin-single-instance`): no se descarga en la nube; T12 queda para la sesión local.
 
 ### 3.2 Qué tareas del plan van aquí
 
