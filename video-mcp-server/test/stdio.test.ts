@@ -156,6 +156,7 @@ describe("servidor stdio", () => {
       const lista = await esperar(2);
       expect(lista.result.tools.map((t: { name: string }) => t.name).sort()).toEqual([
         "video_ayuda",
+        "video_barrer_procesos",
         "video_capacidades",
         "video_catalogo",
         "video_estado",
@@ -169,6 +170,7 @@ describe("servidor stdio", () => {
         "video_guion_leer",
         "video_guion_listar",
         "video_listar",
+        "video_montar_preview",
         "video_musica",
         "video_perfil_duplicar",
         "video_perfil_guardar",
