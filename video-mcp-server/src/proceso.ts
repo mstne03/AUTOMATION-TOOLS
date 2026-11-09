@@ -479,7 +479,7 @@ export function ejecutar(comando: string, args: string[], opciones: OpcionesEjec
  */
 async function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar, cli: boolean, barrer = true): Promise<Resultado> {
   const r = await lanzarUno(comando, args, opciones);
-  if (barrer && (r.timeout || (cli && r.code !== 0))) await barridoAlArrancar();
+  if (barrer && (r.timeout || (cli && r.code !== 0))) await barridoAlArrancar(undefined, undefined, true);
   return r;
 }
 
@@ -867,8 +867,11 @@ export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEP
  * No toca lo que cuelga de un hijo en vuelo ni de otro motor vivo (`seleccionarBarrido`). Sin navegador ni ffmpeg del
  * motor identificables no lista nada.
  */
-export function barridoAlArrancar(deps: DepsBarrido = DEPS_BARRIDO, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  return barrerProcesos(carpetasDelBundle(herramientasFfmpeg(env.FFMPEG_DIR), env), deps);
+export function barridoAlArrancar(deps: DepsBarrido = DEPS_BARRIDO, env: NodeJS.ProcessEnv = process.env, reiniciar = false): Promise<void> {
+  // Al arrancar o a petición, lo que no se puede matar ni verificar se registra y se deja: reiniciar cortaría una llamada
+  // en curso (una voz ya cobrada) y podría entrar en bucle con un proceso ajeno elevado (auditoría T6, M-1).
+  const d = reiniciar ? deps : { ...deps, reiniciar: () => log.error("Barrido: quedan procesos que no puedo matar ni verificar; se dejan.") };
+  return barrerProcesos(carpetasDelBundle(herramientasFfmpeg(env.FFMPEG_DIR), env), d);
 }
 
 // ---------- ffmpeg ----------

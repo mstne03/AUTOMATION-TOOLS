@@ -434,7 +434,7 @@ export async function encolarRender(id: string, o: OpcionesRender): Promise<Job>
     throw new ErrorVideo(`modo inválido: usa ${MODOS_PEDIDOS.join(", ")}.`);
   }
   const esProyecto = !!o.cfg && fs.existsSync(path.join(archivosVideo(o.raiz, id).dir, "proyecto.json"));
-  const prep = esProyecto ? await prepararProyecto(id, { cfg: o.cfg! }) : await prepararRender(id, o);
+  const prep = esProyecto ? await enSerie(() => prepararProyecto(id, { cfg: o.cfg! })) : await prepararRender(id, o);
   if (!prep.herramientas) throw new ErrorVideo(mensajeSinFfmpeg());
   const job: Job = {
     modoPedido: o.modo ?? "auto",

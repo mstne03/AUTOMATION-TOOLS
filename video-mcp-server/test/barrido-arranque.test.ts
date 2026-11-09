@@ -47,11 +47,15 @@ describe.runIf(process.platform === "win32")("barrido_al_arrancar", () => {
     expect(d.listar).not.toHaveBeenCalled();
   });
 
-  it("si no se puede matar, reinicia el motor (fallo visible, no silencioso)", async () => {
+  it("si no se puede matar, lo registra y NO reinicia el motor (M-1 de la auditoría)", async () => {
     const d = deps([huerfano]);
     d.matar.mockImplementation(async () => undefined);
     await barridoAlArrancar(d, entorno);
-    expect(d.reiniciar).toHaveBeenCalled();
+    expect(d.reiniciar).not.toHaveBeenCalled();
+    const e = deps([huerfano]);
+    e.matar.mockImplementation(async () => undefined);
+    await barridoAlArrancar(e, entorno, true); // tras un timeout sí reinicia
+    expect(e.reiniciar).toHaveBeenCalled();
   });
 });
 
