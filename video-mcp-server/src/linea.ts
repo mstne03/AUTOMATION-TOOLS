@@ -111,6 +111,6 @@ export function desdeProyecto(p: Proyecto, palabras: ResultadoAlineacion): Pick<
     titulo: p.titulo,
     gancho: p.gancho,
     escenas: p.escenas.map((e) => ({ base: e.base as never })),
-    opciones: { fondo: o.fondo, look: o.look, subtitulos: o.subtitulos, etiqueta: o.etiqueta, destellos: o.destellos, golpe, enfasis: [] },
+    opciones: { fondo: o.fondo, look: o.look, subtitulos: p.subtitulos.estilo, etiqueta: o.etiqueta, destellos: o.destellos, golpe, enfasis: [] },
   };
 }

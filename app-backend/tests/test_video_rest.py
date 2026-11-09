@@ -728,12 +728,16 @@ async def test_real_xss_en_la_composicion(real, tmp_path, ataque, sufijo):
     assert resultado["red"] == [] and resultado["archivos"] > 5
     ficheros = [f for f in salida.rglob("*") if f.is_file() and f.suffix in {".html", ".json", ".css", ".js", ".mjs", ".svg"}]
     assert ficheros
+    if ataque.startswith("{{"):
+        assert any(ataque in f.read_text(encoding="utf8", errors="replace") for f in ficheros if "vendor" not in f.parts)  # llega literal
     for f in ficheros:
         t = f.read_text(encoding="utf8", errors="replace")
         if "vendor" in f.parts:  # JS de terceros con hash fijado: los escanea `urlsDeRed`, no un texto del atacante
             continue
         if ataque.startswith("<") or ataque.startswith('"'):
             assert ataque not in t, f"{f.name} contiene {ataque!r} sin escapar"
+        # Sin marcadores `{{X}}` sin sustituir, salvo el del propio ataque (una sola pasada: el valor no se vuelve a expandir)
+        assert f.suffix != ".html" or not re.findall(r"\{\{[A-Z_]+\}\}(?!Q7)", t), f.name
         if ataque == "&lt;Q7&gt;":
             assert "<Q7>" not in t, f.name  # el escape no se deshace en ninguna capa
 

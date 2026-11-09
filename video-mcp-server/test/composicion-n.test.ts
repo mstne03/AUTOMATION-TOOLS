@@ -1,8 +1,9 @@
 // T3: composición de N escenas. Negativas de seguridad (I1, I2), ids por índice, capas fijas y texto límite.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { cabeGancho, planificarComposicion, tamanoGancho, type PlanComposicion } from "../src/composicion.js";
+import { cabeGancho, escribirPlan, planificarComposicion, tamanoGancho, type PlanComposicion } from "../src/composicion.js";
 import { proyectoBruto, proyectoN, entradaDe, lineaDe } from "./ayudas-n.js";
 
 const SRC = path.resolve(import.meta.dirname, "../src/composicion.ts");
@@ -155,5 +156,37 @@ describe("texto límite (Review Focus 1)", () => {
     expect(s).toBeGreaterThanOrEqual(t.ganchoMinimo);
     // Cabe al tamaño elegido o hay aviso: nunca se desborda en silencio.
     expect(cabeGancho(gancho, s, 972, 600) || p.avisos.some((a) => /gancho/i.test(a))).toBe(true);
+  });
+});
+
+describe("cierres de la R1 de T3", () => {
+  const A = '<script>x</script>"><img onerror=x>{{ID}}';
+  it("etiqueta, correcciones y titulo3d con ataque: sin crudo", () => {
+    const pr = proyectoBruto(3, (k) => (k === 1 ? { tipo: "titulo3d", texto: "<script>x" } : { tipo: "cartel", texto: "Hola" }), () => "Uno dos tres cuatro cinco.");
+    pr.subtitulos.correcciones = [{ indice: 1, texto: A }];
+    const e = entradaDe(pr, { palabras: lineaDe(pr, 4) });
+    e.opciones.etiqueta = A;
+    e.escenas[0] = { imagen: { n: 1, nombre: "img1.jpg", ruta: "C:\\x\\img1.jpg", extension: ".jpg" } };
+    const p = planificarComposicion(e);
+    expect(p.archivos["compositions/etiqueta.html"]).toBeDefined(); // el escape de la etiqueta se ejercita de verdad
+    sinCrudo(p, A);
+    expect(texto(p)).not.toContain("<script>x");
+  });
+  it("escribirPlan rechaza un rel fuera de destino, antes de escribir", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "t3-"));
+    const dest = path.join(d, "_composicion");
+    const base = planificarComposicion(entradaDe(proyectoN(1)));
+    expect(() => escribirPlan(dest, { ...base, archivos: { ...base.archivos, "../fuera.html": "x" } })).toThrow(/fuera/);
+    expect(() => escribirPlan(dest, { ...base, copias: [{ origen: import.meta.filename, destino: "..\\fuera.js" }] })).toThrow(/fuera/);
+    expect(fs.existsSync(path.join(d, "fuera.html"))).toBe(false);
+    fs.rmSync(d, { recursive: true, force: true });
+  });
+  it("más de 90 escenas lanza", () => {
+    expect(() => planificarComposicion(entradaDe(proyectoBruto(91)))).toThrow(/90/);
+  });
+  it("estilo de subtítulos desconocido lanza", () => {
+    const e = entradaDe(proyectoN(2));
+    (e.opciones as { subtitulos: string }).subtitulos = 'x" onload="y';
+    expect(() => planificarComposicion(e)).toThrow(/subt/i);
   });
 });

@@ -9,6 +9,7 @@ import type { Guion } from "./guion.js";
 import { COLA_FINAL, type ResultadoAlineacion } from "./alineacion.js";
 import {
   ESCENAS_SOBRE_FONDO,
+  ESTILOS_SUBTITULOS,
   FONDOS_WEBGPU,
   type Escena,
   type EscenaBarras,
@@ -32,6 +33,7 @@ const DURACION_MAXIMA = 180;
 const ID_PIEZA_RE = /^[a-z][a-z0-9-]*$/;
 
 // Capas fijas por encima de cualquier escena (hasta 90, en 11..100): con la escena n en 10 + n, nada las alcanza.
+const MAX_ESCENAS = 90;
 const Z_ESCENA = 10;
 const Z_BUCLE = 199;
 const Z_CAPAS = 200;
@@ -243,6 +245,8 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
   const escenas = e.escenas;
   const N = escenas.length;
   const avisos: string[] = [];
+  if (N > MAX_ESCENAS) throw new Error(`El plan tiene ${N} escenas y el máximo son ${MAX_ESCENAS}.`);
+  if (!(ESTILOS_SUBTITULOS as readonly string[]).includes(o.subtitulos)) throw new Error("Estilo de subtítulos no válido.");
   if (N < 1 || al.segmentos.length !== N) throw new Error(`La voz tiene ${al.segmentos.length} segmentos y el plan ${N} escenas: tienen que coincidir.`);
   for (const w of al.palabras) if (!Number.isFinite(w.inicio) || !Number.isFinite(w.fin)) throw new Error("Tiempo no finito en las palabras de la voz.");
   for (const d of o.destellos) if (!Number.isInteger(d) || d < 0 || d >= N) throw new Error(`Destello fuera de rango: la escena ${d} no existe (hay ${N}).`);
@@ -749,6 +753,15 @@ function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { te
 
 /** Escribe _composicion\ desde cero con el plan ya calculado. */
 export function escribirPlan(destino: string, plan: PlanComposicion): void {
+  // Ninguna ruta relativa sale de `destino` (R1 de T3, L-1): se comprueban todas antes de borrar o escribir nada.
+  const base = path.resolve(destino);
+  const dentro = (rel: string): string => {
+    const ruta = path.resolve(base, rel);
+    if (ruta !== base && !ruta.startsWith(base + path.sep)) throw new Error("El plan escribe fuera de la carpeta de la composición.");
+    return ruta;
+  };
+  for (const rel of Object.keys(plan.archivos)) dentro(rel);
+  for (const c of plan.copias) dentro(c.destino);
   // En Windows un Chrome que acaba de cerrarse puede tener la carpeta abierta unos instantes.
   borrarArbol(destino);
   for (const [rel, contenido] of Object.entries(plan.archivos)) {
