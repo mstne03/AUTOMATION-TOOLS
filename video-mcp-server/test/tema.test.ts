@@ -92,7 +92,7 @@ describe("validarTema (I1)", () => {
     const tema = validarTema(t);
     const conTema = planPara(tema, "escenas:\n  6:\n    tipo: tunel");
     expect(conTema.archivos["index.html"]).toContain("--contorno: #000000;");
-    expect(conTema.archivos["compositions/bloque6.html"]).toContain(`${tema.colores.acento},#1F7A3A,${tema.colores.texto}`);
+    expect(conTema.archivos["compositions/esc6.html"]).toContain(`${tema.colores.acento},#1F7A3A,${tema.colores.texto}`);
   });
 
   it("un plan con tema malo lanza antes de escribir nada", () => {

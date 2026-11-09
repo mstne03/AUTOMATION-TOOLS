@@ -16,6 +16,7 @@ import {
   type EscenaCifra,
   type EscenaMapa,
   type EscenaTitulo3d,
+  type OpcionesV2,
 } from "./formato.js";
 import { trazarMapa } from "./mapas.js";
 import { borrarArbol, type ImagenEncontrada } from "./paths.js";
@@ -29,6 +30,15 @@ export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
 /** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
 const DURACION_MAXIMA = 180;
 const ID_PIEZA_RE = /^[a-z][a-z0-9-]*$/;
+
+// Capas fijas por encima de cualquier escena (hasta 90, en 11..100): con la escena n en 10 + n, nada las alcanza.
+const Z_ESCENA = 10;
+const Z_BUCLE = 199;
+const Z_CAPAS = 200;
+const Z_GANCHO = 210;
+const Z_ETIQUETA = 211;
+const Z_SUBTITULOS = 220;
+const Z_FLASH = 230;
 
 const TRANSICION = 0.3;
 const SOLAPE = TRANSICION / 2;
@@ -126,25 +136,25 @@ export function comprobarTiemposPieza(id: string, inicio: number, duracion: numb
   return { i, d };
 }
 
-/** El mayor tamaño en px con el que `texto` cabe en una caja de ancho×alto (Anton, ~0,5 em por carácter). */
-export function tamanoGancho(texto: string, base: number, minimo: number, ancho = 900, alto = 470): number {
-  for (let s = base; s > minimo; s -= 4) {
-    const porLinea = Math.max(1, Math.floor(ancho / (s * 0.5)));
-    let lineas = 1;
-    let actual = 0;
-    for (const w of texto.split(/\s+/)) {
-      if (w.length > porLinea) {
-        actual = Infinity;
-        break;
-      }
-      const largo = actual ? actual + 1 + w.length : w.length;
-      if (largo > porLinea && actual) {
-        lineas++;
-        actual = w.length;
-      } else actual = largo;
-    }
-    if (actual !== Infinity && lineas * s * 1.04 <= alto) return s;
+/** ¿Cabe `texto` a `s` px en una caja de ancho×alto? (Anton, ~0,5 em por carácter; una palabra más larga que la línea no cabe). */
+export function cabeGancho(texto: string, s: number, ancho = 900, alto = 470): boolean {
+  const porLinea = Math.max(1, Math.floor(ancho / (s * 0.5)));
+  let lineas = 1;
+  let actual = 0;
+  for (const w of texto.split(/\s+/)) {
+    if (w.length > porLinea) return false;
+    const largo = actual ? actual + 1 + w.length : w.length;
+    if (largo > porLinea && actual) {
+      lineas++;
+      actual = w.length;
+    } else actual = largo;
   }
+  return lineas * s * 1.04 <= alto;
+}
+
+/** El mayor tamaño en px con el que `texto` cabe en una caja de ancho×alto; si ni en el mínimo cabe, el mínimo (el plan avisa). */
+export function tamanoGancho(texto: string, base: number, minimo: number, ancho = 900, alto = 470): number {
+  for (let s = base; s > minimo; s -= 4) if (cabeGancho(texto, s, ancho, alto)) return s;
   return minimo;
 }
 
@@ -154,18 +164,60 @@ export function tamanoFrase(texto: string, base: number, minimo: number, ancho =
 
 // ---------- Plan de la composición ----------
 
-export interface EntradaComposicion {
-  guion: Guion;
+/** Una escena del plan: una escena gráfica (`base`) o, si no la hay, una foto (`imagen`). */
+export interface EscenaPlan {
+  base?: Escena;
+  imagen?: ImagenEncontrada;
+}
+
+/** Opciones del vídeo ya normalizadas. `destellos` son índices de escena desde 0. */
+export interface OpcionesPlan {
+  fondo: OpcionesV2["fondo"];
+  look: OpcionesV2["look"];
+  subtitulos: OpcionesV2["subtitulos"];
+  etiqueta?: string;
+  fecha?: { dia: string; hora: string };
+  destellos: number[];
+  /** Índice en `palabras.palabras` de la palabra del golpe. */
+  golpe?: { indice: number };
+  /** Índices de las palabras con énfasis. */
+  enfasis: number[];
+}
+
+export interface EntradaPlan {
+  titulo: string;
+  gancho: string;
+  /** Una por segmento de `palabras`, en orden. */
+  escenas: EscenaPlan[];
+  opciones: OpcionesPlan;
   palabras: ResultadoAlineacion;
-  /** Índice n-1: imagen del bloque n (o undefined si ese bloque es una escena sin foto). */
-  imagenes: (ImagenEncontrada | undefined)[];
   tema: Tema;
   /** Música ya preparada en assets/musica.mp3. */
   musica?: { volumen: number; automatizacion: string };
-  /** `mostrarDesde` de cada bloque tras los cortes al ritmo (si no, los de palabras.json). */
+  /** `mostrarDesde` de cada escena tras los cortes al ritmo (si no, los de `palabras`). */
   cortes?: number[];
   /** Hay WebGPU para los fondos con shader. */
   gpu: boolean;
+}
+
+/** Adaptador del guion de 6 bloques a `EntradaPlan`. ponytail: red de los tests de piezas, se borra en la fase 2. */
+export function desdeGuionV2(g: Guion, imagenes: (ImagenEncontrada | undefined)[]): Pick<EntradaPlan, "titulo" | "gancho" | "escenas" | "opciones"> {
+  const o = g.opciones;
+  return {
+    titulo: g.titulo,
+    gancho: g.gancho,
+    escenas: g.bloques.map((b, k) => ({ base: o.escenas[b.n], imagen: imagenes[k] })),
+    opciones: {
+      fondo: o.fondo,
+      look: o.look,
+      subtitulos: o.subtitulos,
+      etiqueta: o.etiqueta,
+      fecha: o.fecha,
+      destellos: o.destellos.map((n) => n - 1),
+      golpe: o.golpe ? { indice: o.golpe.indice } : undefined,
+      enfasis: o.enfasis,
+    },
+  };
 }
 
 export interface PlanComposicion {
@@ -184,11 +236,16 @@ function pieza(nombre: string, valores: Record<string, string | number>): string
   return plantilla.replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) => (k in valores ? String(valores[k]) : m));
 }
 
-export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
-  const { guion, palabras: al } = e;
+export function planificarComposicion(e: EntradaPlan): PlanComposicion {
+  const al = e.palabras;
   const tema = validarTema(e.tema); // cubre también o.tema; el valor devuelto, nunca e.tema.
-  const o = guion.opciones;
+  const o = e.opciones;
+  const escenas = e.escenas;
+  const N = escenas.length;
   const avisos: string[] = [];
+  if (N < 1 || al.segmentos.length !== N) throw new Error(`La voz tiene ${al.segmentos.length} segmentos y el plan ${N} escenas: tienen que coincidir.`);
+  for (const w of al.palabras) if (!Number.isFinite(w.inicio) || !Number.isFinite(w.fin)) throw new Error("Tiempo no finito en las palabras de la voz.");
+  for (const d of o.destellos) if (!Number.isInteger(d) || d < 0 || d >= N) throw new Error(`Destello fuera de rango: la escena ${d} no existe (hay ${N}).`);
   const D = r3(al.duracionAudio + COLA_FINAL);
   if (typeof al.duracionAudio !== "number" || !Number.isFinite(D)) throw new Error(`Tiempo no finito: la voz dura ${al.duracionAudio} s.`);
   if (D > DURACION_MAXIMA + COLA_FINAL) throw new Error(`La voz dura ${al.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
@@ -211,18 +268,18 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   // ---- Ventanas de cada bloque ----
   const desde = al.segmentos.map((s, k) => (e.cortes?.[k] !== undefined ? e.cortes[k] : s.mostrarDesde));
   desde[0] = 0;
-  const escenas = o.escenas;
-  const usaFondo = (n: number) => {
-    const esc = escenas[n];
+  const usaFondo = (k: number) => {
+    const esc = escenas[k]?.base;
     return !!esc && (ESCENAS_SOBRE_FONDO as readonly string[]).includes(esc.tipo);
   };
   const ventanas = desde.map((d0, k) => {
     const n = k + 1;
+    const ultima = k === N - 1;
     const inicio = k === 0 ? 0 : r3(Math.max(0, d0 - SOLAPE));
-    let fin = k === 5 ? D : r3(Math.min(D, desde[k + 1] + SOLAPE));
-    // Si el bloque siguiente va sobre el fondo, este acaba justo en el corte (el fondo no tapa nada).
-    if (k < 5 && usaFondo(n + 1)) fin = r3(desde[k + 1]);
-    return { n, inicio, fin, duracion: r3(Math.max(0.1, fin - inicio)), corte: r3(d0), visible: r3((k === 5 ? al.duracionAudio : desde[k + 1]) - d0) };
+    let fin = ultima ? D : r3(Math.min(D, desde[k + 1] + SOLAPE));
+    // Si la escena siguiente va sobre el fondo, esta acaba justo en el corte (el fondo no tapa nada).
+    if (!ultima && usaFondo(k + 1)) fin = r3(desde[k + 1]);
+    return { n, inicio, fin, duracion: r3(Math.max(0.1, fin - inicio)), corte: r3(d0), visible: r3((ultima ? al.duracionAudio : desde[k + 1]) - d0) };
   });
 
   // Golpe: instante de la palabra y bloque al que pertenece.
@@ -255,7 +312,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
 
   // ---- Fondo (un único host bajo los bloques) ----
   let usaWebgpu = false;
-  if ([1, 2, 3, 4, 5, 6].some(usaFondo)) {
+  if (escenas.some((_, k) => usaFondo(k))) {
     const conShader = (FONDOS_WEBGPU as readonly string[]).includes(o.fondo);
     if (conShader && e.gpu) {
       usaWebgpu = true;
@@ -294,10 +351,10 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   let usa3d = false;
   let usaTunel = false;
   for (const v of ventanas) {
-    const id = `bloque${v.n}`;
+    const id = `esc${v.n}`;
     const k = v.n - 1;
     const empieza = k === 0 ? 0.1 : SOLAPE;
-    const esc: Escena | undefined = escenas[v.n];
+    const esc: Escena | undefined = escenas[k].base;
     // Golpe en una cifra: el número aterriza en esa palabra; si la palabra abre el bloque no da tiempo a contar,
     // así que aterriza 0,55 s después de la entrada y el temblor y el destello se mueven con él.
     if (golpe && golpe.n === v.n && esc?.tipo === "cifra") {
@@ -306,8 +363,8 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     const env = { fundido: k === 0 ? 0 : TRANSICION, punch: k > 0, golpes: golpe && golpe.n === v.n ? [r3(golpe.t - v.inicio)] : [] };
     let p: PiezaPlan;
     if (!esc) {
-      const img = e.imagenes[k];
-      if (!img) throw new Error(`Falta la imagen del bloque ${v.n}.`);
+      const img = escenas[k].imagen;
+      if (!img) throw new Error(`Falta la imagen de la escena ${v.n}.`);
       const archivo = `img${v.n}${img.extension}`;
       copias.push({ origen: img.ruta, destino: `assets/${archivo}` });
       const [dx, dy] = DIRECCIONES[k % DIRECCIONES.length];
@@ -336,22 +393,22 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
           break;
         case "tunel": {
           usaTunel = true;
-          const fotos = e.imagenes
-            .map((img, i) => (img ? `assets/img${i + 1}${img.extension}` : undefined))
+          const fotos = escenas
+            .map((s, i) => (s.imagen ? `assets/img${i + 1}${s.imagen.extension}` : undefined))
             .filter((x): x is string => !!x);
-          e.imagenes.forEach((img, i) => img && copias.push({ origen: img.ruta, destino: `assets/img${i + 1}${img.extension}` }));
+          escenas.forEach((s, i) => s.imagen && copias.push({ origen: s.imagen.ruta, destino: `assets/img${i + 1}${s.imagen.extension}` }));
           const paleta = tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto];
           p = ["escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento }];
           break;
         }
       }
     }
-    anadirPieza(id, p[0], v.inicio, v.duracion, p[1], { z: 10 + v.n });
+    anadirPieza(id, p[0], v.inicio, v.duracion, p[1], { z: Z_ESCENA + v.n });
   }
 
   // Reencuadre final de la imagen 1 para que el short haga bucle (solo si el bloque 1 es una foto).
-  const img1 = e.imagenes[0];
-  if (!escenas[1] && img1) {
+  const img1 = escenas[0].base ? undefined : escenas[0].imagen;
+  if (img1) {
     const archivo = `img1-bucle${img1.extension}`;
     copias.push({ origen: img1.ruta, destino: `assets/${archivo}` });
     anadirPieza(
@@ -363,13 +420,13 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
         IMG: escaparHtml(archivo),
         DATOS: jsonParaScript({ duracion: COLA_FINAL, dx: 0, dy: 0, movimiento: false, fundido: TRANSICION, punch: false, golpes: [] }),
       },
-      { z: 17 },
+      { z: Z_BUCLE },
     );
   }
 
   // ---- Capas: degradado, viñeta, destellos y look ----
-  const bloquesLuz = o.look === "pelicula" ? [1, 2, 3, 4, 5, 6] : o.destellos;
-  const destellos = bloquesLuz.map((n, i) => ({ id: `capas-luz${n}`, t: ventanas[n - 1].corte, duracion: i % 2 === 0 ? 1.8 : 1.7 }));
+  const escenasConLuz = o.look === "pelicula" ? escenas.map((_, k) => k) : o.destellos;
+  const destellos = escenasConLuz.map((k, i) => ({ id: `capas-luz${k + 1}`, t: ventanas[k].corte, duracion: i % 2 === 0 ? 1.8 : 1.7 }));
   const luzHtml = destellos
     .map(
       (d) =>
@@ -403,7 +460,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       LOOK: lookHtml,
       DATOS: jsonParaScript({ duracion: D, destellos }),
     },
-    { z: 40 },
+    { z: Z_CAPAS },
   );
 
   // ---- Gancho y etiqueta ----
@@ -411,7 +468,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   // Si una escena (bloque 2 en adelante) empieza antes de que acabe el gancho, el gancho termina en su corte.
   let finGancho = Math.min(GANCHO_DURACION, D);
   for (const v of ventanas.slice(1)) {
-    if (escenas[v.n] && v.corte < finGancho) {
+    if (escenas[v.n - 1].base && v.corte < finGancho) {
       finGancho = r3(Math.max(0.9, v.corte));
       break;
     }
@@ -426,9 +483,9 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   if (o.etiqueta) {
     const inicio = r3(finGancho + 0.05);
     let fin = Math.min(inicio + ETIQUETA_DURACION, D - 0.5);
-    const siguienteEscena = ventanas.find((v) => escenas[v.n] && v.corte > inicio);
+    const siguienteEscena = ventanas.find((v) => escenas[v.n - 1].base && v.corte > inicio);
     if (siguienteEscena) fin = Math.min(fin, siguienteEscena.corte);
-    if (!escenas[bloqueEn(inicio).n] && fin - inicio >= 0.8) {
+    if (!escenas[bloqueEn(inicio).n - 1].base && fin - inicio >= 0.8) {
       etiqueta = { inicio, fin: r3(fin), top: 300 };
     } else if (finGancho - 0.6 >= 0.8) {
       etiqueta = { inicio: 0.6, fin: finGancho, top: 860 };
@@ -437,7 +494,10 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       avisos.push("La etiqueta no se muestra: el bloque 2 es una escena y empieza demasiado pronto. Alarga el bloque 1 o quita la escena del bloque 2.");
     }
   }
-  const palabrasGancho = guion.gancho.split(/\s+/).filter(Boolean);
+  if (!cabeGancho(e.gancho, tema.tamanos.ganchoMinimo, 972, 600)) {
+    avisos.push("El gancho no cabe ni al tamaño mínimo del tema (una palabra muy larga o demasiado texto): acórtalo o cambia el tema.");
+  }
+  const palabrasGancho = e.gancho.split(/\s+/).filter(Boolean);
   anadirPieza(
     "gancho",
     "gancho.html",
@@ -445,12 +505,12 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     finGancho,
     {
       FUENTES: fuentesCss,
-      TAMANO: tamanoGancho(guion.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
+      TAMANO: tamanoGancho(e.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
       PALABRAS: palabrasGancho
         .map((w, i) => `<span class="palabra${i === palabrasGancho.length - 1 ? " acento" : ""}">${escaparHtml(w)}</span>`)
         .join(""),
     },
-    { z: 50, alto: 620, top: 200 },
+    { z: Z_GANCHO, alto: 620, top: 200 },
   );
   if (o.etiqueta && etiqueta) {
     anadirPieza(
@@ -459,7 +519,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       etiqueta.inicio,
       r3(etiqueta.fin - etiqueta.inicio),
       { FUENTES: fuentesCss, TEXTO: escaparHtml(o.etiqueta), TAMANO: Math.min(64, Math.floor(872 / (Math.max(o.etiqueta.length, 1) * 0.56))) },
-      { z: 51, alto: 160, top: etiqueta.top },
+      { z: Z_ETIQUETA, alto: 160, top: etiqueta.top },
     );
   }
 
@@ -520,7 +580,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
         grupos: grupos.map((g) => ({ id: g.id, inicio: g.inicio, palabras: g.palabras.map((p) => ({ id: p.id, inicio: p.inicio, fin: p.fin, enfasis: p.enfasis })) })),
       }),
     },
-    { z: 60, extra: ' data-track-kind="captions"' },
+    { z: Z_SUBTITULOS, extra: ' data-track-kind="captions"' },
   );
 
   // ---- Destellos blancos: cambio de bloque y golpe ----
@@ -529,7 +589,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   flash.sort((a, b) => a.t - b.t);
   // Dos destellos no pueden pisarse: si el golpe cae encima de un corte, gana el más fuerte.
   const flashSinSolape = flash.filter((x, i) => i === 0 || x.t >= flash[i - 1].t + flash[i - 1].sube + flash[i - 1].baja);
-  anadirPieza("flash", "flash.html", 0, D, { DATOS: jsonParaScript({ destellos: flashSinSolape }) }, { z: 70 });
+  anadirPieza("flash", "flash.html", 0, D, { DATOS: jsonParaScript({ destellos: flashSinSolape }) }, { z: Z_FLASH });
 
   // ---- Vendor 3D ----
   if (usa3d) {
@@ -572,9 +632,15 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   archivos["index.html"] = fs
     .readFileSync(path.join(PLANTILLA_DIR, "index.html"), "utf8")
     .replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) =>
-      ({ TITULO: escaparHtml(guion.titulo), IMPORTMAP: importmap, TEMA_CSS: temaCss, DURACION: String(D), HOSTS: hosts.join("\n"), AUDIO: audio.join("\n") })[k] ?? m,
+      ({ TITULO: escaparHtml(e.titulo), IMPORTMAP: importmap, TEMA_CSS: temaCss, DURACION: String(D), HOSTS: hosts.join("\n"), AUDIO: audio.join("\n") })[k] ?? m,
     );
 
+  // I2: la barrera de red, antes de escribir nada. Los patrones son los de `textoSeguro` (esquema.ts): un texto que el esquema
+  // rechazaría y llegase aquí a mano (Proyecto sin validar) se para igualmente. Sin el nombre del texto ni su valor.
+  for (const [rel, contenido] of Object.entries(archivos)) {
+    const red = hallazgosDeRed(contenido, rel);
+    if (red.length) throw new Error(`La composición llevaría ${red.length} recurso(s) de red en ${rel}: el render es local.`);
+  }
   return { duracion: D, archivos, copias, avisos, usaWebgpu, estiloSubtitulos: estilo };
 }
 

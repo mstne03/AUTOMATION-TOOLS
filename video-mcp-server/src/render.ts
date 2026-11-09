@@ -6,7 +6,7 @@ import { log } from "./log.js";
 import { parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
-import { cargarTema, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
+import { cargarTema, desdeGuionV2, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
@@ -290,8 +290,8 @@ export async function prepararRender(id: string, o: OpcionesRender): Promise<Pre
       "El guion ha cambiado desde que se generó la voz (el hash de la narración no coincide). Regenera la voz con video_generar_voz(forzar=true).",
     );
   }
-  if (palabras.segmentos?.length !== 6 || !palabras.frases?.length) {
-    throw new ErrorVideo("palabras.json no tiene 6 segmentos y frases. Regenera la voz con video_generar_voz(forzar=true).");
+  if (palabras.segmentos?.length !== guion.bloques.length || !palabras.frases?.length) {
+    throw new ErrorVideo(`palabras.json no tiene ${guion.bloques.length} segmentos y frases. Regenera la voz con video_generar_voz(forzar=true).`);
   }
 
   let musica: Preparado["musica"];
@@ -345,16 +345,15 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
         const r = ajustarCortes(prep.palabras.segmentos, prep.palabras.palabras, a.beats);
         cortes = r.desde;
         avisos.push(
-          `Cortes al ritmo: ${r.movidos} de 5 cambios de imagen movidos al beat${a.bpm ? ` (${Math.round(a.bpm)} BPM)` : ""}.` +
+          `Cortes al ritmo: ${r.movidos} de ${prep.palabras.segmentos.length - 1} cambios de imagen movidos al beat${a.bpm ? ` (${Math.round(a.bpm)} BPM)` : ""}.` +
             (a.beats.length ? "" : " No se detectaron beats en la pista."),
         );
       }
     }
     const gpu = await hayWebgpu(h);
     const plan = planificarComposicion({
-      guion: prep.guion,
+      ...desdeGuionV2(prep.guion, prep.imagenes),
       palabras: prep.palabras,
-      imagenes: prep.imagenes,
       tema: o.tema ?? cargarTema(),
       musica: musicaPlan,
       cortes,

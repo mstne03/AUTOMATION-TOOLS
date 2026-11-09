@@ -97,16 +97,16 @@ describe("gancho", () => {
 describe("escena-cifra", () => {
   const FM = "golpe: Seventeen\nescenas:\n  4:\n    tipo: cifra\n    valor: 17\n    sufijo: ' Copas'\n    etiqueta: World Cups";
   const { p } = plan(FM);
-  const html = piezaHtml(p, "bloque4");
-  const d = datosDe(html, "bloque4");
+  const html = piezaHtml(p, "esc4");
+  const d = datosDe(html, "esc4");
   const env = JSON.parse(/hf\.envoltura\((\{[^)]*\})\)/.exec(html)![1]);
   const fmt = (v: number) => d.prefijo + v.toLocaleString("en-US", { minimumFractionDigits: d.decimales, maximumFractionDigits: d.decimales }) + d.sufijo;
-  const inicio = Number(/HF\.contexto\("bloque4", ([\d.]+)\)/.exec(html)![1]);
+  const inicio = Number(/HF\.contexto\("esc4", ([\d.]+)\)/.exec(html)![1]);
 
   it("sin GSAP, con contexto y envoltura por datos", () => {
     expect(html).not.toMatch(FORMA_GSAP);
     expect(html).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
-    expect(html).toMatch(/HF\.contexto\("bloque4", [\d.]+\)/);
+    expect(html).toMatch(/HF\.contexto\("esc4", [\d.]+\)/);
     expect(html).not.toMatch(/\{\{[A-Z_]+\}\}/);
     expect(env).toMatchObject({ punch: true });
   });
@@ -116,27 +116,27 @@ describe("escena-cifra", () => {
     const f = 1 / 30;
     const base = (t: number) => ms(inicio + t);
     const esperado: [string, number, number, string][] = [
-      ["#bloque4-fundido", base(0), ms(env.fundido), "both"],
-      ["#bloque4-punch", base(0), 450, "both"],
-      ...env.golpes.flatMap((g: number) => [0, 1, 2, 3].map((i): [string, number, number, string] => ["#bloque4-golpe", base(g + i * f), ms(f), "forwards"])),
-      ["#bloque4-grupo", base(d.empieza - 0.1), 400, "both"],
-      ["#bloque4-etq", base(d.aterriza), 350, "both"],
-      ["#bloque4-num", base(d.aterriza), 300, "forwards"],
-      ["#bloque4-luz", base(d.aterriza), 30, "forwards"],
-      ["#bloque4-luz", base(d.aterriza + 0.03), 150, "forwards"],
+      ["#esc4-fundido", base(0), ms(env.fundido), "both"],
+      ["#esc4-punch", base(0), 450, "both"],
+      ...env.golpes.flatMap((g: number) => [0, 1, 2, 3].map((i): [string, number, number, string] => ["#esc4-golpe", base(g + i * f), ms(f), "forwards"])),
+      ["#esc4-grupo", base(d.empieza - 0.1), 400, "both"],
+      ["#esc4-etq", base(d.aterriza), 350, "both"],
+      ["#esc4-num", base(d.aterriza), 300, "forwards"],
+      ["#esc4-luz", base(d.aterriza), 30, "forwards"],
+      ["#esc4-luz", base(d.aterriza + 0.03), 150, "forwards"],
     ];
     expect(env.golpes).toHaveLength(1);
     expect(a.map((x) => [x.sel, x.op.delay, x.op.duration, x.op.fill])).toEqual(esperado.map(([s, de, du, fi]) => [s, expect.closeTo(de, 6), expect.closeTo(du, 6), fi]));
   });
 
   it("sin golpe: sin animaciones de golpe", () => {
-    const sin = piezaHtml(plan("escenas:\n  4:\n    tipo: cifra\n    valor: 17").p, "bloque4");
-    expect(ejecutarPieza(sin).animaciones.some((x) => x.sel === "#bloque4-golpe")).toBe(false);
+    const sin = piezaHtml(plan("escenas:\n  4:\n    tipo: cifra\n    valor: 17").p, "esc4");
+    expect(ejecutarPieza(sin).animaciones.some((x) => x.sel === "#esc4-golpe")).toBe(false);
   });
 
   it("la cuenta: seek(empieza) → inicial, seek(empieza+cuenta) → texto final, y por el camino sigue power2.out", () => {
     const r = ejecutarPieza(html);
-    const num = r.elemento("bloque4-num");
+    const num = r.elemento("esc4-num");
     expect(num.textContent).toBe(fmt(0));
     r.seek(inicio + d.empieza);
     expect(num.textContent).toBe(fmt(0));
@@ -148,7 +148,7 @@ describe("escena-cifra", () => {
 
   it("seek(-5), seek(1e9) y seek(NaN) no lanzan y dan los extremos", () => {
     const r = ejecutarPieza(html);
-    const num = r.elemento("bloque4-num");
+    const num = r.elemento("esc4-num");
     r.seek(inicio + d.empieza + d.cuenta / 2);
     r.seek(-5);
     expect(num.textContent).toBe(fmt(0));
@@ -174,25 +174,25 @@ describe("escena-cifra", () => {
 
   it("cuenta <= 0 o valor no finito lanzan", () => {
     for (const malo of [{ cuenta: 0 }, { cuenta: -1 }, { cuenta: null }, { valor: null }]) {
-      const m = html.replace(/(id="bloque4-datos" type="application\/json">)([^<]+)</, (_, a, j) => `${a}${JSON.stringify({ ...JSON.parse(j), ...malo })}<`);
+      const m = html.replace(/(id="esc4-datos" type="application\/json">)([^<]+)</, (_, a, j) => `${a}${JSON.stringify({ ...JSON.parse(j), ...malo })}<`);
       expect(() => ejecutarPieza(m), JSON.stringify(malo)).toThrow(/escena-cifra/);
     }
   });
 
   it("texto hostil en la etiqueta, el prefijo y el sufijo: escapado y sin escrituras HTML", () => {
     const fm = `escenas:\n  4:\n    tipo: cifra\n    valor: 3\n    prefijo: "<"\n    sufijo: "</i>{{ID}}"\n    etiqueta: "<img src=x onerror=alert(1)> {{INICIO}}"`;
-    const h = piezaHtml(plan(fm).p, "bloque4");
+    const h = piezaHtml(plan(fm).p, "esc4");
     expect(h).not.toMatch(/<img src=x/);
     expect(h).toContain("&lt;img src=x onerror=alert(1)&gt;");
     expect(h.match(/HF\.contexto\([^)]*\)/g)).toHaveLength(1);
     const r = ejecutarPieza(h);
     // Lo dinámico solo entra por textContent: el número lleva el sufijo hostil como texto.
     r.seek(1e9);
-    expect(r.elemento("bloque4-num").textContent).toBe("<3</i>{{ID}}");
+    expect(r.elemento("esc4-num").textContent).toBe("<3</i>{{ID}}");
   });
 
   it("duración mínima del bloque (cuenta 0,4 s) no lanza", () => {
-    const corta = html.replace(/(id="bloque4-datos" type="application\/json">)([^<]+)</, (_, a, j) => `${a}${JSON.stringify({ ...JSON.parse(j), cuenta: 0.4, aterriza: d.empieza + 0.4 })}<`);
+    const corta = html.replace(/(id="esc4-datos" type="application\/json">)([^<]+)</, (_, a, j) => `${a}${JSON.stringify({ ...JSON.parse(j), cuenta: 0.4, aterriza: d.empieza + 0.4 })}<`);
     expect(() => ejecutarPieza(corta)).not.toThrow();
   });
 });
@@ -202,7 +202,7 @@ describe("escena-cifra", () => {
 const motor = ejecucionConMotor();
 const NAVEGADOR = motor ? path.join(motor.motor, "browser", "chrome-headless-shell-win64", "chrome-headless-shell.exe") : "";
 const TIEMPOS = [0.3, 0.6, 1, 1.5, 2.2, 2.6, 3.5, 5, 6.5, 8, 10, 14];
-const MIOS = /^(h-)?(gancho|bloque2)(-|$)/;
+const MIOS = /^(h-)?(gancho|esc2)(-|$)/;
 
 describe.skipIf(!motor)("contra el render GSAP congelado", () => {
   const trabajo = path.join(process.env.W2_SCRATCH ?? path.join(os.tmpdir(), "w2-w21"), "cand");
@@ -215,7 +215,7 @@ describe.skipIf(!motor)("contra el render GSAP congelado", () => {
     fs.rmSync(path.join(trabajo, clave), { recursive: true, force: true });
     const m = await conCandadoDeRender(() => montar(motor!.motor, dirCand, GUIONES_W2[clave]));
     expect(m.usaWebgpu, `la prueba de GPU del montaje falló (el fondo habría caído a CSS): ${m.avisos.join(" | ")}`).toBe(true);
-    for (const f of ["gancho.html", "bloque2.html"]) expect(fs.readFileSync(path.join(m.dir, "compositions", f), "utf8")).not.toMatch(FORMA_GSAP);
+    for (const f of ["gancho.html", "esc2.html"]) expect(fs.readFileSync(path.join(m.dir, "compositions", f), "utf8")).not.toMatch(FORMA_GSAP);
     const salida = path.join(trabajo, clave, "comparacion");
     const informe = await conCandadoDeRender(() => compararContraReferencia(motor!.motor, path.join(motor!.refs, clave, "ref.mp4"), m.dir, salida));
     console.error(`[W2.1 ${clave}] ssimMin=${informe.ssimMin} media=${informe.ssimMedia} fotogramas=${informe.fotogramasCandidata}/${informe.fotogramasReferencia} peores=${JSON.stringify(informe.peores.slice(0, 3))}`);

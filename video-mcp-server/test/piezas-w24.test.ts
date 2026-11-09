@@ -11,7 +11,7 @@ import { compararTunelPng, conCandadoDeRender, ejecucionConMotor, ejecutarPieza,
 
 const TITULO3D = "escenas:\n  6:\n    tipo: titulo3d\n    texto: AGUA";
 const TUNEL = "escenas:\n  6:\n    tipo: tunel";
-const ID = "bloque6";
+const ID = "esc6";
 
 function datosPlan(fm: string, paso?: number) {
   const { p } = plan(fm, paso);

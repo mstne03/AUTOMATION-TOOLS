@@ -171,13 +171,13 @@ try { var pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${pu
     const sin = variante(dir, path.join(tmp, "sin-csp"), htmlRender, true);
 
     // Q1: además de la pieza hostil, hf-tiempo.js se carga bajo la CSP y anima de verdad: un tween de opacidad 0→1 en
-    // 1 s sobre un elemento del host bloque1 (inicio 0); tras un seek del runtime a 0,5 s, la opacidad calculada es 0,5.
+    // 1 s sobre un elemento del host esc1 (inicio 0); tras un seek del runtime a 0,5 s, la opacidad calculada es 0,5.
     const sonda = `new Promise((ok) => setTimeout(async () => {
       const hf = { contexto: typeof window.HF?.contexto === "function", opacidad: -1 };
       try {
-        const raiz = document.querySelector('[data-composition-id="bloque1"]');
+        const raiz = document.querySelector('[data-composition-id="esc1"]');
         const el = document.createElement("div"); el.id = "q1-prueba"; raiz.appendChild(el);
-        window.HF.contexto("bloque1", 0).tween("#q1-prueba", { opacity: 0 }, { opacity: 1 }, 0, 1, "none");
+        window.HF.contexto("esc1", 0).tween("#q1-prueba", { opacity: 0 }, { opacity: 1 }, 0, 1, "none");
         window.__player.seek(0.5);
         await new Promise((r) => setTimeout(r, 300));
         hf.opacidad = Number(getComputedStyle(el).opacity);

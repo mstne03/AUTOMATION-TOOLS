@@ -36,17 +36,17 @@ describe("planificarComposicion", () => {
   });
 
   it("la cifra aterriza en la palabra del golpe, o 0,55 s tras la entrada si la palabra abre el bloque", () => {
-    const datosDe = (p: ReturnType<typeof plan>["p"]) => JSON.parse(/id="bloque4-datos" type="application\/json">([^<]+)</.exec(p.archivos["compositions/bloque4.html"])![1]);
+    const datosDe = (p: ReturnType<typeof plan>["p"]) => JSON.parse(/id="esc4-datos" type="application\/json">([^<]+)</.exec(p.archivos["compositions/esc4.html"])![1]);
     // "Seventeen" es la primera palabra del bloque 4: aterriza a 0,15 + 0,55 s.
     const a = plan("golpe: Seventeen\nescenas:\n  4:\n    tipo: cifra\n    valor: 17");
     expect(datosDe(a.p).aterriza).toBeCloseTo(0.7, 2);
     // El destello global se mueve con el aterrizaje.
     const flash = JSON.parse(/id="flash-datos" type="application\/json">([^<]+)</.exec(a.p.archivos["compositions/flash.html"])![1]);
-    const inicioHost = host(a.p.archivos["index.html"], "bloque4")!.inicio;
+    const inicioHost = host(a.p.archivos["index.html"], "esc4")!.inicio;
     expect(flash.destellos.some((x: { t: number; opacidad: number }) => x.opacidad === 0.35 && Math.abs(x.t - (inicioHost + 0.7)) < 0.002)).toBe(true);
     // "between" está más adentro del bloque: aterriza justo en ella.
     const b = plan("golpe: between\nescenas:\n  4:\n    tipo: cifra\n    valor: 17");
-    const ib = host(b.p.archivos["index.html"], "bloque4")!.inicio;
+    const ib = host(b.p.archivos["index.html"], "esc4")!.inicio;
     const golpe = b.palabras.palabras.find((w) => w.texto === "between")!.inicio;
     expect(datosDe(b.p).aterriza).toBeCloseTo(golpe - ib, 2);
   });
@@ -54,7 +54,7 @@ describe("planificarComposicion", () => {
   it("nebula usa FractalNoise a pantalla completa, no el efecto de forma Nebula", () => {
     const { p } = plan("fondo: nebula\nescenas:\n  5:\n    tipo: cartel\n    texto: Nobody comes close");
     expect(p.archivos["compositions/fondo.html"]).toMatch(/data-shader="FractalNoise"/);
-    expect(p.archivos["compositions/bloque5.html"]).toMatch(/class="w" data-layout-allow-occlusion>Nobody</);
+    expect(p.archivos["compositions/esc5.html"]).toMatch(/class="w" data-layout-allow-occlusion>Nobody</);
   });
 
   it("el mapa de Europa ocupa el encuadre (anillo en sentido horario)", () => {
@@ -90,8 +90,8 @@ describe("cableado de tiempos de las piezas (SEO-111)", () => {
 
   it("cada pieza recibe ID, INICIO y DURACION iguales a su host", () => {
     for (const [guion, idsEsperados] of [
-      [GUION_TODAS, ["bloque1", "bloque2", "bloque3", "bloque4", "bloque5", "bloque6", "bucle", "capas", "etiqueta", "flash", "fondo", "gancho", "subtitulos"]],
-      [GUION_TUNEL, ["bloque1", "bloque2", "bloque3", "bloque4", "bloque5", "bloque6", "bucle", "capas", "flash", "gancho", "subtitulos"]],
+      [GUION_TODAS, ["bucle", "capas", "esc1", "esc2", "esc3", "esc4", "esc5", "esc6", "etiqueta", "flash", "fondo", "gancho", "subtitulos"]],
+      [GUION_TUNEL, ["bucle", "capas", "esc1", "esc2", "esc3", "esc4", "esc5", "esc6", "flash", "gancho", "subtitulos"]],
     ] as const) {
       const p = planMarcado(guion);
       const hosts = [...p.archivos["index.html"].matchAll(HOSTS)];
@@ -101,7 +101,7 @@ describe("cableado de tiempos de las piezas (SEO-111)", () => {
         expect(p.archivos[`compositions/${src}`].startsWith(`ID=${id};INICIO=${inicio};DURACION=${duracion};`), id).toBe(true);
       }
       for (const n of [2, 3, 4, 5, 6]) {
-        const env = /;ENV=(.*)$/.exec(p.archivos[`compositions/bloque${n}.html`])![1];
+        const env = /;ENV=(.*)$/.exec(p.archivos[`compositions/esc${n}.html`])![1];
         if (guion === GUION_TUNEL && n < 6) {
           expect(env).toBe("{{ENVOLTURA_DATOS}}"); // las fotos no tienen envoltura de escena
           continue;
@@ -127,7 +127,7 @@ describe("cableado de tiempos de las piezas (SEO-111)", () => {
   it("un corte NaN que solo afecta a la duración de una escena para el plan en anadirPieza", () => {
     // Bloque 1 con escena (cartel): sus DATOS no llevan la duración, así que jsonParaScript no lo para antes.
     const cortes = [0, NaN, 3, 4, 5, 6];
-    expect(() => plan("escenas:\n  1:\n    tipo: cartel\n    texto: Hola", 0.12, undefined, undefined, cortes)).toThrow(/Tiempo no finito en la pieza bloque1/);
+    expect(() => plan("escenas:\n  1:\n    tipo: cartel\n    texto: Hola", 0.12, undefined, undefined, cortes)).toThrow(/Tiempo no finito en la pieza esc1/);
   });
 
   it("una pieza que acaba después del vídeo para el plan en anadirPieza", () => {
@@ -136,7 +136,7 @@ describe("cableado de tiempos de las piezas (SEO-111)", () => {
     const D = palabras.duracionAudio + 0.4;
     const cortes = palabras.segmentos.map((s) => s.mostrarDesde);
     cortes[5] = D + 5;
-    expect(() => plan("", 0.12, undefined, undefined, cortes)).toThrow(/fuera de rango en la pieza bloque6/);
+    expect(() => plan("", 0.12, undefined, undefined, cortes)).toThrow(/fuera de rango en la pieza esc6/);
   });
 
   it("comprobarTiemposPieza: NaN, cadena, inicio negativo, duración nula y fin fuera del vídeo lanzan", () => {

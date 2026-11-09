@@ -117,11 +117,11 @@ describe("bloque-foto", () => {
     return r;
   };
 
-  for (const [id, descripcion] of [["bloque1", "bloque 1 (sin fundido ni punch)"], ["bloque3", "bloque ≥ 2 con golpe de cámara"], ["bucle", "el bucle final"]] as const) {
+  for (const [id, descripcion] of [["esc1", "bloque 1 (sin fundido ni punch)"], ["esc3", "bloque ≥ 2 con golpe de cámara"], ["bucle", "el bucle final"]] as const) {
     it(`${descripcion}: la lista exacta de animaciones`, () => {
       const nombre = id;
       // TODAS tiene fotos solo en el bloque 1 y el bucle; TUNEL las tiene en los bloques 1-5 (el 3 lleva fundido y punch).
-      const p = id === "bloque3" ? planDeGuion(GUIONES_W2.TUNEL).p : todas;
+      const p = id === "esc3" ? planDeGuion(GUIONES_W2.TUNEL).p : todas;
       const html = bloque(nombre, p);
       expect(html).not.toMatch(FORMA_GSAP);
       const d = datosDe(html, `${nombre}-datos`);
@@ -129,21 +129,21 @@ describe("bloque-foto", () => {
       expect(Number.isFinite(inicio)).toBe(true);
       const r = ejecutarPieza(html);
       expect(r.animaciones.map(({ sel, op }) => ({ sel, op: { delay: op.delay, duration: op.duration, fill: op.fill } }))).toEqual(esperadas(nombre, d, inicio));
-      if (id === "bloque1") expect(d).toMatchObject({ fundido: 0, punch: false });
-      if (id === "bloque3") expect(d.punch).toBe(true);
+      if (id === "esc1") expect(d).toMatchObject({ fundido: 0, punch: false });
+      if (id === "esc3") expect(d.punch).toBe(true);
     });
   }
 
   it("Ken Burns: x, y y scale en el mismo tween, hasta (dx, dy, 1,08)", () => {
-    const html = bloque("bloque1");
-    const d = datosDe(html, "bloque1-datos");
-    const kb = ejecutarPieza(html).animaciones.find((a) => a.sel === "#bloque1-img")!;
+    const html = bloque("esc1");
+    const d = datosDe(html, "esc1-datos");
+    const kb = ejecutarPieza(html).animaciones.find((a) => a.sel === "#esc1-img")!;
     expect(kb.kf).toEqual([{ translate: "calc(0px) calc(0px)", scale: "1" }, { translate: `calc(${d.dx}px) calc(${d.dy}px)`, scale: "1.08" }]);
   });
 
   it("el golpe de cámara sale con el DATOS real: cuatro pasos en el bloque del golpe", () => {
     const conGolpe = planDeGuion(GUIONES_W2.TUNEL.replace("look: pelicula", "look: pelicula\ngolpe: ninety")).p;
-    const id = [1, 2, 3, 4, 5].map((n) => `bloque${n}`).find((b) => !conGolpe.archivos[`compositions/${b}.html`].includes('"golpes":[]'));
+    const id = [1, 2, 3, 4, 5].map((n) => `esc${n}`).find((b) => !conGolpe.archivos[`compositions/${b}.html`].includes('"golpes":[]'));
     expect(id).toBeDefined();
     const golpe = ejecutarPieza(conGolpe.archivos[`compositions/${id}.html`]).animaciones.filter((a) => a.sel === `#${id}-golpe`);
     expect(golpe).toHaveLength(4);
@@ -151,8 +151,8 @@ describe("bloque-foto", () => {
   });
 
   it("DATOS no válidos: la envoltura lanza", () => {
-    const html = bloque("bloque1");
-    const mal = (campo: string, valor: unknown) => html.replace(/(id="bloque1-datos" type="application\/json">)([\s\S]*?)(<\/script>)/, (_m, a, b, c) => a + JSON.stringify({ ...JSON.parse(b), [campo]: valor }) + c);
+    const html = bloque("esc1");
+    const mal = (campo: string, valor: unknown) => html.replace(/(id="esc1-datos" type="application\/json">)([\s\S]*?)(<\/script>)/, (_m, a, b, c) => a + JSON.stringify({ ...JSON.parse(b), [campo]: valor }) + c);
     expect(() => ejecutarPieza(mal("punch", "si"))).toThrow(/envoltura/);
     expect(() => ejecutarPieza(mal("golpes", "x"))).toThrow(/envoltura/);
     expect(() => ejecutarPieza(mal("duracion", null))).toThrow();
@@ -160,15 +160,15 @@ describe("bloque-foto", () => {
 });
 
 describe("escena-cartel", () => {
-  const html = piezaHtml(todas, "bloque3");
-  const d = datosDe(html, "bloque3-datos");
-  const inicio = Number(/HF\.contexto\("bloque3", ([\d.]+)\)/.exec(html)?.[1]);
+  const html = piezaHtml(todas, "esc3");
+  const d = datosDe(html, "esc3-datos");
+  const inicio = Number(/HF\.contexto\("esc3", ([\d.]+)\)/.exec(html)?.[1]);
 
   it("una animación por palabra, separadas 0,067 s, más el subtexto y la envoltura", () => {
     expect(html).not.toMatch(FORMA_GSAP);
     expect(Number.isFinite(inicio)).toBe(true);
     const r = ejecutarPieza(html);
-    const palabras = r.animaciones.filter((a) => a.sel === "#bloque3-txt .w");
+    const palabras = r.animaciones.filter((a) => a.sel === "#esc3-txt .w");
     expect(palabras).toHaveLength(3); // «Nobody comes close»
     palabras.forEach((a, i) => {
       expect(a.kf).toEqual([
@@ -178,27 +178,27 @@ describe("escena-cartel", () => {
       expect(a.op.delay).toBeCloseTo((inicio + d.empieza + i * 0.067) * 1000, 6);
       expect(a.op).toMatchObject({ duration: 350, fill: "both" });
     });
-    const sub = r.animaciones.filter((a) => a.sel === "#bloque3-sub");
+    const sub = r.animaciones.filter((a) => a.sel === "#esc3-sub");
     expect(sub).toHaveLength(1);
     expect(sub[0].kf[1]).toMatchObject({ opacity: 0.85 });
     expect(sub[0].op.delay).toBeCloseTo((inicio + d.empieza + 0.4) * 1000, 6);
     // envoltura de un bloque ≥ 2: fundido + punch (+ golpes si los hay)
-    const env = r.animaciones.filter((a) => !["#bloque3-txt .w", "#bloque3-sub"].includes(a.sel));
-    expect(env.map((a) => a.sel)).toEqual(["#bloque3-fundido", "#bloque3-punch"]);
+    const env = r.animaciones.filter((a) => !["#esc3-txt .w", "#esc3-sub"].includes(a.sel));
+    expect(env.map((a) => a.sel)).toEqual(["#esc3-fundido", "#esc3-punch"]);
   });
 
   it("texto hostil: sale escapado y la pieza no usa innerHTML", () => {
     const hostil = planDeGuion(GUIONES_W2.TODAS.replace("texto: Nobody comes close", 'texto: "<img src=x onerror=1> {{INICIO}} B"').replace("subtexto: Not even near", 'subtexto: "<b>x</b>"')).p;
-    const h = piezaHtml(hostil, "bloque3");
+    const h = piezaHtml(hostil, "esc3");
     expect(h).not.toContain("<img src=x");
     expect(h).not.toContain("<b>x</b>");
     expect(h).toContain("&lt;img");
     const r = ejecutarPieza(h);
-    expect(r.animaciones.filter((a) => a.sel === "#bloque3-txt .w").length).toBeGreaterThan(0);
+    expect(r.animaciones.filter((a) => a.sel === "#esc3-txt .w").length).toBeGreaterThan(0);
   });
 
   it("DATOS sin `empieza` válido lanza (I11)", () => {
-    const mal = html.replace(/(id="bloque3-datos" type="application\/json">)[\s\S]*?(<\/script>)/, '$1{"empieza":"x"}$2');
+    const mal = html.replace(/(id="esc3-datos" type="application\/json">)[\s\S]*?(<\/script>)/, '$1{"empieza":"x"}$2');
     expect(() => ejecutarPieza(mal)).toThrow();
   });
 });

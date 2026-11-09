@@ -136,7 +136,7 @@ describe("capas", () => {
 
 describe("escena-barras", () => {
   const { p } = plan(BARRAS);
-  const id = "bloque4";
+  const id = "esc4";
   const nombre = Object.keys(p.archivos).find((k) => /compositions\/.*barras.*\.html$/.test(k) || (k.startsWith("compositions/") && p.archivos[k].includes("-periodo")));
   const html = nombre ? p.archivos[nombre] : "";
   const idReal = /data-composition-id="([^"]+)"/.exec(html)?.[1] ?? id;
@@ -353,7 +353,7 @@ describe.skipIf(!motor)("W2.3 con motor", () => {
         const cerca = (x: any, y: any) =>
           x.rect.every((v: number, i: number) => Math.abs(v - y.rect[i]) <= 0.75) && Math.abs(x.opacity - y.opacity) <= 0.01 && x.texto === y.texto;
         // Solo los elementos de estas tres piezas.
-        const propios = (e: any) => /^(capas|bloque4|bloque5|.*-f\d|.*-periodo|.*-z\d)/.test(e.id) || /^capas/.test(e.id);
+        const propios = (e: any) => /^(capas|esc4|esc5|.*-f\d|.*-periodo|.*-z\d)/.test(e.id) || /^capas/.test(e.id);
         const fallos: string[] = [];
         let comparados = 0;
         for (const t of Object.keys(a.frio)) {
