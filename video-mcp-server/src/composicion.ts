@@ -29,7 +29,7 @@ export const SHADERS_JS = path.join(PLANTILLA_DIR, "vendor", "shaders.iife.js");
 /** Motor de tiempo WAAPI de las piezas (SEO-111). */
 export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
 /** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
-const DURACION_MAXIMA = 180;
+export const DURACION_MAXIMA = 180;
 const ID_PIEZA_RE = /^[a-z][a-z0-9-]*$/;
 
 // Capas fijas por encima de cualquier escena (hasta 90, en 11..100): con la escena n en 10 + n, nada las alcanza.

@@ -6,7 +6,7 @@ import { log } from "./log.js";
 import { parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
-import { cargarTema, desdeGuionV2, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
+import { DURACION_MAXIMA, cargarTema, desdeGuionV2, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
 import { borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
@@ -333,6 +333,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
   borrarArbol(tmp);
   fs.mkdirSync(tmp, { recursive: true });
   try {
+    if (!(prep.palabras.duracionAudio <= DURACION_MAXIMA)) throw new Error(`La voz dura ${prep.palabras.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
     await normalizarVoz(h, prep.voz, path.join(tmp, "voz.wav"));
     const D = prep.palabras.duracionAudio + 0.4;
     let musicaPlan: { volumen: number; automatizacion: string } | undefined;
