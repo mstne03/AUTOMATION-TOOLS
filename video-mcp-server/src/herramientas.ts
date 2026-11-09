@@ -6,7 +6,7 @@ import { faltanParaVoz } from "./config.js";
 import { ErrorGuion, parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./alineacion.js";
 import { borrarArbol, escribirAtomico, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
-import { esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear } from "./proceso.js";
+import { barridoAlArrancar, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type DepsBarrido } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
 import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
 import { extraerFotograma } from "./fotograma.js";
@@ -642,4 +642,12 @@ export async function catalogo(cfg: Config, args: { consulta: string }): Promise
       ].join("\n")
     : `Nada en el catálogo para "${args.consulta}".`;
   return { texto, datos: { consulta: args.consulta, total: j.total, resultados } };
+}
+
+// ---------- video_barrer_procesos (R0-6) ----------
+
+/** Barre los procesos huérfanos del motor (Chrome, ffmpeg) por ruta de imagen. Sin entrada, sin rutas ni pids en la respuesta. */
+export async function barrerProcesosTool(deps?: DepsBarrido, env?: NodeJS.ProcessEnv): Promise<Respuesta> {
+  await barridoAlArrancar(deps, env);
+  return { texto: "Barrido de procesos del motor hecho.", datos: { barrido: true } };
 }

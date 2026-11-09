@@ -52,7 +52,7 @@ LIMITE_CUERPO = 1024 * 1024  # 1 MiB
 DEADLINE_RENDER = 6 * 3600.0  # sobre el peor caso de 180 s de vídeo (T11); los tests lo acortan
 SONDEO_RENDER = 1.0  # segundos entre sondeos de `video_estado_render`
 TIMEOUT_VOCES = 20.0  # `video_voces` va a ElevenLabs: corto y propio, para que un catálogo lento no ate al motor
-TOOL_BARRIDO = "video_barrer_procesos"  # TODO(T6): nombre que el backend espera del motor para el barrido (R0-6)
+TOOL_BARRIDO = "video_barrer_procesos"  # tool del motor (T6, R0-6): barre Chrome y ffmpeg huérfanos por ruta de imagen
 MAX_FRASES = 540  # 90 escenas × 6 frases
 PROFUNDIDAD_MAXIMA = 16
 CSP = "sandbox; default-src 'none'"
@@ -543,8 +543,8 @@ async def reiniciar_motor_render(motor) -> bool:
     """Reinicio del motor del render al vencer el deadline (R0-6). `True` si el motor nuevo barrió los procesos huérfanos.
 
     Los Chrome y ffmpeg del render cuelgan del Job Object del sidecar y no mueren con el motor. Antes de parar se
-    registran los PID conocidos (para poder rastrearlos) y, ya con el motor nuevo, se le pide el barrido si tiene la
-    tool. El barrido real al arrancar es de T6 (ver `docs/video-fase1/pendientes-T11.md`).
+    registran los PID conocidos (en Windows, solo el del motor: no se lee `/proc`) y, ya con el motor nuevo, se le pide el
+    barrido con `video_barrer_procesos` (el motor también barre al arrancar).
     """
     pids = motor.pids_conocidos()
     log.warning("Render: se reinicia el motor del render; PID conocidos antes de pararlo: %s.", pids)
@@ -552,7 +552,7 @@ async def reiniciar_motor_render(motor) -> bool:
     try:
         if TOOL_BARRIDO not in await motor.herramientas():
             log.warning(
-                "TODO(T6): el motor no tiene %s; los procesos hijos %s (Chrome, ffmpeg) pueden quedar huérfanos hasta el "
+                "El motor no tiene %s: los procesos hijos %s (Chrome, ffmpeg) pueden quedar huérfanos hasta el "
                 "próximo barrido del motor.",
                 TOOL_BARRIDO,
                 pids,

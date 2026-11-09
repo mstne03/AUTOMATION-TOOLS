@@ -25,6 +25,7 @@ import contextvars
 import json
 import logging
 import os
+import sys
 import threading
 from collections.abc import Callable
 from contextlib import AsyncExitStack
@@ -67,7 +68,9 @@ class MotorError(Exception):
     `{ruta, codigo}`, nunca valores. Un error sin tipar tiene `codigo=None`.
     """
 
-    def __init__(self, mensaje: str = "", codigo: str | None = None, problemas: list | None = None) -> None:
+    def __init__(
+        self, mensaje: str = "", codigo: str | None = None, problemas: list | None = None
+    ) -> None:
         super().__init__(mensaje)
         self.codigo = codigo
         self.problemas = list(problemas or [])
@@ -116,7 +119,9 @@ if _spawn_original is not None:
 
     _stdio._create_platform_compatible_process = _spawn_anotado
 else:  # pragma: no cover - depende de la versión del SDK
-    log.warning("mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None.")
+    log.warning(
+        "mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None."
+    )
 
 
 def _error_tipado(textos: list[str], clave: str | None) -> tuple[str | None, list]:
@@ -188,7 +193,10 @@ async def _esperar_parada_o_muerte(s: _Sesion) -> None:
         await asyncio.gather(*esperas, return_exceptions=True)
     if not s.parar.is_set():
         codigo = s.proceso.returncode if s.proceso is not None else None
-        log.warning("El motor de vídeo terminó por su cuenta (código %s); se relanzará en la siguiente llamada.", codigo)
+        log.warning(
+            "El motor de vídeo terminó por su cuenta (código %s); se relanzará en la siguiente llamada.",
+            codigo,
+        )
         s.parar.set()
 
 
@@ -210,7 +218,9 @@ class MotorVideo:
         # `actividad()`: ¿hay trabajo largo en curso fuera de este objeto (voz o render de algún proyecto)? Mientras lo haya,
         # el timeout de una llamada ajena no reinicia el proceso (revisión T11, Medium 1).
         self._actividad = actividad
-        self._protegidas = 0  # llamadas largas en vuelo (`protegida=True`); solo se toca desde el bucle de eventos
+        self._protegidas = (
+            0  # llamadas largas en vuelo (`protegida=True`); solo se toca desde el bucle de eventos
+        )
         self._lock = asyncio.Lock()
         self._sesion: _Sesion | None = None
 
@@ -235,7 +245,11 @@ class MotorVideo:
     # ----------------------------------------------------------- llamadas
 
     async def llamar(
-        self, tool: str, args: dict | None = None, timeout: float | None = None, protegida: bool = False
+        self,
+        tool: str,
+        args: dict | None = None,
+        timeout: float | None = None,
+        protegida: bool = False,
     ) -> RespuestaMotor:
         """`protegida=True`: llamada larga que un reinicio cortaría (generar voz, muestra). Mientras esté en vuelo,
         el timeout de cualquier otra llamada falla esa llamada (`MotorOcupado`) pero no reinicia el proceso."""
@@ -266,8 +280,13 @@ class MotorVideo:
             # (está colgada de verdad), pero solo si no hay otra protegida distinta en vuelo.
             otras = self._protegidas - (1 if propia else 0)
             if otras > 0 or (not propia and self.en_actividad()):
-                log.warning("Motor de vídeo: la llamada no respondió en %g s; no se reinicia porque hay trabajo en curso.", limite)
-                raise MotorOcupado(f"El motor de vídeo no respondió en {limite:g} s (ocupado con otra tarea).") from None
+                log.warning(
+                    "Motor de vídeo: la llamada no respondió en %g s; no se reinicia porque hay trabajo en curso.",
+                    limite,
+                )
+                raise MotorOcupado(
+                    f"El motor de vídeo no respondió en {limite:g} s (ocupado con otra tarea)."
+                ) from None
             await self._descartar(s)
             raise MotorTimeout(f"El motor de vídeo no respondió en {limite:g} s.") from None
         except MCPError as e:
@@ -275,7 +294,13 @@ class MotorVideo:
                 await self._descartar(s)
                 raise MotorNoDisponible(MENSAJE_DETENIDO) from None
             raise MotorError(_ocultar(e.error.message, s.clave)) from None
-        except (anyio.ClosedResourceError, anyio.BrokenResourceError, anyio.EndOfStream, EOFError, ConnectionError):
+        except (
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+            anyio.EndOfStream,
+            EOFError,
+            ConnectionError,
+        ):
             await self._descartar(s)
             raise MotorNoDisponible(MENSAJE_DETENIDO) from None
 
@@ -285,7 +310,9 @@ class MotorVideo:
         texto = _ocultar(textos[0], clave) if textos else ""
         if r.is_error:
             codigo, problemas = _error_tipado(textos, clave)
-            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.", codigo, problemas)
+            raise MotorError(
+                texto or "El motor de vídeo devolvió un error sin detalle.", codigo, problemas
+            )
         datos = None
         if len(textos) > 1:
             try:
@@ -295,7 +322,9 @@ class MotorVideo:
                 valor = None
             if isinstance(valor, dict | list):
                 datos = valor
-        imagen = next(((c.mime_type, c.data) for c in r.content if isinstance(c, ImageContent)), None)
+        imagen = next(
+            ((c.mime_type, c.data) for c in r.content if isinstance(c, ImageContent)), None
+        )
         return RespuestaMotor(texto=texto, datos=datos, imagen=imagen)
 
     # ------------------------------------------------------ ciclo de vida
@@ -340,14 +369,19 @@ class MotorVideo:
             async with AsyncExitStack() as pila:
                 leer_fd, escribir_fd = os.pipe()
                 threading.Thread(
-                    target=_lector_stderr, args=(leer_fd, s.clave), name="motor-video-stderr", daemon=True
+                    target=_lector_stderr,
+                    args=(leer_fd, s.clave),
+                    name="motor-video-stderr",
+                    daemon=True,
                 ).start()
                 # Solo envuelve el descriptor de la tubería (no bloquea); se cierra tras el spawn.
                 errlog = open(escribir_fd, "w", encoding="utf-8")  # noqa: SIM115, ASYNC230
                 caja: list = []
                 token = _proceso_lanzado.set(caja)
                 try:
-                    lectura, escritura = await pila.enter_async_context(stdio_client(params, errlog=errlog))
+                    lectura, escritura = await pila.enter_async_context(
+                        stdio_client(params, errlog=errlog)
+                    )
                 finally:
                     _proceso_lanzado.reset(token)
                     # El hijo tiene su copia del extremo de escritura; cerrar la nuestra deja que
@@ -362,7 +396,9 @@ class MotorVideo:
                 await _esperar_parada_o_muerte(s)
         except BaseException as e:
             if not s.listo.done():
-                s.listo.set_exception(e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO))
+                s.listo.set_exception(
+                    e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO)
+                )
             elif not s.parar.is_set():
                 log.warning("El motor de vídeo terminó: %s", _ocultar(_describir(e), s.clave))
             if not isinstance(e, Exception):
@@ -395,7 +431,11 @@ class MotorVideo:
 
 
 def _descendientes(raiz: int) -> list[int]:
-    """PID de los descendientes de `raiz`: con psutil si está; si no, por /proc (Linux). Sin ninguno: vacío."""
+    r"""PID de los descendientes de `raiz`: con psutil si está; si no, por /proc (solo Linux). Sin ninguno: vacío.
+
+    En Windows no se lee `/proc` nunca: no existe, y en alguna máquina hay un `C:\proc` ajeno que Python resolvería. Allí el
+    rastro de huérfanos es el barrido del motor (`video_barrer_procesos`), que busca por ruta de imagen.
+    """
     try:
         import psutil
 
@@ -403,6 +443,8 @@ def _descendientes(raiz: int) -> list[int]:
     except ImportError:
         pass
     except Exception:  # noqa: BLE001 - el proceso pudo morir entre medias
+        return []
+    if sys.platform == "win32":
         return []
     proc = Path("/proc")
     if not proc.is_dir():
@@ -480,7 +522,9 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
         if not (d / "node" / "node.exe").is_file():
             raise MotorNoDisponible(MENSAJE_NO_INSTALADO)
         if not ((ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()):
-            raise MotorNoDisponible("A la instalación del motor de vídeo le falta ffmpeg: reinstala SEO Studio.")
+            raise MotorNoDisponible(
+                "A la instalación del motor de vídeo le falta ffmpeg: reinstala SEO Studio."
+            )
         env["FFMPEG_DIR"] = str(ffmpeg)
     elif (ffmpeg / "ffmpeg.exe").exists():
         env["FFMPEG_DIR"] = str(ffmpeg)
@@ -504,4 +548,3 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave
     return env
-

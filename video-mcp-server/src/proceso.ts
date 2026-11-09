@@ -479,7 +479,7 @@ export function ejecutar(comando: string, args: string[], opciones: OpcionesEjec
  */
 async function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar, cli: boolean, barrer = true): Promise<Resultado> {
   const r = await lanzarUno(comando, args, opciones);
-  if (barrer && (r.timeout || (cli && r.code !== 0))) await barrerProcesos(carpetasDelBundle(herramientasFfmpeg(process.env.FFMPEG_DIR)));
+  if (barrer && (r.timeout || (cli && r.code !== 0))) await barridoAlArrancar();
   return r;
 }
 
@@ -859,6 +859,16 @@ export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEP
     log.error(`Barrido: ${(e as Error).message}`);
     deps.reiniciar();
   }
+}
+
+/**
+ * Barrido de lo que pertenece al motor (R0-6, I7): al arrancar (recoge lo que dejó un motor muerto: Chrome y ffmpeg
+ * cuelgan del Job Object del sidecar y no mueren con él) y a petición del backend tras una cancelación o un reinicio.
+ * No toca lo que cuelga de un hijo en vuelo ni de otro motor vivo (`seleccionarBarrido`). Sin navegador ni ffmpeg del
+ * motor identificables no lista nada.
+ */
+export function barridoAlArrancar(deps: DepsBarrido = DEPS_BARRIDO, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  return barrerProcesos(carpetasDelBundle(herramientasFfmpeg(env.FFMPEG_DIR), env), deps);
 }
 
 // ---------- ffmpeg ----------

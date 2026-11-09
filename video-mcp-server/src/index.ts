@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { config, faltanParaVoz } from "./config.js";
 import { log } from "./log.js";
-import { esIntegrado, herramientasFfmpeg } from "./proceso.js";
+import { barridoAlArrancar, esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
 import { registrarHerramientasProyecto, resultadoDeError } from "./herramientas-proyecto.js";
@@ -105,9 +105,24 @@ server.registerTool(
     description:
       "Comprueba guion, imágenes requeridas y voz, monta la composición HyperFrames, pasa hyperframes check y lanza el render a VIDEO_ROOT\\videoNNN\\video.mp4 " +
       "(1080×1920, 30 fps). Devuelve un job_id al momento; consulta con video_estado_render. Un render a la vez; el resto se encola.",
-    inputSchema: { id: ID, musica: z.boolean().optional().default(true).describe("Incluir la música del guion si la hay.") },
+    inputSchema: {
+      id: ID,
+      musica: z.boolean().optional().default(true).describe("Incluir la música del guion si la hay."),
+      modo: z.enum(["auto", "rapido", "compatible"]).optional().default("auto").describe("D11: Automático (hoy Compatible), Rápido (GPU, con reserva a Compatible) o Compatible."),
+    },
   },
   (a) => envolver("video_renderizar", () => h.renderizar(config, a)),
+);
+
+// R0-6: el backend la pide tras cancelar un render o reiniciar el motor. Sin entrada; no entra en el registro del modelo (D2, I10).
+server.registerTool(
+  "video_barrer_procesos",
+  {
+    title: "Barrer procesos del motor",
+    description: "Mata los Chrome y ffmpeg del motor que sigan vivos sin dueño (por ruta de imagen, nunca por pid ni nombre). Lo usa el backend tras una cancelación; el motor también barre al arrancar.",
+    inputSchema: {},
+  },
+  () => envolver("video_barrer_procesos", () => h.barrerProcesosTool()),
 );
 
 server.registerTool(
@@ -191,6 +206,8 @@ if (!esIntegrado()) {
 async function main() {
   log.info(`video-mcp-server arrancando. VIDEO_ROOT=${config.videoRoot}`);
   herramientasFfmpeg(config.ffmpegDir);
+  // R0-6: recoge lo que dejó un motor muerto. Solo Windows (la consulta de procesos es de allí) y sin bloquear el arranque.
+  if (process.platform === "win32") void barridoAlArrancar().catch((e) => log.error("Barrido al arrancar:", e));
   const faltan = faltanParaVoz(config);
   if (faltan.length) log.warn(`video_generar_voz no funcionará todavía. ${h.mensajeFaltanParaVoz(faltan)}`);
   await server.connect(new StdioServerTransport());
