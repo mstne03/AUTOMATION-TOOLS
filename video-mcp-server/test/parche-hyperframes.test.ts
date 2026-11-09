@@ -407,7 +407,7 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     expect(inventario(/"--no-sandbox"/)).toEqual([
       "capture-KKD5GMAF.js:199", // captura de webs, solo Linux (I14: el motor no la usa)
       "chunk-4UMPIPCQ.js:54", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
-      "chunk-K4MJX7SR.js:37", // el propio hunk A (lo detecta para quitarlo)
+      "chunk-K4MJX7SR.js:41", // el propio hunk A (lo detecta para quitarlo)
       "chunk-RDDVQSNQ.js:1254", // getHardwareGpuProbeArgs → marcador
       "chunk-RDDVQSNQ.js:1531", // buildChromeArgs → marcador
       "chunk-RDDVQSNQ.js:15810", // efectos de audio → marcador
@@ -564,6 +564,13 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
       const { oneProcessOverPipe } = (await import(chunk("chunk-DKPNNYBZ.js"))) as { oneProcessOverPipe: (o: { args: Args }) => { args: Args } };
       expect(() => marcador(oneProcessOverPipe({ args: ["--no-sandbox"] }).args)).toThrow(/--single-process.*I3/);
       expect(() => marcador(["--in-process-gpu"])).toThrow(/I3/);
+    });
+
+    it("render_sin_puerto_cdp: rechaza --remote-debugging-port y --remote-debugging-address; el pipe sigue valiendo (R0-1)", () => {
+      for (const flag of ["--remote-debugging-port=9222", "--remote-debugging-port", "--remote-debugging-port=0", "--remote-debugging-address=0.0.0.0"]) {
+        expect(() => marcador(["--no-sandbox", flag]), flag).toThrow(/depuración remota.*I7/);
+      }
+      expect(marcador(["--remote-debugging-pipe"])).toContain("--remote-debugging-pipe");
     });
   });
 });
@@ -1129,6 +1136,43 @@ describe("I7: servidores de HyperFrames solo en loopback", () => {
     } finally {
       await srv.close();
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("servidor_hf_solo_render: el servidor de ficheros de HyperFrames sirve solo la carpeta del render (R0-2)", async () => {
+    const { createFileServer } = (await import(chunk("chunk-RDDVQSNQ.js"))) as {
+      createFileServer: (o: object) => Promise<{ port: number; close: () => unknown }>;
+    };
+    const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "video r02 "));
+    const render = path.join(raiz, "_render");
+    fs.mkdirSync(render);
+    fs.writeFileSync(path.join(render, "index.html"), "<html></html>");
+    fs.writeFileSync(path.join(raiz, "proyecto.json"), '{"secreto":1}');
+    const srv = await createFileServer({ projectDir: render, compiledDir: render, port: 0 });
+    // Ruta cruda: `fetch` normalizaría los `..` antes de enviarlos.
+    const pide = (ruta: string) =>
+      new Promise<{ estado: number; cuerpo: string }>((resolve, reject) => {
+        http.get({ host: "127.0.0.1", port: srv.port, path: ruta }, (res) => {
+          let cuerpo = "";
+          res.on("data", (c) => (cuerpo += c));
+          res.on("end", () => resolve({ estado: res.statusCode ?? 0, cuerpo }));
+        }).on("error", reject);
+      });
+    try {
+      expect((await pide("/index.html")).estado).toBe(200);
+      for (const ruta of ["/../proyecto.json", "/%2e%2e/proyecto.json", "/..%2fproyecto.json", "/..\proyecto.json", "/%2e%2e%5cproyecto.json"]) {
+        const r = await pide(ruta);
+        expect(r.estado, ruta).toBe(404);
+        expect(r.cuerpo, ruta).not.toContain("secreto");
+      }
+      // `/../../` se normaliza a la raíz del servidor: sirve su index.html, nunca el directorio de arriba.
+      const arriba = await pide("/../../");
+      expect(arriba.cuerpo).not.toContain("proyecto.json");
+      expect([200, 404]).toContain(arriba.estado);
+      if (arriba.estado === 200) expect(arriba.cuerpo).toBe("<html></html>");
+    } finally {
+      await srv.close();
+      fs.rmSync(raiz, { recursive: true, force: true });
     }
   });
 
