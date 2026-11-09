@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -677,9 +678,65 @@ async def test_real_xss_en_cada_campo_son_datos(real):
     assert (await real.get(f"/video/proyectos/{pid}")).headers["content-type"].startswith("application/json")
 
 
-@pytest.mark.skip(reason="Pendiente de T3: `_composicion/**` aún no se genera; aquí irá 'ningún <script> ni URL en la composición'")
-async def test_real_xss_en_la_composicion():
-    ...
+# Con marca única (`Q7`): las plantillas del motor traen `<script>` en sus comentarios, así que se busca el ataque entero.
+ATAQUES_COMPOSICION = ["<script>Q7", "</script>Q7", "{{ID}}Q7", '"><img Q7>', "&lt;Q7&gt;"]
+MOTOR_DIR = DIST.parent
+
+
+def _guion_con_ataque(a: str, sufijo: bool) -> dict:
+    """Una escena de cada tipo y el ataque en cada campo de texto (≤ 11 caracteres: cabe en el más corto)."""
+    pre, suf = ("", a) if sufijo else (a, "")
+    escenas = [
+        {"frases": [f"{a} uno."], "base": {"tipo": "cartel", "texto": a, "subtexto": a}},
+        {"frases": [f"{a} dos."], "base": {"tipo": "cifra", "valor": 7, "prefijo": pre, "sufijo": suf, "etiqueta": a, "decimales": 0}},
+        {
+            "frases": ["Tres."],
+            "base": {
+                "tipo": "barras", "titulo": a, "periodos": [a, "B"], "fuente": a, "prefijo": pre, "sufijo": suf,
+                "series": [{"nombre": a, "valores": [1, 2]}, {"nombre": "x", "valores": [3, 4]}],
+            },
+        },
+        {"frases": ["Cuatro."], "base": {"tipo": "mapa", "region": "europa", "destacar": [], "etiqueta": a, "titulo": a}},
+        {"frases": ["Cinco."], "base": {"tipo": "titulo3d", "texto": a}},
+    ]
+    return _guion_real(
+        titulo=a, gancho=a, escenas=escenas,
+        opciones={"fondo": "ninguno", "look": "normal", "subtitulos": "karaoke", "destellos": [], "etiqueta": a, "golpe": {"frase": 1, "palabra": a}},
+    )
+
+
+@pytest.mark.parametrize("ataque", ATAQUES_COMPOSICION)
+@pytest.mark.parametrize("sufijo", [False, True])
+async def test_real_xss_en_la_composicion(real, tmp_path, ataque, sufijo):
+    """R1 T1+T3+T9: POST real → proyecto guardado → `_composicion/**` montada con el motor real.
+
+    Ningún fichero contiene el texto del atacante sin escapar y `urlsDeRed` queda vacío. Si el esquema rechaza un campo
+    (422), ese texto nunca se guarda: también es inerte, pero al menos la variante sin rechazo tiene que existir.
+    """
+    r = await real.post("/video/guiones", json={"guion": _guion_con_ataque(ataque, sufijo)})
+    if r.status_code == 422:
+        pytest.fail(f"el esquema rechaza el ataque {ataque!r} en algún campo: {_codigos(r)}; acórtalo o muévelo para que llegue a la composición")
+    assert r.status_code == 201, r.text
+    pid = (await real.post("/video/proyectos", json={"guion_id": r.json()["id"], "perfil_id": "defecto"})).json()["id"]
+    salida = tmp_path / "salida" / "_composicion"
+    p = subprocess.run(
+        ["node", str(MOTOR_DIR / "scripts" / "componer-proyecto.mjs"), str(real.raiz), pid, str(salida)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert p.returncode == 0, p.stderr[-800:]
+    resultado = json.loads(p.stdout)
+    assert resultado["red"] == [] and resultado["archivos"] > 5
+    ficheros = [f for f in salida.rglob("*") if f.is_file() and f.suffix in {".html", ".json", ".css", ".js", ".mjs", ".svg"}]
+    assert ficheros
+    for f in ficheros:
+        t = f.read_text(encoding="utf8", errors="replace")
+        if "vendor" in f.parts:  # JS de terceros con hash fijado: los escanea `urlsDeRed`, no un texto del atacante
+            continue
+        if ataque.startswith("<") or ataque.startswith('"'):
+            assert ataque not in t, f"{f.name} contiene {ataque!r} sin escapar"
+        if ataque == "&lt;Q7&gt;":
+            assert "<Q7>" not in t, f.name  # el escape no se deshace en ninguna capa
+
 
 
 # ------------------------------------------------------- R1 T1→T9 (N1, N2)
