@@ -68,6 +68,13 @@ vi.mock("../src/proceso.js", async (orig) => {
   return { ...m, ejecutar: (c: string, a: string[], o: Parameters<typeof m.ejecutar>[2]) => (lanzados.push([c, ...a]), m.ejecutar(c, a, o)) };
 });
 
+// Normalizaciones de voz (`loudnorm`) pedidas por el montaje: el espía envuelve a `normalizarVoz` y la deja correr.
+const normalizaciones: unknown[][] = [];
+vi.mock("../src/musica.js", async (orig) => {
+  const m = await orig<typeof import("../src/musica.js")>();
+  return { ...m, normalizarVoz: (...a: Parameters<typeof m.normalizarVoz>) => (normalizaciones.push(a), m.normalizarVoz(...a)) };
+});
+
 import type { Config } from "../src/config.js";
 import { ErrorVideo } from "../src/paths.js";
 import { ErrorAlmacen, guionGuardar, proyectoCrear, proyectoGuardar, proyectoLeer } from "../src/proyecto.js";
@@ -105,6 +112,7 @@ beforeAll(async () => {
 afterAll(() => fs.rmSync(F.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }));
 beforeEach(() => {
   lanzados.length = 0;
+  normalizaciones.length = 0;
   for (const f of fs.readdirSync(F.banderas)) fs.rmSync(path.join(F.banderas, f));
   fs.rmSync(F.registro, { force: true });
 });
@@ -121,8 +129,11 @@ function respuesta(texto: string): Response {
 const fetchFalso = (async (_u: unknown, init?: RequestInit) => respuesta((JSON.parse(String(init?.body ?? "{}")) as { text: string }).text)) as unknown as typeof fetch;
 
 /** Proyecto de 2 escenas × 2 frases con la voz de un perfil propio. */
+let serie = 0;
 function nuevo(fondo = "aurora"): string {
-  const frases = (e: number) => [1, 2].map((k) => `Frase número ${e * 2 + k} del partido.`);
+  // La caché de voz es por texto: cada proyecto lleva frases propias para que el primer montaje sea en frío.
+  const t = ++serie;
+  const frases = (e: number) => [1, 2].map((k) => `Frase ${t} número ${e * 2 + k} del partido.`);
   const guion = {
     version: 1,
     titulo: "Cuatro frases",
@@ -207,13 +218,14 @@ describe("T6 · audio normalizado en caché por hash", () => {
     const id = nuevo();
     await conVoz(id);
     await preview(id);
-    expect(lanzados.some((l) => l.includes("-af") && l.some((x) => /loudnorm/.test(x)))).toBe(true); // el primer montaje sí normaliza
+    expect(normalizaciones).toHaveLength(1); // el primer montaje sí normaliza
+    normalizaciones.length = 0;
     lanzados.length = 0;
     editar(id, (p) => (p.escenas[0].base = { tipo: "cartel", texto: "Otro cartel distinto" }));
     const t0 = performance.now();
     await preview(id);
     const ms = performance.now() - t0;
-    expect(lanzados.some((l) => l.some((x) => /loudnorm/.test(x)))).toBe(false);
+    expect(normalizaciones).toHaveLength(0);
     expect(ffmpegLanzado()).toEqual([]);
     expect(ms).toBeLessThan(1000);
     expect(hijos(id, "voz").filter((n) => n.startsWith("normalizada-"))).toHaveLength(1);
@@ -226,8 +238,9 @@ describe("T6 · audio normalizado en caché por hash", () => {
     editar(id, (p) => (p.frases[0].texto = "Una frase nueva del partido."));
     await conVoz(id);
     lanzados.length = 0;
+    normalizaciones.length = 0;
     await preview(id);
-    expect(lanzados.some((l) => l.some((x) => /loudnorm/.test(x)))).toBe(true);
+    expect(normalizaciones).toHaveLength(1);
   });
 });
 

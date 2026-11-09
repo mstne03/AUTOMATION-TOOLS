@@ -8,7 +8,8 @@ import { cargarPalabras, procesarAlineacion, type ResultadoAlineacion } from "./
 import { borrarArbol, escribirAtomico, archivosVideo, imagenesValidadas, ErrorVideo, type ImagenEncontrada, listarIds, resolverDentro, siguienteId, validarId } from "./paths.js";
 import { barridoAlArrancar, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type DepsBarrido } from "./proceso.js";
 import { sintetizarConTimestamps } from "./tts.js";
-import { encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles } from "./render.js";
+import { MODOS_PEDIDOS, encolarRender, listarJobs, obtenerJob, posicionEnCola, ultimasLineasUtiles, type ModoPedido } from "./render.js";
+import { montarPreview } from "./montaje.js";
 import { extraerFotograma } from "./fotograma.js";
 import { log } from "./log.js";
 import { bloquesConFoto, fondoUsaWebgpu, textoAyuda } from "./formato.js";
@@ -412,13 +413,17 @@ export async function generarVoz(
 
 // ---------- video_renderizar / video_estado_render ----------
 
-export async function renderizar(cfg: Config, args: { id: string; musica?: boolean }): Promise<Respuesta> {
+export async function renderizar(cfg: Config, args: { id: string; musica?: boolean; modo?: ModoPedido }): Promise<Respuesta> {
   const id = validarId(args.id);
+  const modo = args.modo ?? "auto";
+  if (!(MODOS_PEDIDOS as readonly string[]).includes(modo)) throw new ErrorVideo(`modo inválido: usa ${MODOS_PEDIDOS.join(", ")}.`);
   const job = await encolarRender(id, {
     raiz: cfg.videoRoot,
     musica: args.musica ?? true,
     musicaVolumen: cfg.musicaVolumen,
     ffmpegDir: cfg.ffmpegDir,
+    modo,
+    cfg,
   });
   const pos = posicionEnCola(job.job_id);
   return {
@@ -427,7 +432,7 @@ export async function renderizar(cfg: Config, args: { id: string; musica?: boole
       `Consulta el avance con video_estado_render("${job.job_id}"). Suele tardar menos de un minuto por cada 20 s de vídeo.`,
       ...job.avisos.map((a) => `Aviso: ${a}`),
     ].join("\n"),
-    datos: { job_id: job.job_id, id, estado: job.estado, mp4: job.mp4, avisos: job.avisos },
+    datos: { job_id: job.job_id, id, estado: job.estado, modoPedido: job.modoPedido, ...(esIntegrado() ? {} : { mp4: job.mp4 }), avisos: job.avisos },
   };
 }
 
@@ -444,8 +449,13 @@ export function estadoRender(args: { job_id: string }): Respuesta {
     estado: job.estado,
     fase: job.fase ?? null,
     progreso: job.progreso ?? null,
-    mp4: job.estado === "terminado" ? job.mp4 : null,
+    // En integrado el MP4 no sale como ruta absoluta: la UI no ve rutas (I6) y el backend lo exporta por su cuenta.
+    mp4: job.estado === "terminado" && !esIntegrado() ? job.mp4 : null,
     duracion: job.duracion ?? null,
+    modoPedido: job.modoPedido ?? null,
+    modo: job.modo ?? null,
+    fondo: job.fondo ?? null,
+    reserva: job.reserva ?? null,
     avisos: job.avisos,
   };
   let texto: string;
@@ -458,8 +468,9 @@ export function estadoRender(args: { job_id: string }): Respuesta {
       break;
     case "terminado":
       texto = [
-        `${job.job_id}: terminado. ${job.mp4} (${s2(job.duracion)}).`,
-        `Revísalo con video_fotograma("${job.id}", segundo) y, con el OK del usuario, súbelo con youtube_upload_video desde ${job.mp4}.`,
+        esIntegrado() ? `${job.job_id}: terminado (${s2(job.duracion)}).` : `${job.job_id}: terminado. ${job.mp4} (${s2(job.duracion)}).`,
+        ...(esIntegrado() ? [] : [`Revísalo con video_fotograma("${job.id}", segundo) y, con el OK del usuario, súbelo con youtube_upload_video desde ${job.mp4}.`]),
+        ...(job.reserva ? [`Reserva: ${job.reserva}`] : []),
         ...job.avisos.map((a) => `Aviso: ${a}`),
       ].join("\n");
       break;
@@ -650,4 +661,13 @@ export async function catalogo(cfg: Config, args: { consulta: string }): Promise
 export async function barrerProcesosTool(deps?: DepsBarrido, env?: NodeJS.ProcessEnv): Promise<Respuesta> {
   await barridoAlArrancar(deps, env);
   return { texto: "Barrido de procesos del motor hecho.", datos: { barrido: true } };
+}
+
+// ---------- video_montar_preview (T6) ----------
+
+/** Monta la composición del proyecto en `_composicion/r<n>/` y devuelve `{ carpeta, duracion, avisos, fondo }`. Sin rutas. */
+export async function montarPreviewTool(cfg: Config, a: { id: string; webgpu: boolean }): Promise<Respuesta> {
+  const r = await montarPreview(cfg, { id: validarId(a.id), webgpu: a.webgpu === true });
+  const reserva = r.fondo.usado !== r.fondo.pedido ? ` Fondo ${r.fondo.pedido} sustituido por el degradado CSS.` : "";
+  return { texto: `Preview ${r.carpeta} montada (${r.duracion.toFixed(1)} s).${reserva}`, datos: { ...r } };
 }

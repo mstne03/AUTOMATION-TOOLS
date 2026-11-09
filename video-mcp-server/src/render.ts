@@ -11,6 +11,8 @@ import { borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorV
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
+import type { Config } from "./config.js";
+import { enSerie, montarProyecto, prepararProyecto, type PreparadoProyecto } from "./montaje.js";
 
 export { HYPERFRAMES_BIN };
 
@@ -226,7 +228,14 @@ export interface Job {
   intermedio?: "mov" | "webm";
   /** Qué falló y a qué se recurrió, si hubo reserva (I11: nunca en silencio). */
   reserva?: string;
+  /** Modo que pidió el llamante (`auto` | `rapido` | `compatible`); `modo` es el que salió. */
+  modoPedido?: ModoPedido;
+  /** Fondo pedido y fondo usado (`css` = degradado de reserva); solo en proyectos. */
+  fondo?: { pedido: string; usado: string };
 }
+
+export type ModoPedido = "auto" | "rapido" | "compatible";
+export const MODOS_PEDIDOS: readonly ModoPedido[] = ["auto", "rapido", "compatible"];
 
 export interface Preparado {
   id: string;
@@ -248,7 +257,9 @@ export interface OpcionesRender {
   ffmpegDir?: string;
   tema?: Tema;
   /** D11; por defecto "auto" (= MODO_AUTOMATICO). Exponerlo en la tool es de la oleada 2. */
-  modo?: "auto" | "rapido" | "compatible";
+  modo?: ModoPedido;
+  /** Con configuración y un `proyecto.json` en la carpeta, el job monta el Proyecto (T6) en vez del guion.md anterior. */
+  cfg?: Config;
 }
 
 /** Valida todo antes de crear el job. Lanza ErrorVideo con un mensaje accionable si falta algo. */
@@ -375,7 +386,7 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
 // ---------- Cola ----------
 
 const jobs = new Map<string, Job>();
-const cola: { job: Job; prep: Preparado; o: OpcionesRender }[] = [];
+const cola: { job: Job; prep: Preparado | PreparadoProyecto; o: OpcionesRender }[] = [];
 let ocupado = false;
 
 // Avisos de `check` que no aportan nada aquí: contraste sobre fotos (el texto lleva contorno) y
@@ -419,8 +430,14 @@ export function ultimasLineasUtiles(job: Job, n = 30): string[] {
 }
 
 export async function encolarRender(id: string, o: OpcionesRender): Promise<Job> {
-  const prep = await prepararRender(id, o);
+  if (o.modo !== undefined && !(MODOS_PEDIDOS as readonly string[]).includes(o.modo)) {
+    throw new ErrorVideo(`modo inválido: usa ${MODOS_PEDIDOS.join(", ")}.`);
+  }
+  const esProyecto = !!o.cfg && fs.existsSync(path.join(archivosVideo(o.raiz, id).dir, "proyecto.json"));
+  const prep = esProyecto ? await prepararProyecto(id, { cfg: o.cfg! }) : await prepararRender(id, o);
+  if (!prep.herramientas) throw new ErrorVideo(mensajeSinFfmpeg());
   const job: Job = {
+    modoPedido: o.modo ?? "auto",
     job_id: `render-${id}-${crypto.randomBytes(3).toString("hex")}`,
     id,
     estado: "en_cola",
@@ -527,7 +544,9 @@ export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: 
 /** Lo que comparten las dos rutas de render de un job. */
 interface ContextoRender {
   job: Job;
-  prep: Preparado;
+  prep: { id: string; rutas: Preparado["rutas"]; herramientas: Herramientas };
+  /** Carpeta de la composición de ESTE job: `_composicion` (guion.md anterior) o `_render/<job>` (proyecto). */
+  composicion: string;
   montaje: Montaje;
   disponibles: CodificadorH264[];
   timeoutMs: number;
@@ -544,7 +563,7 @@ interface SalidaRender {
 async function renderCli(c: ContextoRender, salida: string, formato: "mp4" | "mov" | "webm"): Promise<void> {
   c.job.fase = "render";
   c.job.progreso = 0;
-  const args = [HYPERFRAMES_BIN, "render", c.prep.rutas.composicion, "-o", salida, "--fps", "30", "--format", formato];
+  const args = [HYPERFRAMES_BIN, "render", c.composicion, "-o", salida, "--fps", "30", "--format", formato];
   if (formato === "mp4") args.push("--quality", "delivery");
   if (c.montaje.usaWebgpu) args.push("--browser-gpu");
   const r = await ejecutar(process.execPath, args, { onLinea: (l) => anotar(c.job, l), timeoutMs: c.timeoutMs });
@@ -611,27 +630,51 @@ async function renderCompatible(c: ContextoRender): Promise<SalidaRender> {
   }
 }
 
-async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promise<void> {
+async function ejecutarJob(job: Job, prep: Preparado | PreparadoProyecto, o: OpcionesRender): Promise<void> {
+  // Un proyecto compone en `_render/<job>/` (nunca en `_composicion/`, que es de la preview) y la borra al acabar.
+  if (!("proyecto" in prep)) return ejecutarJobEn(job, prep, prep.rutas.composicion, o);
+  const dir = path.join(prep.rutas.dir, "_render", job.job_id);
+  try {
+    await ejecutarJobEn(job, prep, dir, o);
+  } finally {
+    borrarArbol(dir);
+  }
+}
+
+async function ejecutarJobEn(job: Job, prep: Preparado | PreparadoProyecto, composicion: string, o: OpcionesRender): Promise<void> {
   job.estado = "renderizando";
   job.fase = "composicion";
 
-  const montaje = await montarComposicion(prep, prep.rutas.composicion, o);
+  let montaje: { duracion: number; usaWebgpu: boolean; avisos: string[] };
+  const h = prep.herramientas!;
+  if ("proyecto" in prep) {
+    const gpu = await hayWebgpu(h);
+    const m = await enSerie(async () => montarProyecto(prep, composicion, gpu));
+    montaje = m;
+    job.fondo = m.fondo;
+    if (m.fondo.usado !== m.fondo.pedido) {
+      job.reserva = `Fondo ${m.fondo.pedido} sustituido por el degradado CSS.`;
+      job.avisos.push(job.reserva);
+    }
+  } else {
+    montaje = await montarComposicion(prep, composicion, o);
+  }
   job.avisos.push(...montaje.avisos);
 
   job.fase = "check";
-  const check = await comprobarComposicion(prep.rutas.composicion, montaje.usaWebgpu, (l) => anotar(job, l));
+  const check = await comprobarComposicion(composicion, montaje.usaWebgpu, (l) => anotar(job, l));
   job.avisos.push(...check.avisos);
   if (check.errores.length) {
     throw new Error(`hyperframes check encontró ${check.errores.length} error(es): ${check.errores.slice(0, 5).join(" | ")}`);
   }
 
-  const disponibles = await dependencias.sondear(prep.herramientas);
+  const disponibles = await dependencias.sondear(h);
   const pedido = o.modo ?? "auto";
   let modo = elegirModo(pedido, disponibles);
   if (pedido === "rapido" && modo === "compatible") job.avisos.push("Rápido no disponible: no hay codificador H.264 de GPU; se usa Compatible.");
   const temporal = path.join(path.dirname(prep.rutas.mp4), `${prep.id}.renderizando.mp4`);
   fs.rmSync(temporal, { force: true });
-  const c: ContextoRender = { job, prep, montaje, disponibles, timeoutMs: timeoutPasadaMs(montaje.duracion), temporal };
+  const c: ContextoRender = { job, prep: { id: prep.id, rutas: prep.rutas, herramientas: h }, composicion, montaje, disponibles, timeoutMs: timeoutPasadaMs(montaje.duracion), temporal };
 
   let salida: SalidaRender | undefined;
   try {
@@ -641,9 +684,10 @@ async function ejecutarJob(job: Job, prep: Preparado, o: OpcionesRender): Promis
       } catch (e) {
         if (!disparaReserva(e)) throw e;
         fs.rmSync(temporal, { force: true });
-        job.reserva = `Rápido falló (${(e as Error).message}); se repite en Compatible.`;
-        job.avisos.push(job.reserva);
-        log.warn(`Job ${job.job_id}: ${job.reserva}`);
+        const texto = `Rápido falló (${(e as Error).message}); se repite en Compatible.`;
+        job.reserva = job.reserva ? `${job.reserva} ${texto}` : texto;
+        job.avisos.push(texto);
+        log.warn(`Job ${job.job_id}: ${texto}`);
         modo = "compatible";
       }
     }

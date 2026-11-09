@@ -950,7 +950,7 @@ async def test_deadline_sin_tool_de_barrido_lo_deja_dicho_y_no_falla(caplog):
     m = _MotorDeFicha(["video_renderizar"])
     assert await video_rest.reiniciar_motor_render(m) is False
     assert m.eventos == ["cerrar", "herramientas"]
-    assert "TODO(T6)" in caplog.text and "4321" in caplog.text
+    assert "video_barrer_procesos" in caplog.text and "4321" in caplog.text
 
 
 async def test_deadline_con_barrido_que_falla_no_impide_el_reinicio(caplog):
@@ -965,8 +965,6 @@ async def test_motor_render_conoce_sus_pid(api):
     assert motor.pid in motor.pids_conocidos()
 
 
-@pytest.mark.skip(reason="TODO(T6): el motor real aún no expone `video_barrer_procesos` ni barre al arrancar (proceso.ts solo barre tras un timeout o un fallo de la CLI). "
-                         "Cuando T6 lo registre, este test debe pasar: es la condición de cierre de R0-6 en el backend.")
 async def test_real_el_motor_expone_el_barrido(real):
     tools = await real.app.state.motor_render.herramientas()
     assert video_rest.TOOL_BARRIDO in tools

@@ -14,6 +14,7 @@ import { argsEntrada, ejecutar, herramientasFfmpeg, mensajeSinFfmpeg, sondear, t
 import { VOICE_ID_RE } from "./esquema.js";
 import { cargarPerfil } from "./perfil.js";
 import { ErrorAlmacen, proyectoGuardar, proyectoLeer } from "./proyecto.js";
+import type { VozFrase } from "./linea.js";
 import { ErrorVideo, carpetaVideo, comprobarCarpeta, escribirAtomico } from "./paths.js";
 import type { Proyecto } from "./esquema.js";
 import { ErrorElevenLabs, MAX_AUDIO_TTS, listarVocesElevenLabs, sintetizarConTimestamps } from "./tts.js";
@@ -459,6 +460,23 @@ function ordenNarracion(p: Proyecto): Proyecto["frases"] {
 }
 
 const seg = (x: number): string => x.toFixed(3);
+
+/**
+ * Voz ya generada de cada frase del proyecto (T6), para la línea de tiempo del montaje. Faltan voces: `voz_pendiente` con la
+ * lista de ids de frase (nunca se llama a ElevenLabs desde aquí). Nunca lee ni devuelve la clave.
+ */
+export function vozDeProyecto(cfg: Config, id: string): { proyecto: Proyecto; voz: Map<string, VozFrase> } {
+  const ctx = contexto(cfg, id);
+  const voz = new Map<string, VozFrase>();
+  const faltan: string[] = [];
+  for (const f of ordenNarracion(ctx.proyecto)) {
+    const hecha = leerFrase(ctx.dir, hashFrase(ctx.voiceId, ctx.modelo, f.texto));
+    if (hecha) voz.set(f.id, { duracion: hecha.duracion, palabras: hecha.palabras });
+    else faltan.push(f.id);
+  }
+  if (faltan.length) throw pendienteDeVoz(faltan);
+  return { proyecto: ctx.proyecto, voz };
+}
 
 function pendienteDeVoz(ids: string[]): ErrorAlmacen {
   return new ErrorAlmacen(

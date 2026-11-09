@@ -5,7 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { descripcionEsquema } from "./esquema.js";
-import type { Respuesta } from "./herramientas.js";
+import { montarPreviewTool, type Respuesta } from "./herramientas.js";
 import {
   ErrorAlmacen,
   guionBorrar,
@@ -250,6 +250,17 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
     "video_voces",
     { title: "Voces de la cuenta", description: "Catálogo de voces de la cuenta de ElevenLabs: { voces: [{ id, nombre, idioma }] }.", inputSchema: {} },
     () => envolver("video_voces", () => vocesTool(cfg)),
+  );
+  // Montaje de la preview (T6): escribe en `_composicion/r<n>/` con un contador del motor. No renderiza ni gasta créditos.
+  server.registerTool(
+    "video_montar_preview",
+    {
+      title: "Montar la preview",
+      description:
+        "Monta la composición del proyecto con la voz ya generada en una carpeta nueva `r<n>` (contador del motor) y borra las más viejas. `webgpu` lo decide la UI con navigator.gpu. Faltan voces: codigo \"voz_pendiente\" con la lista de frases. Devuelve { carpeta, duracion, avisos, fondo: { pedido, usado } }; usado \"css\" es el degradado de reserva.",
+      inputSchema: { id: ID_PROYECTO, webgpu: z.boolean().describe("¿Hay WebGPU en el WebView? Si no, los fondos con shader salen como degradado CSS.") },
+    },
+    (a) => envolver("video_montar_preview", () => montarPreviewTool(cfg, a)),
   );
   server.registerTool(
     "video_voz_muestra",
