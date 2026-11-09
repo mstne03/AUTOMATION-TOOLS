@@ -49,8 +49,8 @@ MP3, FLAC, Vorbis, Opus y PCM. Protocolos: solo `file` y `pipe`. Detalle y motiv
 
 Este ffmpeg **no sustituye a BtbN** en el instalador hasta que se cumpla todo:
 
-1. `FF_EXCLUIDOS_CONOCIDOS` vacío. Hoy: `libmp3lame` (R1, `musica.ts`); pasar `musica.ts` a AAC
-   en `.m4a` o a WAV es de otro paquete. `tests/componentes.test.sh` lo imprime en cada ejecución.
+1. `FF_EXCLUIDOS_CONOCIDOS` vacío (cumplido desde T2: `musica.ts` escribe WAV `pcm_s16le`, sin `libmp3lame`).
+   `tests/componentes.test.sh` falla si el motor vuelve a usar algo que este build no lleva.
 2. El SHA-256 de CI coincide con el de la construcción de Marc como segundo testigo (R0 M5).
 3. Marc ha probado `h264_nvenc` y `h264_mf` en su máquina (bloqueante si CI corrió con `SIN_MF=1`).
 4. W3.2 fija el SHA-256 en `prepare-video-engine.sh`: ese es el control final, no la release.

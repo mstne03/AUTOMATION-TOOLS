@@ -45,11 +45,11 @@ export async function analizarAudio(archivo: string): Promise<AnalisisAudio> {
   return { duracion: it.duration, beats: it.beats?.times ?? [], bpm: it.bpm?.value, lufs: it.loudness?.lufsIntegrated };
 }
 
-/** Normaliza la voz a −14 LUFS sin cambiar su duración. */
+/** Normaliza la voz a −14 LUFS sin cambiar su duración. Salida WAV pcm_s16le a 44,1 kHz: sin retardo de codificador y seek exacto (T2). */
 export async function normalizarVoz(h: Herramientas, origen: string, destino: string): Promise<void> {
   const r = await ejecutar(
     h.ffmpeg,
-    ["-y", "-v", "error", ...argsEntrada(origen), "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "192k", destino],
+    ["-y", "-v", "error", ...argsEntrada(origen), "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-vn", "-c:a", "pcm_s16le", "-f", "wav", destino],
     { timeoutMs: 120000 },
   );
   if (r.code !== 0) throw new Error(`ffmpeg no pudo normalizar la voz: ${r.stderr.trim().slice(0, 300)}`);
@@ -59,7 +59,7 @@ export async function normalizarVoz(h: Herramientas, origen: string, destino: st
 export async function prepararMusica(h: Herramientas, origen: string, destino: string, desde: number, duracion: number): Promise<void> {
   const args = ["-y", "-v", "error"];
   if (desde > 0) args.push("-ss", desde.toFixed(3));
-  args.push("-stream_loop", "-1", ...argsEntrada(origen), "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "libmp3lame", "-q:a", "2", destino);
+  args.push("-stream_loop", "-1", ...argsEntrada(origen), "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-c:a", "pcm_s16le", "-f", "wav", destino);
   const r = await ejecutar(h.ffmpeg, args, { timeoutMs: 180000 });
   if (r.code !== 0) throw new Error(`ffmpeg no pudo preparar la música (${path.basename(origen)}): ${r.stderr.trim().slice(0, 300)}`);
 }

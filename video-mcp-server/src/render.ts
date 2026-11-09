@@ -333,15 +333,15 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
   borrarArbol(tmp);
   fs.mkdirSync(tmp, { recursive: true });
   try {
-    await normalizarVoz(h, prep.voz, path.join(tmp, "voz.mp3"));
+    await normalizarVoz(h, prep.voz, path.join(tmp, "voz.wav"));
     const D = prep.palabras.duracionAudio + 0.4;
     let musicaPlan: { volumen: number; automatizacion: string } | undefined;
     let cortes: number[] | undefined;
     if (prep.musica) {
-      await prepararMusica(h, prep.musica.ruta, path.join(tmp, "musica.mp3"), prep.musica.desde, D);
+      await prepararMusica(h, prep.musica.ruta, path.join(tmp, "musica.wav"), prep.musica.desde, D);
       musicaPlan = { volumen: prep.musica.volumen, automatizacion: automatizacionDucking(huecosDeVoz(prep.palabras.palabras, D)) };
       if (prep.guion.opciones.cortesAlRitmo) {
-        const a = await analizarAudio(path.join(tmp, "musica.mp3"));
+        const a = await analizarAudio(path.join(tmp, "musica.wav"));
         const r = ajustarCortes(prep.palabras.segmentos, prep.palabras.palabras, a.beats);
         cortes = r.desde;
         avisos.push(
@@ -360,8 +360,8 @@ export async function montarComposicion(prep: Preparado, destino: string, o: Opc
       gpu,
     });
     escribirPlan(destino, plan);
-    fs.copyFileSync(path.join(tmp, "voz.mp3"), path.join(destino, "assets", "voz.mp3"));
-    if (musicaPlan) fs.copyFileSync(path.join(tmp, "musica.mp3"), path.join(destino, "assets", "musica.mp3"));
+    fs.copyFileSync(path.join(tmp, "voz.wav"), path.join(destino, "assets", "voz.wav"));
+    if (musicaPlan) fs.copyFileSync(path.join(tmp, "musica.wav"), path.join(destino, "assets", "musica.wav"));
     avisos.push(...plan.avisos);
     const red = urlsDeRed(destino);
     if (red.length) throw new Error(`La composición tiene recursos de red y el render tiene que ser local: ${red.slice(0, 5).join("; ")}`);

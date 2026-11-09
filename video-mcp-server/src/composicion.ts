@@ -194,7 +194,7 @@ export interface EntradaPlan {
   opciones: OpcionesPlan;
   palabras: ResultadoAlineacion;
   tema: Tema;
-  /** Música ya preparada en assets/musica.mp3. */
+  /** Música ya preparada en assets/musica.wav. */
   musica?: { volumen: number; automatizacion: string };
   /** `mostrarDesde` de cada escena tras los cortes al ritmo (si no, los de `palabras`). */
   cortes?: number[];
@@ -610,11 +610,11 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
 
   // ---- Audio ----
   const audio = [
-    `      <audio id="voz" class="clip" src="assets/voz.mp3" data-start="0" data-duration="${r3(al.duracionAudio)}" data-track-index="30" data-volume="1"></audio>`,
+    `      <audio id="voz" class="clip" src="assets/voz.wav" data-start="0" data-duration="${r3(al.duracionAudio)}" data-track-index="30" data-volume="1"></audio>`,
   ];
   if (e.musica) {
     audio.push(
-      `      <audio id="musica" class="clip" src="assets/musica.mp3" data-start="0" data-duration="${D}" data-track-index="31" data-volume="${e.musica.volumen}" data-fade-in="0.5" data-fade-out="1" data-automation="${escaparHtml(e.musica.automatizacion)}"></audio>`,
+      `      <audio id="musica" class="clip" src="assets/musica.wav" data-start="0" data-duration="${D}" data-track-index="31" data-volume="${e.musica.volumen}" data-fade-in="0.5" data-fade-out="1" data-automation="${escaparHtml(e.musica.automatizacion)}"></audio>`,
     );
   }
 
