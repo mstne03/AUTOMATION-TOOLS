@@ -53,7 +53,7 @@ const MAX_BYTES_WAV = 64 * 1024 * 1024;
 export async function normalizarVoz(h: Herramientas, origen: string, destino: string): Promise<void> {
   const r = await ejecutar(
     h.ffmpeg,
-    ["-y", "-v", "error", ...argsEntrada(origen), "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-vn", "-map", "0:a:0", "-t", String(MAX_SEG_WAV), "-fs", String(MAX_BYTES_WAV), "-c:a", "pcm_s16le", "-f", "wav", destino],
+    ["-y", "-v", "error", ...argsEntrada(origen), "-i", origen, "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-ac", "2", "-vn", "-map", "0:a:0", "-t", String(MAX_SEG_WAV), "-fs", String(MAX_BYTES_WAV), "-c:a", "pcm_s16le", "-f", "wav", destino],
     { timeoutMs: 120000 },
   );
   if (r.code !== 0) throw new Error(`ffmpeg no pudo normalizar la voz: ${r.stderr.trim().slice(0, 300)}`);
@@ -63,7 +63,7 @@ export async function normalizarVoz(h: Herramientas, origen: string, destino: st
 export async function prepararMusica(h: Herramientas, origen: string, destino: string, desde: number, duracion: number): Promise<void> {
   const args = ["-y", "-v", "error"];
   if (desde > 0) args.push("-ss", desde.toFixed(3));
-  args.push("-stream_loop", "-1", ...argsEntrada(origen), "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-map", "0:a:0", "-fs", String(MAX_BYTES_WAV), "-c:a", "pcm_s16le", "-f", "wav", destino);
+  args.push("-stream_loop", "-1", ...argsEntrada(origen), "-i", origen, "-t", duracion.toFixed(3), "-vn", "-af", `loudnorm=I=${LUFS_VOZ}:TP=-1.5:LRA=11`, "-ar", "44100", "-ac", "2", "-map", "0:a:0", "-fs", String(MAX_BYTES_WAV), "-c:a", "pcm_s16le", "-f", "wav", destino);
   const r = await ejecutar(h.ffmpeg, args, { timeoutMs: 180000 });
   if (r.code !== 0) throw new Error(`ffmpeg no pudo preparar la música (${path.basename(origen)}): ${r.stderr.trim().slice(0, 300)}`);
 }
