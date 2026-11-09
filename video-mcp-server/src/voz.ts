@@ -517,7 +517,7 @@ export async function ensamblarVoz(cfg: Config, id: string): Promise<string> {
   if (ficheroNormal(wav, Number.MAX_SAFE_INTEGER)) return wav;
   const ff = requerirFfmpegVoz(cfg);
   escribirAtomico(lista, contenido);
-  const temporal = path.join(ctx.dir, `ensamblada-${h}.tmp-${process.pid}.wav`);
+  const temporal = path.join(ctx.dir, `ensamblada-${h}.tmp-${process.pid}-${randomBytes(6).toString("hex")}.wav`);
   try {
     const r = await ejecutar(
       ff.ffmpeg,

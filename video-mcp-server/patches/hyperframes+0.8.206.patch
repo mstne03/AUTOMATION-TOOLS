@@ -106,9 +106,9 @@ diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hype
 +];
 +var SEO_STUDIO_FUERA = /^--((no-sandbox|disable-setuid-sandbox|no-proxy-server)(=|$)|proxy-|host-resolver-rules=|force-webrtc-ip-handling-policy=)/;
 +var SEO_STUDIO_UN_PROCESO = /^--(single-process|in-process-gpu)(=|$)/;
-+var SEO_STUDIO_CDP = /^--remote-debugging-(port|address)(=|$)/;
++var SEO_STUDIO_CDP = /^\s*(--?|\/)remote-debugging-(port|address)(=|\s|$)/i;
 +function seoStudioArgs(args) {
-+  if (args.some((a) => SEO_STUDIO_CDP.test(a))) {
++  if (args.some((a) => SEO_STUDIO_CDP.test(String(a)))) {
 +    throw new Error("SEO Studio: HyperFrames pidió un puerto de depuración remota (CDP); Chrome solo va por pipe (I7)");
 +  }
 +  if (process.platform !== "win32") return [...args];

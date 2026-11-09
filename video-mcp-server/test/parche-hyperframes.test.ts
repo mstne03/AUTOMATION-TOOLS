@@ -567,10 +567,12 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     });
 
     it("render_sin_puerto_cdp: rechaza --remote-debugging-port y --remote-debugging-address; el pipe sigue valiendo (R0-1)", () => {
-      for (const flag of ["--remote-debugging-port=9222", "--remote-debugging-port", "--remote-debugging-port=0", "--remote-debugging-address=0.0.0.0"]) {
+      for (const flag of ["--remote-debugging-port=9222", "--remote-debugging-port", "--remote-debugging-port=0", "--remote-debugging-address=0.0.0.0", "-remote-debugging-port=9222", "/remote-debugging-port=9222", "--Remote-Debugging-Port=9222", "--REMOTE-DEBUGGING-ADDRESS=0.0.0.0", "/Remote-Debugging-Address", "--remote-debugging-port 9222", " --remote-debugging-port=9222"]) {
         expect(() => marcador(["--no-sandbox", flag]), flag).toThrow(/depuración remota.*I7/);
       }
       expect(marcador(["--remote-debugging-pipe"])).toContain("--remote-debugging-pipe");
+      // El valor suelto tras el flag (forma con espacio en dos argumentos) no se confunde con el flag: el flag ya falla antes.
+      expect(() => marcador(["--remote-debugging-port", "9222"])).toThrow(/depuración remota/);
     });
   });
 });

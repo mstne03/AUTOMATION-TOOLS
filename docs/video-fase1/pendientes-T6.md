@@ -45,3 +45,7 @@ Rama `feat/6-montaje`, desde `feat/2-audio-wav` (`78e5672`). Sin PR ni fusión.
 8. SSIM de piezas (`w2refs`) sigue sin medirse (referencias ausentes, igual que en T2 y T3).
 9. `tests/test_video_t11.py::test_real_el_motor_expone_el_barrido` necesita `video-mcp-server/dist` (`npm run build`).
 10. Hallazgos Low de la auditoría (L-1, L-2, L-4, L-5, L-6, L-7): ver `seguridad-T6.md`.
+11. LOW-R1 (fallo de CLI con ffmpeg elevado ajeno → `exit(70)`) e Info (normalizada borrada mientras el job espera en cola):
+    anotados, sin tocar.
+12. `pasaPorEnlace` también rechaza un `VIDEO_ROOT` colgado de un enlace legítimo (comprueba todos los padres): si Marc lo usa,
+    acotar a la carpeta del proyecto.

@@ -12,7 +12,7 @@ import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg,
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
 import type { Config } from "./config.js";
-import { enSerie, montarProyecto, prepararProyecto, type PreparadoProyecto } from "./montaje.js";
+import { carpetaDeSalida, enSerie, montarProyecto, prepararProyecto, type PreparadoProyecto } from "./montaje.js";
 
 export { HYPERFRAMES_BIN };
 
@@ -635,6 +635,7 @@ async function ejecutarJob(job: Job, prep: Preparado | PreparadoProyecto, o: Opc
   if (!("proyecto" in prep)) return ejecutarJobEn(job, prep, prep.rutas.composicion, o);
   const dir = path.join(prep.rutas.dir, "_render", job.job_id);
   try {
+    carpetaDeSalida(path.dirname(dir));
     await ejecutarJobEn(job, prep, dir, o);
   } finally {
     borrarArbol(dir);
@@ -650,6 +651,7 @@ async function ejecutarJobEn(job: Job, prep: Preparado | PreparadoProyecto, comp
   if ("proyecto" in prep) {
     const gpu = await hayWebgpu(h);
     const m = await enSerie(async () => montarProyecto(prep, composicion, gpu));
+    fs.writeFileSync(path.join(composicion, ".motor"), String(process.pid)); // marca para el barrido de huérfanas
     montaje = m;
     job.fondo = m.fondo;
     if (m.fondo.usado !== m.fondo.pedido) {

@@ -70,9 +70,22 @@ vi.mock("../src/proceso.js", async (orig) => {
 
 // Normalizaciones de voz (`loudnorm`) pedidas por el montaje: el espía envuelve a `normalizarVoz` y la deja correr.
 const normalizaciones: unknown[][] = [];
+const conc = { activas: 0, max: 0 };
 vi.mock("../src/musica.js", async (orig) => {
   const m = await orig<typeof import("../src/musica.js")>();
-  return { ...m, normalizarVoz: (...a: Parameters<typeof m.normalizarVoz>) => (normalizaciones.push(a), m.normalizarVoz(...a)) };
+  return {
+    ...m,
+    normalizarVoz: async (...a: Parameters<typeof m.normalizarVoz>) => {
+      normalizaciones.push(a);
+      conc.activas++;
+      conc.max = Math.max(conc.max, conc.activas);
+      try {
+        return await m.normalizarVoz(...a);
+      } finally {
+        conc.activas--;
+      }
+    },
+  };
 });
 
 import type { Config } from "../src/config.js";
@@ -82,7 +95,8 @@ import { perfilDuplicar, perfilGuardar, perfilesListar, type Perfil } from "../s
 import { ejecutar, herramientasFfmpeg, hfHome } from "../src/proceso.js";
 import { dependencias, esperarJob } from "../src/render.js";
 import { montarPreviewTool, renderizar, estadoRender } from "../src/herramientas.js";
-import { vozCoste, vozGenerar } from "../src/voz.js";
+import { ensamblarVoz, vozCoste, vozGenerar } from "../src/voz.js";
+import { barrerRenderHuerfanos } from "../src/montaje.js";
 
 const RAIZ = path.join(F.dir, "raiz");
 const VOZ = "Vz12345678AB";
@@ -113,6 +127,7 @@ afterAll(() => fs.rmSync(F.dir, { recursive: true, force: true, maxRetries: 10, 
 beforeEach(() => {
   lanzados.length = 0;
   normalizaciones.length = 0;
+  conc.max = 0;
   for (const f of fs.readdirSync(F.banderas)) fs.rmSync(path.join(F.banderas, f));
   fs.rmSync(F.registro, { force: true });
 });
@@ -324,4 +339,68 @@ describe("T6 · render en `_render/<job>/`", () => {
     expect(hijos(id, "_render")).toEqual([]);
     expect(fs.existsSync(path.join(RAIZ, id, "video.mp4"))).toBe(false);
   }, 120_000);
+});
+
+describe("T6 · correcciones de la re-revisión", () => {
+  requiere("LOW-R2: dos ensamblados concurrentes del mismo proyecto no dejan un WAV truncado ni temporales", async () => {
+    const id = nuevo();
+    await conVoz(id);
+    const [a, b, c] = await Promise.all([ensamblarVoz(cfg(), id), ensamblarVoz(cfg(), id), ensamblarVoz(cfg(), id)]);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    const info = await (await import("../src/proceso.js")).sondear(ffmpeg!.ffprobe, a);
+    expect(info.duracion).toBeGreaterThan(3.5); // 4 frases de 1 s: un WAV truncado dura menos
+    expect(hijos(id, "voz").filter((n) => n.includes(".tmp-"))).toEqual([]);
+  });
+
+  requiere("LOW-N2: renders y previews serializan la preparación (nunca dos normalizaciones a la vez)", async () => {
+    const ids = [nuevo("ninguno"), nuevo("ninguno"), nuevo("ninguno")];
+    for (const id of ids) await conVoz(id);
+    conc.max = 0;
+    const [r1, r2, p3] = await Promise.all([renderizar(cfg(), { id: ids[0], modo: "compatible" }), renderizar(cfg(), { id: ids[1], modo: "compatible" }), preview(ids[2])]);
+    expect(conc.max).toBe(1);
+    for (const r of [r1, r2]) expect((await esperarJob((r.datos as any).job_id, 200)).estado).toBe("terminado");
+    expect(p3.carpeta).toBe("r1");
+  }, 180_000);
+
+  const enlace = it.skipIf(!ffmpeg || process.platform !== "win32");
+  enlace("L-2: `_composicion` y `_render` que son junction fallan cerrado y no se escribe fuera", async () => {
+    for (const sub of ["_composicion", "_render"]) {
+      const id = nuevo("ninguno");
+      await conVoz(id);
+      const fuera = fs.mkdtempSync(path.join(F.dir, "fuera "));
+      fs.writeFileSync(path.join(fuera, "intocable.txt"), "x");
+      fs.symlinkSync(fuera, path.join(RAIZ, id, sub), "junction");
+      if (sub === "_composicion") await expect(montarPreviewTool(cfg(), { id, webgpu: false })).rejects.toThrow(/enlace/);
+      else {
+        const job = await esperarJob(((await renderizar(cfg(), { id, modo: "compatible" })).datos as any).job_id, 100);
+        expect(job.estado).toBe("error");
+        expect(job.error).toMatch(/enlace/);
+      }
+      expect(fs.readdirSync(fuera)).toEqual(["intocable.txt"]);
+    }
+  }, 120_000);
+
+  it("L-7: al arrancar se borran las `_render/<job>` huérfanas y solo esas", () => {
+    const id = "video777";
+    const base = path.join(RAIZ, id, "_render");
+    const mk = (n: string, pid?: number, edadMin = 0) => {
+      const d = path.join(base, n);
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, "index.html"), "x");
+      if (pid !== undefined) fs.writeFileSync(path.join(d, ".motor"), String(pid));
+      const t = new Date(Date.now() - edadMin * 60_000);
+      fs.utimesSync(d, t, t);
+    };
+    mk("job-muerto", 2_000_000_000);
+    mk("job-vivo", process.pid);
+    mk("job-reciente-sin-marca", undefined, 1);
+    mk("job-viejo-sin-marca", undefined, 60);
+    const fuera = path.join(F.dir, "ajeno");
+    fs.mkdirSync(fuera, { recursive: true });
+    fs.writeFileSync(path.join(fuera, "a.txt"), "x");
+    barrerRenderHuerfanos(RAIZ);
+    expect(hijos(id, "_render")).toEqual(["job-reciente-sin-marca", "job-vivo"]);
+    expect(fs.readdirSync(fuera)).toEqual(["a.txt"]);
+  });
 });

@@ -6,6 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { config, faltanParaVoz } from "./config.js";
 import { log } from "./log.js";
+import { barrerRenderHuerfanos } from "./montaje.js";
 import { barridoAlArrancar, esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
@@ -208,6 +209,12 @@ async function main() {
   herramientasFfmpeg(config.ffmpegDir);
   // R0-6: recoge lo que dejó un motor muerto. Solo Windows (la consulta de procesos es de allí) y sin bloquear el arranque.
   if (process.platform === "win32") void barridoAlArrancar().catch((e) => log.error("Barrido al arrancar:", e));
+  try {
+    const n = barrerRenderHuerfanos(config.videoRoot);
+    if (n) log.info(`Barrido: ${n} carpeta(s) _render huérfana(s) borradas.`);
+  } catch (e) {
+    log.error("Barrido de _render:", e);
+  }
   const faltan = faltanParaVoz(config);
   if (faltan.length) log.warn(`video_generar_voz no funcionará todavía. ${h.mensajeFaltanParaVoz(faltan)}`);
   await server.connect(new StdioServerTransport());

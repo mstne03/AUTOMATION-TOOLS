@@ -659,7 +659,11 @@ export async function catalogo(cfg: Config, args: { consulta: string }): Promise
 
 /** Barre los procesos huérfanos del motor (Chrome, ffmpeg) por ruta de imagen. Sin entrada, sin rutas ni pids en la respuesta. */
 export async function barrerProcesosTool(deps?: DepsBarrido, env?: NodeJS.ProcessEnv): Promise<Respuesta> {
-  await barridoAlArrancar(deps, env);
+  const restos = await barridoAlArrancar(deps, env);
+  if (restos > 0) {
+    // I11: nunca en silencio. Sin rutas ni pids (I6): quedan en el log del motor.
+    return { texto: "Barrido incompleto: quedan procesos del motor que no he podido matar o verificar. Puede haber ficheros bloqueados; reinicia SEO Studio si persiste.", datos: { barrido: false } };
+  }
   return { texto: "Barrido de procesos del motor hecho.", datos: { barrido: true } };
 }
 

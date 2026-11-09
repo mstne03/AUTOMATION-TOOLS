@@ -479,7 +479,7 @@ export function ejecutar(comando: string, args: string[], opciones: OpcionesEjec
  */
 async function lanzar(comando: string, args: string[], opciones: OpcionesEjecutar, cli: boolean, barrer = true): Promise<Resultado> {
   const r = await lanzarUno(comando, args, opciones);
-  if (barrer && (r.timeout || (cli && r.code !== 0))) await barridoAlArrancar(undefined, undefined, true);
+  if (barrer && (r.timeout || (cli && r.code !== 0))) await barridoAlArrancar(depsLanzar, undefined, true);
   return r;
 }
 
@@ -824,8 +824,8 @@ const DEPS_BARRIDO: DepsBarrido = {
  * se matan y se comprueba; si no se puede listar, verificar o matar, se reinicia el motor antes que
  * dejarlos vivos.
  */
-export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO, vuelo: ReadonlyMap<number, number> = enVuelo): Promise<void> {
-  if (!o.arboles.length && !o.exactos.length) return;
+export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEPS_BARRIDO, vuelo: ReadonlyMap<number, number> = enVuelo): Promise<number> {
+  if (!o.arboles.length && !o.exactos.length) return 0;
   try {
     const observar = async () => {
       let actual = seleccionarBarrido(await deps.listar(), o, vuelo);
@@ -854,10 +854,13 @@ export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEP
         `Barrido: no pude matar o verificar los pids ${restos.map((p) => `${p.pid}${p.ruta ? "" : ` (${p.nombre}, sin ruta)`}`).join(", ")}.`,
       );
       deps.reiniciar();
+      return restos.length;
     }
+    return 0;
   } catch (e) {
     log.error(`Barrido: ${(e as Error).message}`);
     deps.reiniciar();
+    return 1; // no se pudo comprobar: no se puede afirmar que esté limpio
   }
 }
 
@@ -867,10 +870,17 @@ export async function barrerProcesos(o: ObjetivoBarrido, deps: DepsBarrido = DEP
  * No toca lo que cuelga de un hijo en vuelo ni de otro motor vivo (`seleccionarBarrido`). Sin navegador ni ffmpeg del
  * motor identificables no lista nada.
  */
-export function barridoAlArrancar(deps: DepsBarrido = DEPS_BARRIDO, env: NodeJS.ProcessEnv = process.env, reiniciar = false): Promise<void> {
+/** Solo tests: dependencias del barrido que lanza `lanzar` tras un timeout. ponytail: gancho de pruebas, sin config. */
+let depsLanzar: DepsBarrido | undefined;
+export function fijarDepsBarridoParaPruebas(d: DepsBarrido | undefined): void {
+  depsLanzar = d;
+}
+
+/** Devuelve cuántos procesos del motor quedan sin matar o sin verificar (0 = limpio). */
+export function barridoAlArrancar(deps: DepsBarrido = DEPS_BARRIDO, env: NodeJS.ProcessEnv = process.env, reiniciar = false): Promise<number> {
   // Al arrancar o a petición, lo que no se puede matar ni verificar se registra y se deja: reiniciar cortaría una llamada
   // en curso (una voz ya cobrada) y podría entrar en bucle con un proceso ajeno elevado (auditoría T6, M-1).
-  const d = reiniciar ? deps : { ...deps, reiniciar: () => log.error("Barrido: quedan procesos que no puedo matar ni verificar; se dejan.") };
+  const d = reiniciar ? deps : { ...deps, reiniciar: () => log.warn("Barrido (arranque o petición): se omite el reinicio del motor; los restos se dejan y se informan.") };
   return barrerProcesos(carpetasDelBundle(herramientasFfmpeg(env.FFMPEG_DIR), env), d);
 }
 

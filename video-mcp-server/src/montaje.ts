@@ -1,5 +1,6 @@
 // Montaje de un Proyecto (T6): voz por frases → línea de tiempo → composición, para la preview (`_composicion/r<n>/`) y para el
 // render (`_render/<job>/`). Todo sale del Proyecto ya validado y de la voz ya generada; ninguna ruta ni texto llega de la UI.
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Config } from "./config.js";
@@ -11,7 +12,8 @@ import { construirLinea, desdeProyecto } from "./linea.js";
 import { normalizarVoz } from "./musica.js";
 import { ErrorVideo, archivosVideo, borrarArbol, validarId } from "./paths.js";
 import { cargarPerfil, temaDePerfil } from "./perfil.js";
-import { herramientasFfmpeg, mensajeSinFfmpeg, type Herramientas } from "./proceso.js";
+import { herramientasFfmpeg, mensajeSinFfmpeg, pasaPorEnlace, type Herramientas } from "./proceso.js";
+import { log } from "./log.js";
 import { ensamblarVoz, vozDeProyecto } from "./voz.js";
 
 export interface PreparadoProyecto {
@@ -60,7 +62,7 @@ async function normalizadaEnCache(wav: string, h: Herramientas | null): Promise<
   const destino = path.join(path.dirname(wav), path.basename(wav).replace(/^ensamblada-/, "normalizada-"));
   if (esFichero(destino)) return destino;
   if (!h) throw new ErrorVideo(mensajeSinFfmpeg());
-  const tmp = `${destino}.tmp-${process.pid}`;
+  const tmp = `${destino}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
     await normalizarVoz(h, wav, tmp);
     fs.renameSync(tmp, destino);
@@ -101,6 +103,66 @@ export function montarProyecto(prep: PreparadoProyecto, destino: string, gpu: bo
   return { duracion: plan.duracion, usaWebgpu: plan.usaWebgpu, avisos: [...prep.avisos, ...plan.avisos], fondo: { pedido, usado: conShader && !gpu ? "css" : pedido } };
 }
 
+/**
+ * Antes de escribir o borrar en `_composicion/` o `_render/` (L-2): se crea si falta y no puede pasar, ni ella ni sus
+ * padres, por un enlace simbólico o junction (se escribiría y borraría fuera de VIDEO_ROOT). Falla cerrado.
+ */
+export function carpetaDeSalida(base: string): void {
+  fs.mkdirSync(base, { recursive: true });
+  if (pasaPorEnlace(base)) throw new ErrorVideo("La carpeta de montaje es un enlace o pasa por uno (junction o symlink): no la uso.");
+}
+
+// ---------- Huérfanas ----------
+
+const EDAD_SIN_MARCA_MS = 10 * 60_000;
+const vivo = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * L-7: al arrancar, borra las `_render/<job>` que dejó un motor muerto, con `borrarArbol` y solo bajo `VIDEO_ROOT/<id>/_render`.
+ * Hay dos motores vivos (general y render): una carpeta es huérfana si su marca `.motor` apunta a un pid muerto, o si no tiene
+ * marca y lleva más de 10 minutos. Las carpetas de enlace se saltan.
+ */
+export function barrerRenderHuerfanos(raiz: string): number {
+  let borradas = 0;
+  let ids: string[] = [];
+  try {
+    ids = fs.readdirSync(raiz).filter((n) => /^video\d{3}$/.test(n));
+  } catch {
+    return 0;
+  }
+  for (const id of ids) {
+    const base = path.join(raiz, id, "_render");
+    try {
+      if (!fs.lstatSync(base).isDirectory() || pasaPorEnlace(base)) continue;
+      for (const e of fs.readdirSync(base, { withFileTypes: true })) {
+        if (!e.isDirectory() || e.isSymbolicLink()) continue;
+        const dir = path.join(base, e.name);
+        let huerfana: boolean;
+        try {
+          const pid = Number(fs.readFileSync(path.join(dir, ".motor"), "utf8").trim());
+          huerfana = Number.isInteger(pid) && pid > 0 ? !vivo(pid) : true;
+        } catch {
+          huerfana = Date.now() - fs.statSync(dir).mtimeMs > EDAD_SIN_MARCA_MS;
+        }
+        if (huerfana) {
+          borrarArbol(dir);
+          borradas++;
+        }
+      }
+    } catch (e) {
+      log.warn(`Barrido de _render de ${id}: ${(e as Error).message}`);
+    }
+  }
+  return borradas;
+}
+
 // ---------- Preview ----------
 
 const CARPETA_R = /^r(\d+)$/;
@@ -129,7 +191,7 @@ export function montarPreview(cfg: Config, a: { id: string; webgpu: boolean }): 
   return enSerie(async () => {
     const prep = await prepararProyecto(a.id, { cfg });
     const base = prep.rutas.composicion;
-    fs.mkdirSync(base, { recursive: true });
+    carpetaDeSalida(base);
     const n = Math.max(0, ...contadores(base), ultimoContador.get(base) ?? 0) + 1;
     const m = montarProyecto(prep, path.join(base, `r${n}`), a.webgpu);
     ultimoContador.set(base, n);
