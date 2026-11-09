@@ -760,22 +760,20 @@ export function escribirPlan(destino: string, plan: PlanComposicion): void {
     if (ruta !== base && !ruta.startsWith(base + path.sep)) throw new Error("El plan escribe fuera de la carpeta de la composición.");
     return ruta;
   };
-  for (const rel of Object.keys(plan.archivos)) dentro(rel);
-  for (const c of plan.copias) dentro(c.destino);
+  const archivos = Object.entries(plan.archivos).map(([rel, contenido]) => [dentro(rel), contenido] as const);
+  const copias = plan.copias.map((c) => [dentro(c.destino), c.origen] as const);
   // En Windows un Chrome que acaba de cerrarse puede tener la carpeta abierta unos instantes.
   borrarArbol(destino);
-  for (const [rel, contenido] of Object.entries(plan.archivos)) {
-    const ruta = path.join(destino, rel);
+  for (const [ruta, contenido] of archivos) {
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
     fs.writeFileSync(ruta, contenido, "utf8");
   }
   const hechas = new Set<string>();
-  for (const c of plan.copias) {
-    if (hechas.has(c.destino)) continue;
-    hechas.add(c.destino);
-    const ruta = path.join(destino, c.destino);
+  for (const [ruta, origen] of copias) {
+    if (hechas.has(ruta)) continue;
+    hechas.add(ruta);
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    fs.copyFileSync(c.origen, ruta);
+    fs.copyFileSync(origen, ruta);
   }
 }
 

@@ -729,7 +729,12 @@ async def test_real_xss_en_la_composicion(real, tmp_path, ataque, sufijo):
     ficheros = [f for f in salida.rglob("*") if f.is_file() and f.suffix in {".html", ".json", ".css", ".js", ".mjs", ".svg"}]
     assert ficheros
     if ataque.startswith("{{"):
-        assert any(ataque in f.read_text(encoding="utf8", errors="replace") for f in ficheros if "vendor" not in f.parts)  # llega literal
+        # Llega literal a las piezas que pasan por `pieza()` (no vale `index.html`: lleva el título por otro `replace` y
+        # conservaría el literal aunque `pieza()` expandiera el valor en una segunda pasada).
+        escenas = [f for f in ficheros if f.parent.name == "compositions" and f.name.startswith("esc")]
+        assert escenas
+        assert any(ataque in f.read_text(encoding="utf8", errors="replace") for f in escenas)
+        assert ataque in (salida / "compositions" / "subtitulos.html").read_text(encoding="utf8", errors="replace")
     for f in ficheros:
         t = f.read_text(encoding="utf8", errors="replace")
         if "vendor" in f.parts:  # JS de terceros con hash fijado: los escanea `urlsDeRed`, no un texto del atacante

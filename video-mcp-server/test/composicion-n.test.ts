@@ -82,7 +82,13 @@ function sinCrudo(p: PlanComposicion, ataque: string) {
   expect(total).not.toContain("</script><script>");
   expect(total).not.toContain('"><img');
   expect(total).not.toContain("<img src=x");
-  if (ataque === "{{ID}}") expect(total).toContain("{{ID}}"); // una sola pasada: el valor no se vuelve a expandir
+  // Una sola pasada: el valor no se vuelve a expandir. Se exige en las piezas que pasan por `pieza()`, no en index.html
+  // (su título sale de otro `replace` y conservaría el literal aunque `pieza()` hiciera dos pasadas).
+  if (ataque === "{{ID}}") {
+    const piezas = Object.entries(p.archivos).filter(([rel]) => /^compositions\/(esc\d+|subtitulos)\.html$/.test(rel));
+    expect(piezas.some(([rel, c]) => rel.includes("esc") && c.includes("{{ID}}"))).toBe(true);
+    expect(piezas.some(([rel, c]) => rel.includes("subtitulos") && c.includes("{{ID}}"))).toBe(true);
+  }
   // Todo `<script` del plan es el del propio motor (los de las piezas y el JSON de datos).
   for (const [rel, c] of Object.entries(p.archivos)) {
     for (const m of c.matchAll(/<script\b[^>]*>/g)) expect(m[0], rel).toMatch(/^<script(?: type="(?:module|application\/json|importmap)")?(?: [a-z-]+="[^"<>]*")*>$/);
@@ -176,9 +182,12 @@ describe("cierres de la R1 de T3", () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "t3-"));
     const dest = path.join(d, "_composicion");
     const base = planificarComposicion(entradaDe(proyectoN(1)));
+    fs.mkdirSync(dest);
+    fs.writeFileSync(path.join(dest, "centinela.txt"), "vivo"); // si se borrara antes de validar, desaparecería
     expect(() => escribirPlan(dest, { ...base, archivos: { ...base.archivos, "../fuera.html": "x" } })).toThrow(/fuera/);
     expect(() => escribirPlan(dest, { ...base, copias: [{ origen: import.meta.filename, destino: "..\\fuera.js" }] })).toThrow(/fuera/);
     expect(fs.existsSync(path.join(d, "fuera.html"))).toBe(false);
+    expect(fs.readFileSync(path.join(dest, "centinela.txt"), "utf8")).toBe("vivo");
     fs.rmSync(d, { recursive: true, force: true });
   });
   it("más de 90 escenas lanza", () => {

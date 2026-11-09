@@ -29,3 +29,6 @@ Rama `feat/3-n-escenas`, desde `fix/borrar-arbol` (`3c618e7`). Sin PR ni fusión
    fijan el comportamiento actual (el mapa entra a 0,45 s, igual que la referencia congelada). Cambiarlo mueve el mapa
    ~0,3 s y exige regenerar la referencia SSIM del mapa en una copia de `W2_REFS`; sin referencias no se puede medir.
 3. Audio interno en WAV (T2) y montaje (T6): otra sesión.
+4. **`opciones.subtitulos` sin tocar (Info de la re-revisión).** `desdeProyecto` usa `p.subtitulos.estilo`; el campo
+   `opciones.subtitulos` sigue en el esquema (`esquema.ts:182`) pero no se lee. Ambos son enum validados, sin impacto de
+   seguridad; riesgo funcional: que la UI edite el que no cuenta. Decidir al montar T6.

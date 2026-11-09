@@ -20,10 +20,11 @@ cumplidas. No se hizo una segunda ronda con el auditor: las correcciones se veri
 
 | Id | Sev. | Hallazgo | Cierre |
 |---|---|---|---|
-| M-1 | Medium | `{{ID}}` sin aserción en el test REST: una doble pasada pasaría en verde | El test exige que el ataque llegue literal a algún fichero y que no quede ningún `{{X}}` sin sustituir |
+| M-1 | Medium | `{{ID}}` sin aserción en el test REST: una doble pasada pasaría en verde | Re-revisión: la primera aserción pasaba por `index.html`. Cerrado: el literal se exige en `compositions/esc*.html` y en `subtitulos.html` (REST y `composicion-n.test.ts`); con una doble pasada simulada en `pieza()` fallan ambos |
 | M-2 | Medium | `opciones.etiqueta`, `subtitulos.correcciones` y `titulo3d` no se ejercitaban (con todas las escenas gráficas la etiqueta no se emite) | `composicion-n.test.ts` «etiqueta, correcciones y titulo3d con ataque»: comprueba que `etiqueta.html` existe y que nada queda sin escapar |
 | L-1 | Low | `escribirPlan` no contenía las rutas (la condición 4 lo daba por hecho) | Comprueba todas las rutas de `archivos` y `copias` antes de borrar o escribir; test con `../` y `..\` |
 | L-3 | Low | `ESTILO` iba a un atributo `class` sin validar y N no tenía tope | El plan lanza con estilo fuera de la lista y con más de 90 escenas |
+| L-5 | Low | (re-revisión) El test de L-1 no probaba «antes de borrar» | **Cerrado:** `destino` existe con un fichero centinela y sigue ahí tras el `toThrow` |
 | L-2 | Low | La barrera `hallazgosDeRed` no incluye `ESQUEMA_GENERICO_RE` (`ftp://`, `data:` en un `Proyecto` a mano) | **Abierto, aceptado:** el texto va escapado y los patrones de red de la barrera cubren `http(s)`, `ws(s)`, `file:` y `//`. Hay que decidir si se unifican al montar T6 |
 | L-4 | Low | El test REST salta `vendor` por la ruta, no por el hash | **Abierto:** lo que se salta es JS de terceros ya escaneado por `urlsDeRed` con hash fijado |
 | – | – | `desdeProyecto` ignoraba `p.subtitulos.estilo` | Corregido: usa el estilo que edita el usuario |
@@ -32,5 +33,6 @@ cumplidas. No se hizo una segunda ronda con el auditor: las correcciones se veri
 
 - `npm test` (motor), tras los cierres: 1062 pasan, 67 saltados. `npx tsc`: limpio.
 - `VIDEO_ENGINE_R1=1 uv run pytest tests/test_video_rest.py`: 74 pasan, 3 saltados (tras los cierres). `uv run pytest -q` completo (antes de los cierres): 601 pasan, 12 saltados.
-- El test de XSS real muerde: con `escaparHtml` anulado en `dist/` fallan 6 de 10 variantes.
+- El test de XSS real muerde: con `escaparHtml` anulado en `dist/` fallan 6 de 10 variantes; con una segunda pasada simulada en `pieza()` (src y `dist/`) fallan las 2 variantes `{{ID}}Q7` del REST y el test unitario `{{ID}}`. Simulación revertida.
+- `escribirPlan` escribe en la ruta que devuelve `dentro()` (antes validaba con `path.resolve` y escribía con `path.join`; Info de la re-revisión).
 - No se ejecutó render, SSIM ni nada fuera de loopback (ver `estado-T3.md`).
