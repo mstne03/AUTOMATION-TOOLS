@@ -407,7 +407,6 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     expect(inventario(/"--no-sandbox"/)).toEqual([
       "capture-KKD5GMAF.js:199", // captura de webs, solo Linux (I14: el motor no la usa)
       "chunk-4UMPIPCQ.js:54", // shellStarts: solo sin HYPERFRAMES_BROWSER_PATH (desarrollo), --dump-dom about:blank
-      "chunk-K4MJX7SR.js:41", // el propio hunk A (lo detecta para quitarlo)
       "chunk-RDDVQSNQ.js:1254", // getHardwareGpuProbeArgs → marcador
       "chunk-RDDVQSNQ.js:1531", // buildChromeArgs → marcador
       "chunk-RDDVQSNQ.js:15810", // efectos de audio → marcador
@@ -558,6 +557,29 @@ describe("parche de HyperFrames (I3, I2b, I9)", () => {
     it("el ancla no se come flags con el mismo prefijo", () => {
       expect(marcador(["--no-sandbox-and-elevated"])).toContain("--no-sandbox-and-elevated");
       expect(marcador(["--no-sandbox=1"])).not.toContain("--no-sandbox=1");
+    });
+
+    // L-1R y L-1S: Chrome en Windows recorta cada argumento con el conjunto Unicode (incluye U+0085, que `\s` de JS no cubre),
+    // acepta `-`, `--` y `/` y no distingue mayúsculas. El filtro normaliza igual y es el mismo para los tres.
+    it("filtro normalizado: CDP, single-process y no-sandbox no se evaden con NEL, espacios Unicode, prefijo ni mayúsculas", () => {
+      const NEL = "\u0085";
+      const ruido = [NEL, "\u2003", "\u00a0", "\u0000", "\u001f", "\ufeff", " "];
+      for (const r of ruido) {
+        for (const flag of ["--remote-debugging-port=0", "-remote-debugging-address", "/Remote-Debugging-Port=9222", "--remote-debugging-port 9222"]) {
+          expect(() => marcador([r + flag]), JSON.stringify(r + flag)).toThrow(/depuración remota/);
+          expect(() => marcador([flag + r]), JSON.stringify(flag + r)).toThrow(/depuración remota/);
+        }
+      }
+      expect(() => marcador(["--remote-debugging-foo=1"])).toThrow(/depuración remota/);
+      expect(marcador(["--remote-debugging-pipe"])).toContain("--remote-debugging-pipe");
+      expect(marcador([NEL + "--remote-debugging-pipe"]).some((x) => /remote-debugging-pipe/.test(x))).toBe(true);
+      for (const flag of ["-single-process", "/single-process", "--Single-Process", NEL + "--single-process", "--single-process=1", "--IN-PROCESS-GPU", " -in-process-gpu"]) {
+        expect(() => marcador([flag]), JSON.stringify(flag)).toThrow(/I3/);
+      }
+      for (const flag of ["-no-sandbox", "/no-sandbox", "--No-Sandbox", NEL + "--no-sandbox", "--no-sandbox=1", "-DISABLE-SETUID-SANDBOX", "/proxy-server=1.2.3.4:80", "-Host-Resolver-Rules=x", "-no-proxy-server"]) {
+        expect(marcador([flag]).some((x) => x.includes(flag.trim())), JSON.stringify(flag)).toBe(false);
+      }
+      expect(marcador(["--no-sandbox-and-elevated"])).toContain("--no-sandbox-and-elevated");
     });
 
     it("rechaza un solo proceso: el renderer saldría del sandbox (HIGH-1)", async () => {

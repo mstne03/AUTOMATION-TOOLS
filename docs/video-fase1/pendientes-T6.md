@@ -49,3 +49,6 @@ Rama `feat/6-montaje`, desde `feat/2-audio-wav` (`78e5672`). Sin PR ni fusión.
     anotados, sin tocar.
 12. `pasaPorEnlace` también rechaza un `VIDEO_ROOT` colgado de un enlace legítimo (comprueba todos los padres): si Marc lo usa,
     acotar a la carpeta del proyecto.
+13. Info de la re-revisión 2: TOCTOU de `carpetaDeSalida` (sin cruce de privilegio), `rename` con EPERM en Windows si otra llamada lee el
+    WAV, el barrido de carpetas corre antes de acabar el de procesos (esperar con `await`), `.motor` legible por Chrome,
+    `fijarDepsBarridoParaPruebas` exportado en producción.

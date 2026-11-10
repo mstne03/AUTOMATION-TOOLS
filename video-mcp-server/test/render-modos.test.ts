@@ -447,3 +447,18 @@ describe.skipIf(!h || process.platform !== "win32")("job de render con la CLI fa
     expect(renders()).toHaveLength(0);
   }, 120000);
 });
+
+// L-2a (re-revisión 2): la vía anterior de guion.md también falla cerrado si `_composicion` pasa por un enlace.
+describe.skipIf(!h || process.platform !== "win32")("vía guion.md: carpeta de montaje con enlace", () => {
+  it("_composicion es una junction: el job falla con «enlace» y no se escribe fuera", async () => {
+    const id = "video098";
+    await prepararVideo(id);
+    const fuera = fs.mkdtempSync(path.join(F.dir, "fuera "));
+    fs.writeFileSync(path.join(fuera, "intocable.txt"), "x");
+    fs.symlinkSync(fuera, path.join(RAIZ, id, "_composicion"), "junction");
+    const j = await esperarJob((await encolarRender(id, o("compatible"))).job_id, 200);
+    expect(j.estado).toBe("error");
+    expect(j.error).toMatch(/enlace/);
+    expect(fs.readdirSync(fuera)).toEqual(["intocable.txt"]);
+  }, 120_000);
+});

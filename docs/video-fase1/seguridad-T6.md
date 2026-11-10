@@ -19,3 +19,16 @@ M-1 y L-3: hallazgos LOW-R2, LOW-N1 y LOW-N2 (más LOW-R1 e Info). Ninguna Criti
 | INFO la normalizada del job puede borrarse mientras espera en cola | Pendiente (falla visible, sin corrupción) | — |
 
 Pendiente de la re-revisión de estas correcciones (la lanza la sesión coordinadora).
+
+## Segunda re-revisión (a590882) y sus cierres
+
+| Id | Estado | Cobertura |
+|---|---|---|
+| L-1R / L-1S filtro de flags del parche | Corregido: `seoStudioNombre` recorta como Chrome (blancos Unicode y de control, U+0085 incluido), minúsculas, prefijo `-`/`--`/`/`, separa `=valor`; mismo criterio en CDP (todo `remote-debugging-*` salvo `-pipe`), no-sandbox/proxy/host-resolver y single-process. Manifiesto SHA-256 actualizado | `parche-hyperframes.test.ts`: tabla con NEL, espacios Unicode, prefijos y mayúsculas, contra el código del parche (sin Chrome) |
+| L-7a marca `.motor` | Corregido: escritura atómica (`escribirAtomico`); marca vacía o ilegible no prueba nada, manda la edad (10 min) | `montaje.test.ts` |
+| L-7 test de enlaces | Añadido: ni `_render` ni un `<job>` que sean junction se recorren ni se borran | `montaje.test.ts` (win32) |
+| LOW-N1b backend ignoraba `barrido:false` | Corregido: `reiniciar_motor_render` devuelve False y avisa sin rutas ni pids si no llega `barrido:true` | `test_video_t11.py` |
+| L-2a vía guion.md | Corregido: `montarComposicion` llama a `carpetaDeSalida` | `render-modos.test.ts` (junction, win32) |
+
+Sin cambios: TOCTOU de L-2 e Info (rename EPERM, orden de barridos al arrancar, `.motor` legible por Chrome), anotados en pendientes.
+La re-revisión de estos cierres la lanza la sesión coordinadora.

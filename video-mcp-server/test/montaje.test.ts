@@ -396,11 +396,41 @@ describe("T6 · correcciones de la re-revisión", () => {
     mk("job-vivo", process.pid);
     mk("job-reciente-sin-marca", undefined, 1);
     mk("job-viejo-sin-marca", undefined, 60);
+    // L-7a: una marca vacía o ilegible (escritura a medias de otro motor) no prueba nada: manda la edad.
+    mk("job-marca-vacia-reciente", undefined, 1);
+    fs.writeFileSync(path.join(base, "job-marca-vacia-reciente", ".motor"), "");
+    mk("job-marca-basura-reciente", undefined, 1);
+    fs.writeFileSync(path.join(base, "job-marca-basura-reciente", ".motor"), "no-es-un-pid");
+    mk("job-marca-vacia-vieja", undefined, 60);
+    fs.writeFileSync(path.join(base, "job-marca-vacia-vieja", ".motor"), "");
+    const t = new Date(Date.now() - 60 * 60_000);
+    fs.utimesSync(path.join(base, "job-marca-vacia-vieja"), t, t);
     const fuera = path.join(F.dir, "ajeno");
     fs.mkdirSync(fuera, { recursive: true });
     fs.writeFileSync(path.join(fuera, "a.txt"), "x");
     barrerRenderHuerfanos(RAIZ);
-    expect(hijos(id, "_render")).toEqual(["job-reciente-sin-marca", "job-vivo"]);
+    expect(hijos(id, "_render")).toEqual(["job-marca-basura-reciente", "job-marca-vacia-reciente", "job-reciente-sin-marca", "job-vivo"]);
     expect(fs.readdirSync(fuera)).toEqual(["a.txt"]);
+  });
+
+  const conEnlace = it.skipIf(process.platform !== "win32");
+  conEnlace("L-7: el barrido de `_render/` no entra en enlaces (ni `_render` ni un `<job>` que sean junction)", () => {
+    const fuera = fs.mkdtempSync(path.join(F.dir, "ajeno-enlace "));
+    for (const n of ["job-dentro.txt"]) fs.writeFileSync(path.join(fuera, n), "x");
+    fs.mkdirSync(path.join(fuera, "job-viejo"));
+    // 1) `_render` entero es una junction hacia una carpeta con un «job» viejo sin marca.
+    const a = path.join(RAIZ, "video771");
+    fs.mkdirSync(a, { recursive: true });
+    fs.symlinkSync(fuera, path.join(a, "_render"), "junction");
+    // 2) `_render` real con un `<job>` que es una junction hacia una carpeta con contenido.
+    const objetivo = fs.mkdtempSync(path.join(F.dir, "objetivo "));
+    fs.writeFileSync(path.join(objetivo, "intocable.txt"), "x");
+    fs.mkdirSync(path.join(RAIZ, "video772", "_render"), { recursive: true });
+    fs.symlinkSync(objetivo, path.join(RAIZ, "video772", "_render", "job-enlace"), "junction");
+    const viejo = new Date(Date.now() - 60 * 60_000);
+    for (const d of [fuera, path.join(fuera, "job-viejo"), objetivo]) fs.utimesSync(d, viejo, viejo);
+    barrerRenderHuerfanos(RAIZ);
+    expect(fs.readdirSync(fuera).sort()).toEqual(["job-dentro.txt", "job-viejo"]);
+    expect(fs.readdirSync(objetivo)).toEqual(["intocable.txt"]);
   });
 });

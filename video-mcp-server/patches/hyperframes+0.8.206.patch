@@ -82,7 +82,7 @@ diff --git a/node_modules/hyperframes/dist/chunk-CMDVJP4T.js b/node_modules/hype
 diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
 --- a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
 +++ b/node_modules/hyperframes/dist/chunk-K4MJX7SR.js
-@@ -7,11 +7,52 @@ var __dirname = __hf_dirname(__filename);
+@@ -7,11 +7,69 @@ var __dirname = __hf_dirname(__filename);
  
  // ../core/dist/browserMarker.js
  var HYPERFRAMES_BROWSER_MARKER_ARG = "--hyperframes-owned-browser";
@@ -104,21 +104,38 @@ diff --git a/node_modules/hyperframes/dist/chunk-K4MJX7SR.js b/node_modules/hype
 +  "--disable-quic",
 +  "--disable-accelerated-video-decode"
 +];
-+var SEO_STUDIO_FUERA = /^--((no-sandbox|disable-setuid-sandbox|no-proxy-server)(=|$)|proxy-|host-resolver-rules=|force-webrtc-ip-handling-policy=)/;
-+var SEO_STUDIO_UN_PROCESO = /^--(single-process|in-process-gpu)(=|$)/;
-+var SEO_STUDIO_CDP = /^\s*(--?|\/)remote-debugging-(port|address)(=|\s|$)/i;
++// Nombre del flag como lo lee Chrome en Windows (base::CommandLine): recorta espacios Unicode y de control (U+0085 incluido, que
++// `\s` de JS no cubre), acepta `-`, `--` o `/`, no distingue mayúsculas y separa `=valor` o un espacio. null si no es un flag.
++var SEO_STUDIO_BLANCOS = /^[\s\u0000-\u001f\u007f-\u009f\u00a0\u1680\u2000-\u200f\u2028-\u202f\u205f-\u2064\u3000\ufeff]+|[\s\u0000-\u001f\u007f-\u009f\u00a0\u1680\u2000-\u200f\u2028-\u202f\u205f-\u2064\u3000\ufeff]+$/g;
++function seoStudioNombre(a) {
++  const m = /^(?:--?|\/)([^=\s]*)/.exec(String(a).replace(SEO_STUDIO_BLANCOS, "").toLowerCase());
++  return m ? m[1] : null;
++}
++var SEO_STUDIO_FUERA_EXACTOS = ["no-sandbox", "disable-setuid-sandbox", "no-proxy-server", "host-resolver-rules", "force-webrtc-ip-handling-policy"];
++function seoStudioFuera(a) {
++  const n = seoStudioNombre(a);
++  return n !== null && (SEO_STUDIO_FUERA_EXACTOS.includes(n) || n.startsWith("proxy-"));
++}
++function seoStudioUnProceso(a) {
++  const n = seoStudioNombre(a);
++  return n === "single-process" || n === "in-process-gpu";
++}
++function seoStudioCdp(a) {
++  const n = seoStudioNombre(a);
++  return n !== null && n.startsWith("remote-debugging-") && n !== "remote-debugging-pipe";
++}
 +function seoStudioArgs(args) {
-+  if (args.some((a) => SEO_STUDIO_CDP.test(String(a)))) {
++  if (args.some(seoStudioCdp)) {
 +    throw new Error("SEO Studio: HyperFrames pidió un puerto de depuración remota (CDP); Chrome solo va por pipe (I7)");
 +  }
 +  if (process.platform !== "win32") return [...args];
-+  if (args.some((a) => SEO_STUDIO_UN_PROCESO.test(a))) {
++  if (args.some(seoStudioUnProceso)) {
 +    throw new Error("SEO Studio: HyperFrames pidió --single-process; el renderer saldría del sandbox (I3)");
 +  }
 +  const propio = args.find((a) => SEO_STUDIO_CON_BYPASS.test(a));
 +  const fijos = propio ? SEO_STUDIO_ARGS_WIN32.map((a) => (a === SEO_STUDIO_SIN_BYPASS ? propio : a)) : SEO_STUDIO_ARGS_WIN32;
-+  const extra = args.includes("--no-sandbox") ? ["--disable-gpu-sandbox", ...fijos] : fijos;
-+  const limpios = args.filter((a) => fijos.includes(a) || !SEO_STUDIO_FUERA.test(a));
++  const extra = args.some((a) => seoStudioNombre(a) === "no-sandbox") ? ["--disable-gpu-sandbox", ...fijos] : fijos;
++  const limpios = args.filter((a) => fijos.includes(a) || !seoStudioFuera(a));
 +  // Sin esto, el servicio de red abre el respondedor mDNS (5353) con WebRTC. Chrome solo atiende el último
 +  // --disable-features: se funde con el de HyperFrames.
 +  const rasgos = limpios.filter((a) => a.startsWith("--disable-features=")).flatMap((a) => a.slice(19).split(","));

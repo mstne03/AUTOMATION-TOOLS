@@ -144,13 +144,14 @@ export function barrerRenderHuerfanos(raiz: string): number {
       for (const e of fs.readdirSync(base, { withFileTypes: true })) {
         if (!e.isDirectory() || e.isSymbolicLink()) continue;
         const dir = path.join(base, e.name);
-        let huerfana: boolean;
+        // Marca ausente, vacía o ilegible (la otra instancia puede estar escribiéndola): solo cuenta la edad (L-7a).
+        let pid = NaN;
         try {
-          const pid = Number(fs.readFileSync(path.join(dir, ".motor"), "utf8").trim());
-          huerfana = Number.isInteger(pid) && pid > 0 ? !vivo(pid) : true;
+          pid = Number(fs.readFileSync(path.join(dir, ".motor"), "utf8").trim());
         } catch {
-          huerfana = Date.now() - fs.statSync(dir).mtimeMs > EDAD_SIN_MARCA_MS;
+          /* sin marca */
         }
+        const huerfana = Number.isInteger(pid) && pid > 0 ? !vivo(pid) : Date.now() - fs.statSync(dir).mtimeMs > EDAD_SIN_MARCA_MS;
         if (huerfana) {
           borrarArbol(dir);
           borradas++;

@@ -7,7 +7,7 @@ import { parsearGuion, type Guion } from "./guion.js";
 import { cargarPalabras, type ResultadoAlineacion } from "./alineacion.js";
 import { bloquesConFoto } from "./formato.js";
 import { DURACION_MAXIMA, cargarTema, desdeGuionV2, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
-import { borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
+import { escribirAtomico, borrarArbol, archivosVideo, comprobarRecurso, imagenesValidadas, ErrorVideo, resolverDentro, type ImagenEncontrada } from "./paths.js";
 import { argsEntrada, ejecutar, ErrorNavegador, esIntegrado, herramientasFfmpeg, mensajeSinFfmpeg, sondear, type Herramientas, type InfoMedio, type Resultado } from "./proceso.js";
 import { ajustarCortes, analizarAudio, automatizacionDucking, HYPERFRAMES_BIN, huecosDeVoz, normalizarVoz, prepararMusica } from "./musica.js";
 import { hayWebgpu } from "./capacidades.js";
@@ -339,6 +339,7 @@ export interface Montaje {
 /** Prepara el audio y escribe la composición completa en `destino`. */
 export async function montarComposicion(prep: Preparado, destino: string, o: OpcionesRender): Promise<Montaje> {
   const h = prep.herramientas;
+  carpetaDeSalida(destino); // L-2a: también la vía de guion.md y la vista previa por fotogramas
   const avisos: string[] = [];
   const tmp = `${destino}.audio-${process.pid}`;
   borrarArbol(tmp);
@@ -651,7 +652,7 @@ async function ejecutarJobEn(job: Job, prep: Preparado | PreparadoProyecto, comp
   if ("proyecto" in prep) {
     const gpu = await hayWebgpu(h);
     const m = await enSerie(async () => montarProyecto(prep, composicion, gpu));
-    fs.writeFileSync(path.join(composicion, ".motor"), String(process.pid)); // marca para el barrido de huérfanas
+    escribirAtomico(path.join(composicion, ".motor"), String(process.pid)); // marca para el barrido de huérfanas (L-7a: atómica)
     montaje = m;
     job.fondo = m.fondo;
     if (m.fondo.usado !== m.fondo.pedido) {

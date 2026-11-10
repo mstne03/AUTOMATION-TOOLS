@@ -917,8 +917,8 @@ async def test_almacen_de_secretos_empieza_limpio_en_cada_test():
 class _MotorDeFicha:
     """Motor mínimo para probar `reiniciar_motor_render` sin procesos."""
 
-    def __init__(self, tools: list[str], falla_barrido: bool = False) -> None:
-        self.tools, self.falla_barrido, self.eventos = tools, falla_barrido, []
+    def __init__(self, tools: list[str], falla_barrido: bool = False, barrido: object = True) -> None:
+        self.tools, self.falla_barrido, self.barrido, self.eventos = tools, falla_barrido, barrido, []
 
     def pids_conocidos(self) -> list[int]:
         return [4321, 4322]
@@ -934,7 +934,7 @@ class _MotorDeFicha:
         self.eventos.append(tool)
         if self.falla_barrido:
             raise video.MotorTimeout("x")
-        return video.RespuestaMotor(texto="barrido", datos={"matados": 2}, imagen=None)
+        return video.RespuestaMotor(texto="barrido", datos={"barrido": self.barrido}, imagen=None)
 
 
 async def test_deadline_registra_los_pid_y_pide_el_barrido_al_motor_nuevo(caplog):
@@ -951,6 +951,17 @@ async def test_deadline_sin_tool_de_barrido_lo_deja_dicho_y_no_falla(caplog):
     assert await video_rest.reiniciar_motor_render(m) is False
     assert m.eventos == ["cerrar", "herramientas"]
     assert "video_barrer_procesos" in caplog.text and "4321" in caplog.text
+
+
+@pytest.mark.parametrize("barrido", [False, None, "si"])
+async def test_deadline_respeta_barrido_incompleto_sin_pids_en_el_aviso(caplog, barrido):
+    """N1b: si el motor dice `barrido:false` (o no lo confirma) no se devuelve True y se avisa sin rutas ni pids."""
+    caplog.set_level("WARNING", logger="app_backend.video")
+    m = _MotorDeFicha([video_rest.TOOL_BARRIDO], barrido=barrido)
+    assert await video_rest.reiniciar_motor_render(m) is False
+    avisos = [r.getMessage() for r in caplog.records if "incompleto" in r.getMessage()]
+    assert avisos, caplog.text
+    assert not any(pid in a for a in avisos for pid in ("4321", "4322", "\\"))
 
 
 async def test_deadline_con_barrido_que_falla_no_impide_el_reinicio(caplog):

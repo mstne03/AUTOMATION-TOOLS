@@ -558,9 +558,14 @@ async def reiniciar_motor_render(motor) -> bool:
                 pids,
             )
             return False
-        await motor.llamar(TOOL_BARRIDO, {}, 120.0)
+        respuesta = await motor.llamar(TOOL_BARRIDO, {}, 120.0)
     except video.MotorError as e:
         log.warning("No se pudo pedir el barrido al motor del render: %s", e)
+        return False
+    datos = getattr(respuesta, "datos", None)
+    if not (isinstance(datos, dict) and datos.get("barrido") is True):
+        # I11: el motor no pudo matar o verificar todo (o no lo confirma). Sin rutas ni pids: quedan en el log del motor.
+        log.warning("El barrido de procesos del motor quedó incompleto: pueden seguir vivos Chrome o ffmpeg huérfanos.")
         return False
     return True
 

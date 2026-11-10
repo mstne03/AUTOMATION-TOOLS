@@ -547,8 +547,9 @@ async def test_motor_real_lista_las_11_tools(motor_real):
         "video_capacidades",
         "video_voz_coste", "video_voz_generar", "video_voz_forma", "video_voz_quitar_silencios", "video_voces", "video_voz_muestra",
         "video_perfiles_listar", "video_perfil_guardar", "video_perfil_duplicar",
+        "video_montar_preview", "video_barrer_procesos",  # T6: montaje de la preview y barrido de procesos (R0-6)
     }  # fmt: skip
-    assert set(nombres) == esperadas and len(nombres) == 24
+    assert set(nombres) == esperadas and len(nombres) == 26
 
 
 async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):
