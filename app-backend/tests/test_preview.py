@@ -221,13 +221,59 @@ def test_puertos_preview_fijos():
     assert config.PUERTOS_PREVIEW == (47810, 47811, 47812, 47813)
 
 
-def test_puertos_coinciden_con_frame_src():
-    conf = json.loads((RAIZ_REPO / "app-ui" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
-    csp = conf["app"]["security"]["csp"]
-    m = re.search(r"frame-src([^;]*)", csp)
-    if not m or "47810" not in m.group(1):
-        pytest.skip("T12 todavía no ha fijado el frame-src por puertos exactos en tauri.conf.json")
-    assert tuple(sorted(int(p) for p in re.findall(r"http://127\.0\.0\.1:(\d+)", m.group(1)))) == config.PUERTOS_PREVIEW
+TAURI = RAIZ_REPO / "app-ui" / "src-tauri"
+LOOPBACK = "http://127.0.0.1:"
+
+
+def _directivas(clave: str) -> dict[str, list[str]]:
+    conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
+    csp = conf["app"]["security"][clave]
+    partes = [d.split() for d in (x.strip() for x in csp.split(";")) if d]
+    nombres = [d[0].lower() for d in partes]
+    # Chromium aplica la PRIMERA directiva repetida: un duplicado podría esconder un comodín.
+    assert len(nombres) == len(set(nombres)), f"{clave}: directivas repetidas: {nombres}"
+    return {d[0]: d[1:] for d in partes}
+
+
+@pytest.mark.parametrize("clave", ["csp", "devCsp"])
+def test_frame_src_sin_comodin(clave):
+    fuentes = _directivas(clave).get("frame-src")
+    assert fuentes, f"{clave} sin frame-src"
+    for f in fuentes:
+        assert re.fullmatch(r"http://127\.0\.0\.1:\d{5}", f), f"{clave}: frame-src no exacto: {f}"
+
+
+@pytest.mark.parametrize("clave", ["csp", "devCsp"])
+def test_puertos_coinciden_con_frame_src(clave):
+    fuentes = _directivas(clave)["frame-src"]
+    assert len(fuentes) == len(set(fuentes))
+    assert tuple(sorted(int(f.rsplit(":", 1)[1]) for f in fuentes)) == config.PUERTOS_PREVIEW
+
+
+@pytest.mark.parametrize("clave", ["csp", "devCsp"])
+def test_connect_src_y_frame_src_solo_loopback(clave):
+    d = _directivas(clave)
+    permitido_connect = {"ipc:", "http://ipc.localhost", "http://localhost:1420", "ws://localhost:1420"}
+    for f in d["connect-src"]:
+        assert f in permitido_connect or f.startswith(LOOPBACK), f"{clave}: connect-src admite {f}"
+    assert "*" not in d["connect-src"] and "http:" not in d["connect-src"]
+    assert not any(f.startswith(("*", "http:", "https:", "data:", "blob:")) and not f.startswith(LOOPBACK) for f in d["frame-src"])
+    # default-src no abre nada más que el propio origen (y el servidor de Vite en desarrollo).
+    assert set(d["default-src"]) <= {"'self'", "http://localhost:1420"}
+
+
+def test_capacidades_sin_cambios():
+    ficheros = sorted(p.name for p in (TAURI / "capabilities").glob("*"))
+    assert ficheros == ["default.json"]
+    cap = json.loads((TAURI / "capabilities" / "default.json").read_text(encoding="utf-8"))
+    assert cap["permissions"] == ["core:default"]
+
+
+def test_webrtc_sin_fuga_ip_local():
+    conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
+    args = conf["app"]["windows"][0]["additionalBrowserArgs"].split()
+    assert "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection" in args  # valores por defecto de Tauri
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
 
 
 def test_reserva_cuatro_puertos():

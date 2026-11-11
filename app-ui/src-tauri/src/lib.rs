@@ -11,6 +11,9 @@
 //! Object con KILL_ON_JOB_CLOSE: si la app muere de cualquier forma (crash, `taskkill /F`)
 //! el kernel cierra el handle del job y mata al sidecar; sin esto quedaba huérfano.
 //!
+//! Instancia única: un mutex `Local\SEOStudio-<identifier>` se adquiere en `setup`, antes de
+//! lanzar el sidecar. Una segunda instancia avisa y sale sin arrancar otro backend.
+//!
 //! El updater corre en Rust (comandos `update_check` / `update_install`), y el diálogo
 //! para elegir el vídeo (`elegir_video`) o una carpeta (`elegir_carpeta`) y abrir enlaces en el navegador (`abrir_url`)
 //! también, así que el WebView sigue sin ningún permiso más allá de `core:default`.
@@ -277,6 +280,87 @@ fn abrir_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.shell().open(url, None).map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------------ instancia única
+
+/// Mutex con nombre que vive lo que la app: mientras el handle esté abierto, una segunda
+/// instancia no puede adquirirlo. Dos backends compartirían `<estado>/video/` con cerrojos y
+/// claves separados (borrados durante un render, voz facturada dos veces).
+struct InstanciaUnica(usize);
+
+impl Drop for InstanciaUnica {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` es el handle devuelto por CreateMutexW, propio de esta estructura y
+        // cerrado solo aquí.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+    }
+}
+
+/// `Local\SEOStudio-<identifier>`: espacio de nombres de la sesión (nunca `Global\`). El
+/// identificador viene de la configuración, pero se valida igual: sin separadores ni espacios.
+fn nombre_mutex(identifier: &str) -> Result<String, String> {
+    let valido = !identifier.is_empty()
+        && identifier.len() <= 100
+        && identifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !valido {
+        return Err(format!(
+            "Identificador no válido para el mutex: {identifier:?}"
+        ));
+    }
+    Ok(format!(r"Local\SEOStudio-{identifier}"))
+}
+
+/// `Err` si el mutex ya existe (otra instancia viva) o no se pudo crear. Falla cerrado.
+fn adquirir(nombre: &str) -> Result<InstanciaUnica, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let ancho: Vec<u16> = nombre.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `ancho` es UTF-16 terminado en 0 y vive durante la llamada; sin atributos de seguridad.
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, ancho.as_ptr()) };
+    if handle.is_null() {
+        // Incluye ACCESS_DENIED (nombre ocupado por otro objeto): no es «ya abierto».
+        return Err(format!(
+            "No se pudo reservar la instancia única: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // Se lee justo después de la llamada: cualquier otra API pisaría el último error.
+    // SAFETY: sin llamadas intermedias; el handle es válido y se cierra una sola vez.
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(handle) };
+        return Err("Ya hay otra instancia de SEO Studio abierta.".into());
+    }
+    Ok(InstanciaUnica(handle as usize))
+}
+
+/// Reserva la instancia única antes de lanzar el sidecar. Si ya hay otra, avisa en un
+/// diálogo y sale sin arrancar nada; la UI recibe el error en vez de esperar al sidecar.
+fn arrancar_con_instancia_unica(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let nombre = nombre_mutex(&app.config().identifier)?;
+    match adquirir(&nombre) {
+        Ok(instancia) => {
+            app.manage(instancia);
+            spawn_sidecar(app.handle())
+        }
+        Err(e) => {
+            eprintln!("[tauri] {e}");
+            *app.state::<Sidecar>().failed.lock().unwrap() = Some(e.clone());
+            let handle = app.handle().clone();
+            app.dialog()
+                .message(format!(
+                    "{e}
+Esta ventana se cerrará."
+                ))
+                .title("SEO Studio")
+                .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+                .show(move |_| handle.exit(0));
+            Ok(())
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -293,10 +377,7 @@ pub fn run() {
             elegir_client_secret,
             abrir_url
         ])
-        .setup(|app| {
-            spawn_sidecar(app.handle())?;
-            Ok(())
-        })
+        .setup(|app| arrancar_con_instancia_unica(app))
         .build(tauri::generate_context!())
         .expect("error al construir la aplicación Tauri")
         .run(|app, event| {
@@ -308,7 +389,28 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::url_https_valida;
+    use super::{adquirir, nombre_mutex, url_https_valida};
+
+    #[test]
+    fn segundo_adquirir_falla() {
+        // Nombre propio del test: no choca con una app real abierta.
+        let nombre = nombre_mutex(&format!("test.instancia.{}", std::process::id())).unwrap();
+        let primera = adquirir(&nombre).expect("la primera instancia debe poder adquirir");
+        assert!(adquirir(&nombre).is_err(), "la segunda debe fallar");
+        drop(primera);
+        adquirir(&nombre).expect("al soltar la primera, se puede volver a adquirir");
+    }
+
+    #[test]
+    fn nombre_local_y_sin_separadores() {
+        assert_eq!(
+            nombre_mutex("com.seostudio.app").unwrap(),
+            r"Local\SEOStudio-com.seostudio.app"
+        );
+        for malo in ["", r"a\b", "a/b", r"Global\x", "con espacio", "a\0b"] {
+            assert!(nombre_mutex(malo).is_err(), "{malo:?}");
+        }
+    }
 
     #[test]
     fn solo_https() {
