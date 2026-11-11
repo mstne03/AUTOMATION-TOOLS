@@ -43,7 +43,8 @@ PROYECTO = r"^video[0-9]{3}$"  # solo ASCII: `\d` aceptaría dígitos Unicode
 GUION = r"^g-[0-9a-f]{16}$"
 PERFIL = r"^(defecto|p-[0-9a-f]{16})$"
 RECURSO = r"^r-[0-9a-f]{16}$"
-BANDEJA = r"^[0-9a-f]{32}$"  # formato de T13: `<estado>/video/bandeja/<32hex>.bin` (simulado hasta que llegue T13)
+BANDEJA = r"^[0-9a-f]{32}$"  # `<estado>/video/bandeja/<32hex>.bin`: lo escribe el comando nativo (T13) y el motor lo consume una vez (T7)
+PISTA = r"^m-[0-9a-f]{16}$"  # pista de la biblioteca de música del motor
 FRASE = r"^[A-Za-z0-9_-]{1,40}$"  # ids de frase (el motor los acota a 40 caracteres)
 VOZ_ID = r"^[A-Za-z0-9]{10,40}$"  # `VOICE_ID_RE` del motor
 ID_URL = r"^[A-Za-z0-9_-]{1,64}$"  # ids de servidor de las rutas anteriores al módulo de vídeo
@@ -51,6 +52,7 @@ ID_URL = r"^[A-Za-z0-9_-]{1,64}$"  # ids de servidor de las rutas anteriores al 
 LIMITE_CUERPO = 1024 * 1024  # 1 MiB
 DEADLINE_RENDER = 6 * 3600.0  # sobre el peor caso de 180 s de vídeo (T11); los tests lo acortan
 SONDEO_RENDER = 1.0  # segundos entre sondeos de `video_estado_render`
+TIMEOUT_RECURSO = 420.0  # normalizar un clip de 60 s o un audio de 15 min con el ffmpeg del bundle; la llamada va protegida (no se reinicia el motor)
 TIMEOUT_VOCES = 20.0  # `video_voces` va a ElevenLabs: corto y propio, para que un catálogo lento no ate al motor
 TOOL_BARRIDO = "video_barrer_procesos"  # tool del motor (T6, R0-6): barre Chrome y ffmpeg huérfanos por ruta de imagen
 MAX_FRASES = 540  # 90 escenas × 6 frases
@@ -221,11 +223,18 @@ class DuplicarIn(BaseModel):
 
 
 class RecursoIn(BaseModel):
-    """La UI nunca envía rutas: solo el id de la bandeja (T13) y la clase."""
+    """La UI nunca envía rutas: solo el id de la bandeja (T13) y la clase. El nombre del archivo es texto de la interfaz."""
 
     model_config = ConfigDict(extra="forbid")
     bandeja_id: str = Field(pattern=BANDEJA)
     clase: Literal["foto", "clip"]
+    nombre_original: str | None = Field(default=None, max_length=240)
+
+
+class MusicaIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bandeja_id: str = Field(pattern=BANDEJA)
+    nombre_original: str | None = Field(default=None, max_length=240)
 
 
 class RenderIn(BaseModel):
@@ -509,6 +518,23 @@ def recurso_seguro(r: Any) -> dict:
         "ancho": _entero(r.get("ancho"), 8192),
         "alto": _entero(r.get("alto"), 8192),
         "duracion": _numero_seguro(r.get("duracion"), 3600) or 0,
+    }
+
+
+def _args_importar(args: dict, nombre: str | None) -> dict:
+    """`nombreOriginal` solo viaja si la UI lo mandó: el motor lo recorta y lo pasa por `textoSeguro`."""
+    return {**args, "nombreOriginal": nombre} if nombre else args
+
+
+def _pista_segura(p: Any) -> dict | None:
+    """Los tres campos del contrato de una pista, con tope; cualquier otro (una ruta) se descarta."""
+    if not isinstance(p, dict) or not isinstance(p.get("id"), str) or not re.fullmatch(PISTA, p["id"]):
+        return None
+    nombre = p.get("nombre")
+    return {
+        "id": p["id"],
+        "nombre": nombre[:120] if isinstance(nombre, str) and not _NOMBRE_PELIGROSO.search(nombre) else "",
+        "duracion": _numero_seguro(p.get("duracion"), 3600) or 0,
     }
 
 
@@ -1003,19 +1029,39 @@ def crear_router(estado, protegido: list) -> APIRouter:
     async def importar_recurso(id: IdProyecto, request: Request):
         """Importa lo que hay en la bandeja (T13) como recurso del proyecto: `{ recurso, avisos }`.
 
-        Supuesto (T18): el motor escribe `recursos` en `proyecto.json` y **sube la revisión**; la respuesta no la
-        lleva, así que la UI vuelve a pedir `GET /video/proyectos/{id}` antes de seguir editando.
+        El motor (T7) normaliza el archivo (foto → PNG, clip → MP4 H.264 sin audio), lo añade a `recursos` de `proyecto.json`
+        y **sube la revisión**; la respuesta no la lleva, así que la UI vuelve a pedir `GET /video/proyectos/{id}` antes de
+        seguir editando.
         """
         cuerpo = await leer_cuerpo(request, RecursoIn)
         await _exigir_tool(estado, "video_recurso_importar")
         async with cerrojo_de(id):
-            d = await _llamar(estado, "video_recurso_importar", {"id": id, "bandejaId": cuerpo.bandeja_id, "clase": cuerpo.clase})
+            d = await _llamar(estado, "video_recurso_importar", _args_importar({"id": id, "bandejaId": cuerpo.bandeja_id, "clase": cuerpo.clase}, cuerpo.nombre_original), timeout=TIMEOUT_RECURSO, protegida=True)
         try:
             recurso = recurso_seguro(d.get("recurso") if isinstance(d, dict) else None)
         except ValueError:
             log.warning("video_recurso_importar devolvió un recurso inesperado")
             raise _inesperada() from None
         return {"recurso": recurso, "avisos": _avisos_seguros(d.get("avisos"))}
+
+    @r.get("/musica")
+    async def listar_musica():
+        """Biblioteca de pistas del motor: `{ pistas: [{ id, nombre, duracion }] }`, sin rutas."""
+        await _exigir_tool(estado, "video_musica_listar")
+        d = await _llamar(estado, "video_musica_listar")
+        return {"pistas": [p for p in (_pista_segura(x) for x in ((d.get("pistas") if isinstance(d, dict) else None) or [])[:500]) if p]}
+
+    @r.post("/musica", status_code=201)
+    async def importar_musica(request: Request):
+        """Importa una pista de la bandeja a la biblioteca (M4A, hasta 15 minutos): devuelve la pista."""
+        cuerpo = await leer_cuerpo(request, MusicaIn)
+        await _exigir_tool(estado, "video_musica_importar")
+        d = await _llamar(estado, "video_musica_importar", _args_importar({"bandejaId": cuerpo.bandeja_id}, cuerpo.nombre_original), timeout=TIMEOUT_RECURSO, protegida=True)
+        pista = _pista_segura(d.get("pista") if isinstance(d, dict) else None)
+        if pista is None:
+            log.warning("video_musica_importar devolvió una pista inesperada")
+            raise _inesperada()
+        return pista
 
     @r.delete("/proyectos/{id}/recursos/{rid}")
     async def borrar_recurso(id: IdProyecto, rid: IdRecurso):

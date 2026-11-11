@@ -1054,7 +1054,7 @@ def motor_sin_recursos(monkeypatch):
     original = video.MotorVideo.herramientas
 
     async def sin_recursos(self):
-        return [t for t in await original(self) if not t.startswith("video_recurso_")]
+        return [t for t in await original(self) if not t.startswith(("video_recurso_", "video_musica_"))]
 
     monkeypatch.setattr(video.MotorVideo, "herramientas", sin_recursos)
 
@@ -1067,22 +1067,113 @@ async def test_recursos_sin_tools_son_501_no_disponible(api, motor_sin_recursos)
     r = await api.delete(f"/video/proyectos/{pid}/recursos/r-0123456789abcdef")
     assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
     assert [x for x in await _llamadas(api) if x["tool"].startswith("video_recurso_")] == []
+    for r in (await api.get("/video/musica"), await api.post("/video/musica", json={"bandeja_id": BANDEJA})):
+        assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
 
 
-async def test_real_recursos_sin_tools_del_motor_no_son_502(real):
-    """Mientras T7 no registre las tools, el motor real da 501 `no_disponible` y nunca un 502 con texto."""
-    if "video_recurso_importar" in await real.app.state.motor.herramientas():
-        pytest.skip("T7 ya registró las tools: este caso lo sustituye el test de recurso_en_uso contra el motor real")
+async def test_nombre_original_viaja_al_motor_y_solo_si_lo_manda_la_ui(api):
+    pid = await _proyecto(api)
+    sin = await api.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})
+    con = await api.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": "b" * 32, "clase": "foto", "nombre_original": "gol de 1999.jpg"})
+    assert sin.status_code == 201 and con.status_code == 201
+    envios = [x for x in await _llamadas(api) if x["tool"] == "video_recurso_importar"]
+    assert "nombreOriginal" not in envios[0] and envios[1]["nombreOriginal"] == "gol de 1999.jpg"
+    largo = await api.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto", "nombre_original": "x" * 241})
+    assert largo.status_code == 422
+
+
+async def test_musica_importar_y_listar_sin_rutas(api):
+    r = await api.post("/video/musica", json={"bandeja_id": BANDEJA, "nombre_original": "ritmo.mp3"})
+    assert r.status_code == 201, r.text
+    pista = r.json()
+    assert set(pista) == {"id", "nombre", "duracion"} and re.fullmatch(r"m-[0-9a-f]{16}", pista["id"]) and pista["nombre"] == "ritmo.mp3"
+    lista = (await api.get("/video/musica")).json()["pistas"]
+    assert lista == [pista]
+    assert "musica.m4a" not in json.dumps(lista)  # el simulador devuelve una `ruta` de más: el backend la descarta
+
+
+@pytest.mark.parametrize(
+    "cuerpo",
+    [
+        {"bandeja_id": BANDEJA, "ruta": "C:\\x.mp3"},
+        {"bandeja_id": "C:\\Users\\x\\a.mp3"},
+        {"bandeja_id": "A" * 32},
+        {"bandeja_id": BANDEJA, "nombre_original": "x" * 241},
+        {},
+    ],
+)
+async def test_musica_cuerpo_malo_422(api, cuerpo):
+    assert (await api.post("/video/musica", json=cuerpo)).status_code == 422
+
+
+async def test_musica_bandeja_inexistente_404(api):
+    r = await api.post("/video/musica", json={"bandeja_id": "0" * 32})
+    assert r.status_code == 404 and r.json()["detail"]["codigo"] == "no_encontrado"
+
+
+def test_pista_segura_descarta_lo_que_no_es_del_contrato():
+    ok = {"id": "m-0123456789abcdef", "nombre": "a.m4a", "duracion": 3.5}
+    assert video_rest._pista_segura({**ok, "ruta": "C:\\x"}) == ok
+    assert video_rest._pista_segura({**ok, "nombre": "../x.m4a"})["nombre"] == ""
+    assert video_rest._pista_segura({**ok, "id": "../x"}) is None and video_rest._pista_segura("x") is None
+
+
+async def test_real_recursos_errores_tipados_del_motor(real):
+    """El motor real (T7) ya registra las tools: los códigos llegan tal cual, nunca un 501 ni un 502 con texto."""
+    assert {"video_recurso_importar", "video_recurso_borrar", "video_musica_listar", "video_musica_importar"} <= set(await real.app.state.motor.herramientas())
     pid = await _proyecto_real(real)
     r = await real.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})
-    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    assert r.status_code == 404 and r.json()["detail"]["codigo"] == "no_encontrado", r.text
     r = await real.delete(f"/video/proyectos/{pid}/recursos/r-0123456789abcdef")
-    assert r.status_code == 501 and r.json()["detail"]["codigo"] == "no_disponible", r.text
+    assert r.status_code == 404 and r.json()["detail"]["codigo"] == "no_encontrado", r.text
+    r = await real.post("/video/musica", json={"bandeja_id": BANDEJA})
+    assert r.status_code == 404 and r.json()["detail"]["codigo"] == "no_encontrado", r.text
+    assert (await real.get("/video/musica")).json() == {"pistas": []}
 
 
-@pytest.mark.skip(reason="TODO(T7): cuando el motor registre video_recurso_borrar con `en_uso`, comprobar el 409 `recurso_en_uso` contra el motor real (hoy solo contra el simulador).")
-async def test_real_recurso_en_uso_409(real):
-    ...
+def _png_40x60() -> bytes:
+    import struct
+    import zlib
+
+    def trozo(tipo: bytes, datos: bytes) -> bytes:
+        return struct.pack(">I", len(datos)) + tipo + datos + struct.pack(">I", zlib.crc32(tipo + datos))
+
+    ihdr = struct.pack(">IIBBBBB", 40, 60, 8, 2, 0, 0, 0)
+    crudo = b"".join(b"\x00" + b"\xff\x00\x00" * 40 for _ in range(60))
+    return b"\x89PNG\r\n\x1a\n" + trozo(b"IHDR", ihdr) + trozo(b"IDAT", zlib.compress(crudo)) + trozo(b"IEND", b"")
+
+
+async def test_real_recurso_en_uso_409(real, monkeypatch):
+    """Importa una foto de verdad por la bandeja, la pone como capa de una escena y comprueba el 409 `recurso_en_uso`."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("Hace falta ffmpeg (FFMPEG_DIR o PATH) para normalizar la foto con el motor real")
+    monkeypatch.setenv("FFMPEG_DIR", str(Path(ffmpeg).parent))
+    pid = await _proyecto_real(real)
+    bandeja = real.raiz.parent / "video" / "bandeja"
+    bandeja.mkdir(parents=True, exist_ok=True)
+    (bandeja / f"{BANDEJA}.bin").write_bytes(_png_40x60())
+    r = await real.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto", "nombre_original": "<b>x</b>.png"})
+    if r.status_code == 503:
+        pytest.skip("El motor real no encontró ffmpeg en su entorno (integrado: solo FFMPEG_DIR del bundle)")
+    assert r.status_code == 201, r.text
+    rec = r.json()["recurso"]
+    assert rec["ext"] == "png" and (rec["ancho"], rec["alto"]) == (40, 60)
+    assert any(a["codigo"] == "foto_pequena" for a in r.json()["avisos"])
+    assert not (bandeja / f"{BANDEJA}.bin").exists()  # la bandeja se consume
+    assert (await real.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})).status_code == 404
+    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    assert [x["id"] for x in proyecto["recursos"]] == [rec["id"]]
+    proyecto["escenas"][0]["capa"] = {"recursoId": rec["id"], "modo": "encima", "encuadre": "zoom", "entrada": 0, "salida": 1}
+    g = await real.put(f"/video/proyectos/{pid}", json={"revision": proyecto["revision"], "proyecto": proyecto})
+    assert g.status_code == 200, g.text
+    r = await real.delete(f"/video/proyectos/{pid}/recursos/{rec['id']}")
+    assert r.status_code == 409 and r.json()["detail"]["codigo"] == "recurso_en_uso", r.text
+    # Sin la capa se puede borrar.
+    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    del proyecto["escenas"][0]["capa"]
+    assert (await real.put(f"/video/proyectos/{pid}", json={"revision": proyecto["revision"], "proyecto": proyecto})).status_code == 200
+    assert (await real.delete(f"/video/proyectos/{pid}/recursos/{rec['id']}")).status_code == 200
 
 
 @pytest.mark.parametrize("nombre", ["../../etc/passwd", "a/b.jpg", "a\\b.jpg", "C:x.jpg", "a\x00b.jpg", "..", "x\n.jpg"])

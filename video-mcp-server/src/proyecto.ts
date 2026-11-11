@@ -36,7 +36,7 @@ import {
  * Los emiten solo voz.ts (con `ErrorAlmacen`); tts.ts no emite códigos: sus fallos son `ErrorElevenLabs` y salen como
  * mensaje o como `fallo_facturado`.
  */
-export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_clave" | "sin_voz" | "reintento_facturado" | "fallo_facturado";
+export type CodigoAlmacen = "esquema" | "conflicto" | "no_encontrado" | "coste_cambiado" | "voz_pendiente" | "sin_clave" | "sin_voz" | "reintento_facturado" | "fallo_facturado" | "en_uso" | "demasiado_grande";
 export interface Problema {
   ruta: string;
   codigo: string;
@@ -348,4 +348,16 @@ export function proyectoGuardar(raiz: string, args: { id: string; revision: numb
   const siguiente = validando(() => validarProyecto({ ...cliente, revision: disco.revision + 1, creado: disco.creado, actualizado: ahora() }));
   escribirJson(path.join(dirProyecto(raiz, args.id), "proyecto.json"), siguiente);
   return { revision: siguiente.revision, avisos: recomendaciones(siguiente) };
+}
+
+/**
+ * Cambia `recursos` (T7): único camino por el que entra o sale uno, porque `proyectoGuardar` los exige idénticos a los del
+ * disco. Lee, aplica, valida (tope de 30, ids únicos, extensión por clase) y escribe con la revisión siguiente, todo síncrono.
+ */
+export function proyectoCambiarRecursos(raiz: string, id: string, cambiar: (actual: Proyecto) => Proyecto["recursos"]): { revision: number; proyecto: Proyecto } {
+  const disco = cargarProyecto(raiz, id);
+  const recursos = cambiar(disco);
+  const siguiente = validando(() => validarProyecto({ ...disco, recursos, revision: disco.revision + 1, actualizado: ahora() }));
+  escribirJson(path.join(dirProyecto(raiz, id), "proyecto.json"), siguiente);
+  return { revision: siguiente.revision, proyecto: siguiente };
 }

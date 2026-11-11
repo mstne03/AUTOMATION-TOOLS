@@ -219,14 +219,27 @@ const Capa = z.strictObject({
   if (typeof c.entrada === "number" && typeof c.salida === "number" && c.salida <= c.entrada) issue(ctx, "tiempos_no_crecientes", ["salida"]);
 });
 
-const EXT_POR_CLASE = { foto: ["jpg", "png", "webp"], clip: ["mp4"], musica: ["wav"] } as const;
+const EXT_POR_CLASE = { foto: ["jpg", "png", "webp"], clip: ["mp4"], musica: ["wav", "m4a"] } as const;
+
+// Solo el nombre: sin separadores de ruta, `:` de unidad ni `..` (L7).
+const NombreRecurso = textoSeguro(120).refine((n) => !/[\\/:]|\.\./.test(n), { message: "nombre_con_ruta", params: { codigo: "nombre_con_ruta" } });
+
+/**
+ * Nombre de un fichero del usuario como texto de la UI (T7): solo la última parte, recortado y por `textoSeguro`.
+ * Si aun así no vale (URL, control, bidi), `recurso`: el nombre nunca bloquea la importación ni llega a la composición.
+ */
+export function nombreRecursoSeguro(n: unknown): string {
+  if (typeof n !== "string") return "recurso";
+  const ultimo = n.slice(0, 600).split(/[\\/]/).pop()!.replace(/:/g, "_").replace(/\.{2,}/g, ".");
+  const r = NombreRecurso.safeParse(ultimo.slice(0, 120).trim());
+  return r.success && r.data ? r.data : "recurso";
+}
 
 const Recurso = z.strictObject({
   id: z.string().max(40).regex(RECURSO_ID_RE),
   clase: z.enum(["foto", "clip", "musica"]),
-  ext: z.enum(["jpg", "png", "webp", "mp4", "wav"]),
-  // Solo el nombre: sin separadores de ruta, `:` de unidad ni `..` (L7).
-  nombreOriginal: textoSeguro(120).refine((n) => !/[\\/:]|\.\./.test(n), { message: "nombre_con_ruta", params: { codigo: "nombre_con_ruta" } }),
+  ext: z.enum(["jpg", "png", "webp", "mp4", "wav", "m4a"]),
+  nombreOriginal: NombreRecurso,
   ancho: entero(1, 8192),
   alto: entero(1, 8192),
   duracion: numero(0, 3600),

@@ -17,6 +17,7 @@ import {
   proyectoLeer,
   proyectoListar,
 } from "./proyecto.js";
+import { borrarRecurso, importarRecurso, musicaImportar, musicaListar, type Clase } from "./recursos.js";
 import { perfilDuplicar, perfilGuardar, perfilesListar } from "./perfil.js";
 import { vozCoste, vozForma, vozGenerar, vozMuestra, vozQuitarSilencios, voces } from "./voz.js";
 
@@ -79,6 +80,32 @@ export function perfilGuardarTool(cfg: Config, a: { id: string; perfil: unknown 
 export function perfilDuplicarTool(cfg: Config, a: { id: string; nombre?: string }): Respuesta {
   const r = perfilDuplicar(cfg.videoRoot, a);
   return { texto: `Perfil ${a.id} duplicado como ${r.id}.`, datos: r };
+}
+
+// ---------- Recursos y música (T7) ----------
+
+/** Texto del aviso: los códigos son estables para la UI; el motor solo cuenta lo que pasó. */
+const textoAvisos = (avisos: { mensaje: string }[]): string => (avisos.length ? ` ${avisos.map((a) => a.mensaje).join(" ")}` : "");
+
+export async function recursoImportarTool(cfg: Config, a: { id: string; bandejaId: string; clase: Clase; nombreOriginal?: string }): Promise<Respuesta> {
+  const r = await importarRecurso(cfg, a);
+  const dim = r.recurso.clase === "musica" ? `${r.recurso.duracion} s` : `${r.recurso.ancho}×${r.recurso.alto}`;
+  return { texto: `Recurso importado (${r.recurso.clase}, ${dim}).${textoAvisos(r.avisos)}`, datos: { recurso: r.recurso, avisos: r.avisos, revision: r.revision } };
+}
+
+export function recursoBorrarTool(cfg: Config, a: { id: string; recursoId: string }): Respuesta {
+  const r = borrarRecurso(cfg, a);
+  return { texto: `Recurso ${a.recursoId} borrado, revisión ${r.revision}.`, datos: { revision: r.revision } };
+}
+
+export function musicaListarTool(cfg: Config): Respuesta {
+  const r = musicaListar(cfg);
+  return { texto: `${r.pistas.length} pista(s) de música.`, datos: r };
+}
+
+export async function musicaImportarTool(cfg: Config, a: { bandejaId: string; nombreOriginal?: string }): Promise<Respuesta> {
+  const r = await musicaImportar(cfg, a);
+  return { texto: `Pista importada: ${r.pista.nombre} (${r.pista.duracion} s).`, datos: r };
 }
 
 // ---------- Voz por frases (T5) ----------
@@ -215,6 +242,42 @@ export function registrarHerramientasProyecto(server: McpServer, cfg: Config, en
       inputSchema: { id: ID_PERFIL.describe("Id del perfil que se copia."), nombre: z.string().max(240).optional() },
     },
     (a) => envolver("video_perfil_duplicar", () => perfilDuplicarTool(cfg, a)),
+  );
+  // Recursos del usuario y música (T7). El fichero llega por la bandeja (`bandejaId`, 32 hexadecimales), nunca por ruta (I6).
+  const BANDEJA = z.string().max(64).describe("Identificador de la bandeja: 32 hexadecimales en minúscula; la entrada se consume una sola vez.");
+  const NOMBRE = z.string().max(600).optional().describe("Nombre del archivo, solo como texto de la interfaz.");
+  server.registerTool(
+    "video_recurso_importar",
+    {
+      title: "Importar un recurso",
+      description:
+        "Normaliza lo que hay en la bandeja (foto → PNG, clip → MP4 H.264 sin audio, música → M4A) y lo añade a los recursos del proyecto. Se identifica por los bytes, no por el nombre, y los límites (tamaño, píxeles, duración, fps) se aplican antes de decodificar. Devuelve { recurso, avisos, revision }.",
+      inputSchema: { id: ID_PROYECTO, bandejaId: BANDEJA, clase: z.enum(["foto", "clip", "musica"]), nombreOriginal: NOMBRE },
+    },
+    (a) => envolver("video_recurso_importar", () => recursoImportarTool(cfg, a)),
+  );
+  server.registerTool(
+    "video_recurso_borrar",
+    {
+      title: "Borrar un recurso",
+      description: "Quita un recurso del proyecto y borra su fichero. Si una escena lo usa como capa: codigo \"en_uso\" y no se borra nada.",
+      inputSchema: { id: ID_PROYECTO, recursoId: z.string().max(40).describe('Id del recurso: "r-" más 16 hexadecimales.') },
+    },
+    (a) => envolver("video_recurso_borrar", () => recursoBorrarTool(cfg, a)),
+  );
+  server.registerTool(
+    "video_musica_listar",
+    { title: "Listar la música", description: "Pistas de la biblioteca de música: { pistas: [{ id, nombre, duracion }] }.", inputSchema: {} },
+    () => envolver("video_musica_listar", () => musicaListarTool(cfg)),
+  );
+  server.registerTool(
+    "video_musica_importar",
+    {
+      title: "Importar una pista de música",
+      description: "Normaliza a M4A lo que hay en la bandeja y lo añade a la biblioteca de música (máximo 15 minutos). Devuelve { pista: { id, nombre, duracion } }.",
+      inputSchema: { bandejaId: BANDEJA, nombreOriginal: NOMBRE },
+    },
+    (a) => envolver("video_musica_importar", () => musicaImportarTool(cfg, a)),
   );
   // Voz por frases (T5). Gastan créditos de ElevenLabs: el modelo no las usa (D2, I10) y el gasto exige los caracteres confirmados.
   server.registerTool(

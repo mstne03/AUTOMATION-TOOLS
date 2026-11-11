@@ -37,6 +37,11 @@ const MAX_ESCENAS = 90;
 const Z_ESCENA = 10;
 const Z_BUCLE = 199;
 const Z_CAPAS = 200;
+// Capas de recursos (T7): «encima» sobre cualquier escena (que están en 11..100) y bajo el bucle; «detrás» entre el fondo
+// (z 10, antes en el DOM) y las escenas, en su propia pista para no solapar con el fondo.
+const Z_CAPA_ENCIMA = 150;
+const Z_CAPA_DETRAS = 10;
+const TRACK_CAPA_DETRAS = 9;
 const Z_GANCHO = 210;
 const Z_ETIQUETA = 211;
 const Z_SUBTITULOS = 220;
@@ -170,6 +175,26 @@ export function tamanoFrase(texto: string, base: number, minimo: number, ancho =
 export interface EscenaPlan {
   base?: Escena;
   imagen?: ImagenEncontrada;
+  /** Recurso del usuario (ya normalizado) sobre esta escena (T7). */
+  capa?: CapaPlan;
+}
+
+/**
+ * Capa de una foto o un clip del usuario (T7). `origen` y `fondo` son ficheros ya normalizados por `recursos.ts`; `entrada` y `salida`
+ * van en segundos desde el corte de su escena. El nombre del usuario no llega aquí: la composición solo conoce `capa<n>.<ext>`.
+ */
+export interface CapaPlan {
+  clase: "foto" | "clip";
+  origen: string;
+  ext: "png" | "mp4";
+  /** Fotograma fijo de un clip horizontal, para el fondo desenfocado (M-D7). */
+  fondo?: string;
+  ancho: number;
+  alto: number;
+  modo: "encima" | "detras";
+  encuadre: "marco" | "zoom" | "paneo";
+  entrada: number;
+  salida: number;
 }
 
 /** Opciones del vídeo ya normalizadas. `destellos` son índices de escena desde 0. */
@@ -304,12 +329,12 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
     inicio: number,
     duracion: number,
     valores: Record<string, string | number>,
-    h: { z: number; extra?: string; alto?: number; top?: number },
+    h: { z: number; track?: number; extra?: string; alto?: number; top?: number },
   ) => {
     const { i, d } = comprobarTiemposPieza(id, inicio, duracion, D);
-    const { z, extra = "", alto = 1920, top = 0 } = h;
+    const { z, track = z, extra = "", alto = 1920, top = 0 } = h;
     hosts.push(
-      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${id}.html" data-start="${i}" data-duration="${d}" data-track-index="${z}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
+      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${id}.html" data-start="${i}" data-duration="${d}" data-track-index="${track}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
     );
     archivos[`compositions/${id}.html`] = pieza(plantilla, { ...valores, ID: id, INICIO: i, DURACION: d });
   };
@@ -350,6 +375,48 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
       );
     }
   }
+
+  // ---- Capas de recursos (T7) ----
+  // Entrada y salida son relativas al corte de la escena y se acotan a lo que la escena se ve. Los datos de la pieza salen de aquí
+  // (enums y números validados), no del usuario; el nombre original no entra en la composición.
+  const capaDe = (k: number) => {
+    const c = escenas[k].capa;
+    if (!c) return;
+    const n = k + 1;
+    if (c.clase !== "foto" && c.clase !== "clip") throw new Error(`Clase de capa no válida en la escena ${n}.`);
+    if (c.modo !== "encima" && c.modo !== "detras") throw new Error(`Modo de capa no válido en la escena ${n}.`);
+    if (!["marco", "zoom", "paneo"].includes(c.encuadre)) throw new Error(`Encuadre de capa no válido en la escena ${n}.`);
+    if (c.ext !== (c.clase === "foto" ? "png" : "mp4")) throw new Error(`La extensión de la capa de la escena ${n} no es la de su clase.`);
+    if (c.modo === "detras" && !usaFondo(k)) throw new Error(`La capa «detrás» de la escena ${n} solo vale sobre una escena con fondo.`);
+    for (const x of [c.entrada, c.salida, c.ancho, c.alto]) if (typeof x !== "number" || !Number.isFinite(x)) throw new Error(`Número no finito en la capa de la escena ${n}.`);
+    if (c.entrada < 0 || !(c.ancho > 0) || !(c.alto > 0)) throw new Error(`Tiempo o tamaño fuera de rango en la capa de la escena ${n}.`);
+    const v = ventanas[k];
+    const fin = Math.min(c.salida, v.visible);
+    if (!(fin - c.entrada >= 0.1)) {
+      avisos.push(`La capa de la escena ${n} queda fuera de lo que dura la escena y no se muestra.`);
+      return;
+    }
+    if (c.salida > v.visible) avisos.push(`La capa de la escena ${n} se acorta a lo que dura la escena (${v.visible} s).`);
+    const medio = `capa${n}.${c.ext}`;
+    copias.push({ origen: c.origen, destino: `assets/${medio}` });
+    let fondo = "";
+    if (c.fondo) {
+      fondo = `capa${n}-fondo.png`;
+      copias.push({ origen: c.fondo, destino: `assets/${fondo}` });
+    }
+    const fondoHtml = fondo ? `<img id="capa-esc${n}-fondo" class="fondo" src="assets/${escaparHtml(fondo)}" alt="" />` : "";
+    const datos = jsonParaScript({ encuadre: c.encuadre, horizontal: c.ancho > c.alto, conFondo: !!fondo });
+    anadirPieza(
+      `capa-esc${n}`,
+      c.clase === "foto" ? "capa-foto.html" : "capa-clip.html",
+      v.corte + c.entrada,
+      fin - c.entrada,
+      { MEDIO: escaparHtml(medio), FONDO_HTML: fondoHtml, DATOS: datos },
+      c.modo === "detras" ? { z: Z_CAPA_DETRAS, track: TRACK_CAPA_DETRAS } : { z: Z_CAPA_ENCIMA },
+    );
+  };
+  // Primero las de detrás (y las de modo no válido, que `capaDe` rechaza): quedan en el DOM justo tras el fondo.
+  escenas.forEach((_, k) => escenas[k].capa && escenas[k].capa!.modo !== "encima" && capaDe(k));
 
   // ---- Bloques ----
   let usa3d = false;
@@ -409,6 +476,8 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
     }
     anadirPieza(id, p[0], v.inicio, v.duracion, p[1], { z: Z_ESCENA + v.n });
   }
+
+  escenas.forEach((_, k) => escenas[k].capa?.modo === "encima" && capaDe(k));
 
   // Reencuadre final de la imagen 1 para que el short haga bucle (solo si el bloque 1 es una foto).
   const img1 = escenas[0].base ? undefined : escenas[0].imagen;

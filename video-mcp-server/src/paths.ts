@@ -166,7 +166,7 @@ export function comprobarRecurso(ruta: string): void {
  * fichero, normal, un solo enlace, bajo el tope) y lee **del descriptor**, de modo que un cambio posterior del
  * nombre no se cuela. El destino se crea con `wx`: nunca pisa un fichero existente.
  */
-export function copiarRecurso(origen: string, destino: string): void {
+export function copiarRecurso(origen: string, destino: string, max: number = MAX_RECURSO_BYTES): void {
   const nombre = nombreDe(origen);
   const antes = fs.lstatSync(origen, { bigint: true });
   if (antes.isSymbolicLink() || !antes.isFile()) throw new ErrorVideo(`${nombre} no es un fichero normal.`);
@@ -176,15 +176,25 @@ export function copiarRecurso(origen: string, destino: string): void {
     if (!st.isFile()) throw new ErrorVideo(`${nombre} no es un fichero normal.`);
     if (st.nlink !== 1n) throw new ErrorVideo(`${nombre} es un enlace duro (hardlink) a otro fichero. Copia el fichero real en la carpeta del vídeo.`);
     if (st.dev !== antes.dev || st.ino !== antes.ino) throw new ErrorVideo(`${nombre} ha cambiado mientras se abría; vuelve a intentarlo.`);
-    if (st.size > BigInt(MAX_RECURSO_BYTES)) throw new ErrorVideo(`${nombre} pesa más de ${MAX_RECURSO_BYTES / 1024 / 1024} MB.`);
-    const datos = Buffer.alloc(Number(st.size));
-    let leidos = 0;
-    while (leidos < datos.length) {
-      const n = fs.readSync(fd, datos, leidos, datos.length - leidos, leidos);
-      if (n === 0) break;
-      leidos += n;
+    if (st.size > BigInt(max)) throw new ErrorVideo(`${nombre} pesa más de ${max / 1024 / 1024} MB.`);
+    // Por trozos (un clip de 500 MB no cabe entero en un Buffer) y con el tope aplicado también a lo leído, por si el fichero crece.
+    const trozo = Buffer.alloc(Math.min(1024 * 1024, Math.max(Number(st.size), 1)));
+    const salida = fs.openSync(destino, "wx");
+    try {
+      let total = 0;
+      for (;;) {
+        const n = fs.readSync(fd, trozo, 0, trozo.length, total);
+        if (n === 0) break;
+        total += n;
+        if (total > max) throw new ErrorVideo(`${nombre} pesa más de ${max / 1024 / 1024} MB.`);
+        fs.writeSync(salida, trozo, 0, n);
+      }
+    } catch (e) {
+      fs.closeSync(salida);
+      fs.rmSync(destino, { force: true });
+      throw e;
     }
-    fs.writeFileSync(destino, datos.subarray(0, leidos), { flag: "wx" });
+    fs.closeSync(salida);
   } finally {
     fs.closeSync(fd);
   }

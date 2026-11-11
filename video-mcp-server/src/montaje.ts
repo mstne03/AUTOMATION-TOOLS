@@ -6,11 +6,11 @@ import path from "node:path";
 import type { Config } from "./config.js";
 import type { ResultadoAlineacion } from "./alineacion.js";
 import { FONDOS_WEBGPU } from "./formato.js";
-import { DURACION_MAXIMA, escribirPlan, planificarComposicion, urlsDeRed, type Tema } from "./composicion.js";
+import { DURACION_MAXIMA, escribirPlan, planificarComposicion, urlsDeRed, type CapaPlan, type Tema } from "./composicion.js";
 import type { Proyecto } from "./esquema.js";
 import { construirLinea, desdeProyecto } from "./linea.js";
 import { normalizarVoz } from "./musica.js";
-import { ErrorVideo, archivosVideo, borrarArbol, validarId } from "./paths.js";
+import { ErrorVideo, archivosVideo, borrarArbol, comprobarRecurso, resolverDentro, validarId } from "./paths.js";
 import { cargarPerfil, temaDePerfil } from "./perfil.js";
 import { herramientasFfmpeg, mensajeSinFfmpeg, pasaPorEnlace, type Herramientas } from "./proceso.js";
 import { log } from "./log.js";
@@ -91,10 +91,38 @@ export async function prepararProyecto(id: string, o: { cfg: Config; tema?: Tema
   return { id, proyecto, palabras, voz: normalizada, rutas: archivosVideo(o.cfg.videoRoot, id), herramientas, tema, avisos: [] };
 }
 
+/**
+ * La capa de una escena (T7) con los ficheros ya normalizados de `recursos/`: el nombre sale del id del recurso (nunca del nombre
+ * del usuario), cada fichero es normal y sin enlaces (I6) y está dentro de la carpeta de recursos del proyecto.
+ */
+function resolverCapa(prep: PreparadoProyecto, c: NonNullable<PreparadoProyecto["proyecto"]["escenas"][number]["capa"]>): CapaPlan {
+  const r = prep.proyecto.recursos.find((x) => x.id === c.recursoId);
+  if (!r) throw new ErrorVideo("Una escena usa un recurso que ya no está en el proyecto.");
+  if (r.clase !== "foto" && r.clase !== "clip") throw new ErrorVideo("Una capa solo puede llevar una foto o un clip.");
+  const dir = path.join(prep.rutas.dir, "recursos");
+  const fichero = (nombre: string): string => {
+    const ruta = resolverDentro(dir, nombre);
+    comprobarRecurso(ruta);
+    return ruta;
+  };
+  const ext = r.clase === "foto" ? "png" : "mp4";
+  if (r.ext !== ext) throw new ErrorVideo("El recurso de la capa no está normalizado.");
+  const fondo = r.clase === "clip" && r.ancho > r.alto && fs.existsSync(path.join(dir, `${r.id}.fondo.png`)) ? fichero(`${r.id}.fondo.png`) : undefined;
+  return { clase: r.clase, origen: fichero(`${r.id}.${ext}`), ext, ...(fondo ? { fondo } : {}), ancho: r.ancho, alto: r.alto, modo: c.modo, encuadre: c.encuadre, entrada: c.entrada, salida: c.salida };
+}
+
 /** Escribe la composición completa en `destino` (una carpeta nueva: `escribirPlan` la vacía antes con `borrarArbol`). */
 export function montarProyecto(prep: PreparadoProyecto, destino: string, gpu: boolean): Montaje {
-  const plan = planificarComposicion({ ...desdeProyecto(prep.proyecto, prep.palabras), palabras: prep.palabras, tema: prep.tema, gpu });
+  const entrada = desdeProyecto(prep.proyecto, prep.palabras);
+  const escenas = entrada.escenas.map((e, k) => {
+    const c = prep.proyecto.escenas[k].capa;
+    return c ? { ...e, capa: resolverCapa(prep, c) } : e;
+  });
+  const plan = planificarComposicion({ ...entrada, escenas, palabras: prep.palabras, tema: prep.tema, gpu });
   escribirPlan(destino, plan);
+  // R2-L1, T7: HyperFrames transcodifica por su cuenta los vídeos «hostiles» (ffmpeg fuera de `ejecutar`) salvo que el proyecto diga lo contrario.
+  // Los clips ya entran normalizados, pero la composición lo cierra también aquí, además del `--no-proxy` de `check`.
+  fs.writeFileSync(path.join(destino, "hyperframes.json"), JSON.stringify({ media: { autoProxy: false } }));
   fs.copyFileSync(prep.voz, path.join(destino, "assets", "voz.wav"));
   const red = urlsDeRed(destino);
   if (red.length) throw new Error(`La composición tiene recursos de red y el render tiene que ser local: ${red.slice(0, 5).join("; ")}`);

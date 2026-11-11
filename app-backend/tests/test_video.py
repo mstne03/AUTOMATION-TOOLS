@@ -540,6 +540,7 @@ async def test_motor_real_lista_las_11_tools(motor_real):
     # T5 añade las 6 de la voz por frases (única excepción al carril M: solo la expectativa; los canales y la
     # aprobación de estas tools son de T13/T14): 21.
     # T8 añade las 3 del perfil visual (misma excepción, solo la expectativa): 24.
+    # T6 añade video_montar_preview y video_barrer_procesos: 26. T7 añade las 4 de recursos y música: 30.
     esperadas = {
         "video_guion_esquema", "video_guion_guardar", "video_guion_listar", "video_guion_leer", "video_guion_borrar",
         "video_proyecto_crear", "video_proyecto_listar", "video_proyecto_leer", "video_proyecto_guardar",
@@ -548,8 +549,9 @@ async def test_motor_real_lista_las_11_tools(motor_real):
         "video_voz_coste", "video_voz_generar", "video_voz_forma", "video_voz_quitar_silencios", "video_voces", "video_voz_muestra",
         "video_perfiles_listar", "video_perfil_guardar", "video_perfil_duplicar",
         "video_montar_preview", "video_barrer_procesos",  # T6: montaje de la preview y barrido de procesos (R0-6)
+        "video_recurso_importar", "video_recurso_borrar", "video_musica_listar", "video_musica_importar",  # T7: recursos normalizados y música
     }  # fmt: skip
-    assert set(nombres) == esperadas and len(nombres) == 26
+    assert set(nombres) == esperadas and len(nombres) == 30
 
 
 async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):

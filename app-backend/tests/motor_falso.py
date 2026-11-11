@@ -375,9 +375,9 @@ def video_perfil_duplicar(id: str, nombre: str | None = None) -> CallToolResult:
 
 
 @mcp.tool()
-def video_recurso_importar(id: str, bandejaId: str, clase: str) -> CallToolResult:
+def video_recurso_importar(id: str, bandejaId: str, clase: str, nombreOriginal: str | None = None) -> CallToolResult:
     """SIMULADOR (T7/T13): la bandeja real es `<estado>/video/bandeja/<32hex>.bin`. `ee…` = recurso que una escena usa."""
-    _LLAMADAS.append({"tool": "video_recurso_importar", "id": id, "bandejaId": bandejaId, "clase": clase})
+    _LLAMADAS.append({"tool": "video_recurso_importar", "id": id, "bandejaId": bandejaId, "clase": clase, **({"nombreOriginal": nombreOriginal} if nombreOriginal else {})})
     if id not in _PROYECTOS:
         return _error("no_encontrado", "No existe ese proyecto.")
     if bandejaId == "0" * 32:
@@ -387,6 +387,25 @@ def video_recurso_importar(id: str, bandejaId: str, clase: str) -> CallToolResul
     _PROYECTOS[id]["revision"] += 1
     recurso = {"id": rid, "clase": clase, "ext": "jpg" if clase == "foto" else "mp4", "nombreOriginal": "foto.jpg", "ancho": 800, "alto": 600, "duracion": 0}
     return _ok("Recurso importado", {"recurso": recurso, "avisos": [{"codigo": "foto_pequena"}]})
+
+
+_PISTAS: dict[str, dict] = {}
+
+
+@mcp.tool()
+def video_musica_listar() -> CallToolResult:
+    """SIMULADOR (T7): la biblioteca real son `m-<16hex>.m4a` y su `.json` en `<estado>/video/musica`; nunca rutas."""
+    return _ok("Pistas", {"pistas": list(_PISTAS.values())})
+
+
+@mcp.tool()
+def video_musica_importar(bandejaId: str, nombreOriginal: str | None = None) -> CallToolResult:
+    _LLAMADAS.append({"tool": "video_musica_importar", "bandejaId": bandejaId, **({"nombreOriginal": nombreOriginal} if nombreOriginal else {})})
+    if bandejaId == "0" * 32:
+        return _error("no_encontrado", "No existe esa entrada de la bandeja.")
+    pid = "m-" + hashlib.sha256(bandejaId.encode()).hexdigest()[:16]
+    _PISTAS[pid] = {"id": pid, "nombre": nombreOriginal or "pista.m4a", "duracion": 95.5, "ruta": "C:\\Users\\x\\musica.m4a"}
+    return _ok("Pista importada", {"pista": _PISTAS[pid]})
 
 
 @mcp.tool()
