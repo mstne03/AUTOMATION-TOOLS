@@ -37,7 +37,7 @@ describe("entorno del sidecar en los E2E (lista blanca)", () => {
     const env = entornoSidecar({ APP_BACKEND_DIR: "/real", APP_BACKEND_SECRETS: "keyring", ANTHROPIC_API_KEY: "sk-ant-real", ELEVENLABS_API_KEY: "sk_real", ELEVENLABS_VOICE_ID: "real", APP_BACKEND_SIN_DOTENV: "0" }, extra);
     expect(env.APP_BACKEND_DIR).toBe("/tmp/estado-e2e");
     expect(env.APP_BACKEND_SECRETS).toBe("file");
-    expect(env.ANTHROPIC_API_KEY).toMatch(/falsa/);
+    expect(env.ANTHROPIC_API_KEY).toBe(""); // vacía: el respaldo del backend no tapa el almacén
     expect(env.ELEVENLABS_API_KEY).toMatch(/falsa/);
     expect(env.ELEVENLABS_VOICE_ID).toBe("voz-e2e");
     expect(env.VIDEO_PRUEBAS_TTS_URL).toBe("http://127.0.0.1:1234");

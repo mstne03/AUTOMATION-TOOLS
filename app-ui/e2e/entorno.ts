@@ -22,7 +22,7 @@ export const VARIABLES_HEREDADAS: readonly string[] = [
  *  Después se fuerza el aislamiento y se aplica `extra`.
  *
  *  Forzadas: el directorio de estado temporal (`extra.APP_BACKEND_DIR`), almacén `file` (nunca el
- *  Credential Manager), claves de Anthropic y ElevenLabs falsas, voz de prueba y sin `.env`.
+ *  Credential Manager), clave de Anthropic vacía, clave de ElevenLabs falsa, voz de prueba y sin `.env`.
  *
  *  Aviso: hasta que T5 (otra rama) haga que el motor lea `VIDEO_PRUEBAS_TTS_URL`, el motor sigue
  *  llamando a `api.elevenlabs.io` (con la clave falsa, que ese servicio rechaza). No se desactiva
@@ -37,7 +37,9 @@ export function entornoSidecar(heredado: Readonly<Record<string, string | undefi
     ...env,
     ...extra,
     APP_BACKEND_SECRETS: "file",
-    ANTHROPIC_API_KEY: "sk-ant-e2e-falsa",
+    // Vacía (no una falsa): anula cualquier clave heredada sin tapar el almacén, porque el backend la usa
+    // de respaldo y con ella el borrado de la clave en Ajustes no se vería (ajustes.spec.ts).
+    ANTHROPIC_API_KEY: "",
     ELEVENLABS_API_KEY: "e2e-eleven-falsa",
     ELEVENLABS_VOICE_ID: "voz-e2e",
     APP_BACKEND_SIN_DOTENV: "1",

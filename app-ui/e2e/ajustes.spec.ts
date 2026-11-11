@@ -1,5 +1,7 @@
 /** Ajustes rediseñados (artboard "Ajustes (claro)"): secciones con guardado automático. Sidecar
  *  real salvo en el test de perfiles nuevos (el OAuth no existe en el entorno de pruebas). */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { settings, youtube } from "./api";
 import { simularRutas } from "./sidecar-falso";
@@ -110,6 +112,8 @@ test.describe("Ajustes", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Borrar clave" }).click();
     await expect(page.getByTestId("ajustes-key-estado")).toHaveText("Sin clave");
     expect((await settings()).has_anthropic_key).toBe(false);
+    // Y fuera del disco: el almacén `file` guarda cada secreto en un fichero del directorio de estado.
+    expect(existsSync(join(process.env.E2E_STATE_DIR!, "anthropic_api_key.json"))).toBe(false);
     await campo.fill("sk-ant-final-e2e");
     await page.getByTestId("ajustes-key-guardar").click();
     await expect(page.getByTestId("ajustes-key-estado")).toContainText("Guardada en");
