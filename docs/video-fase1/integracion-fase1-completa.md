@@ -55,11 +55,23 @@ E2E, así que la base no tenía este dato.
    la UI también se rompería.** Se ha dejado sin corregir aquí (fuera del encargo de integración); es el
    primer arreglo antes de T21.
 2. **23 capturas de `visual.spec.ts`** (chat, publicar, guiones, canal, kb, ajustes, ajustes-video,
-   catalogo; claro y oscuro; ~1 % de píxeles distintos). Afectan a pantallas que esta integración no toca:
-   o las capturas de referencia son de otra máquina/versión de Chromium, o hay una regresión anterior.
-   Sin diagnosticar.
-3. **`ajustes.spec.ts:80`** (clave): tras «Borrar clave» el estado sigue mostrando la clave guardada
-   en `FileSecretStore`. Tampoco lo toca ninguna rama fusionada. Sin diagnosticar.
+   catalogo; claro y oscuro; ~1 % de píxeles distintos). **Diagnosticadas: son cambios reales y deliberados
+   de la fase de vídeo, no entorno; NO se han regenerado.** Prueba: en un worktree de `origin/ds/v1`
+   (675b3af), en esta misma máquina y con el mismo Chromium, `visual.spec.ts` pasa entero (30/30). Los
+   diff PNG muestran bloques desplazados, no antialiasing: (a) la barra lateral tiene una entrada nueva
+   «Vídeo» entre Guiones y Canal, que baja Canal, Conocimiento y Conversaciones (afecta a todas las
+   pantallas); (b) en Guiones, el selector Formato tiene una tercera opción «Vídeo» y el campo Duración se
+   desplaza; (c) en Ajustes, el índice tiene una sección nueva «Motor de vídeo». Regenerarlas es decisión de
+   Marc (`pnpm e2e e2e/visual.spec.ts --update-snapshots`), en un commit que diga que recogen la navegación
+   y el formato de vídeo.
+3. ~~**`ajustes.spec.ts:80`**~~ (resuelto, commit a9d332f). El backend sí borraba: `FileSecretStore.delete`
+   hace `unlink` del fichero (`<estado>/anthropic_api_key.json`), comprobado ahora por un test del backend
+   que lee el disco y por el propio E2E. La causa: `config.anthropic_api_key` usa `ANTHROPIC_API_KEY` del
+   entorno como respaldo, y el arnés E2E (desde 3792a85) forzaba ahí una clave falsa, así que tras borrar la
+   del almacén `has_anthropic_key` seguía a true. Arreglo: el sidecar E2E fija `ANTHROPIC_API_KEY` vacía
+   (sigue anulando cualquier clave heredada). Pendiente de producto, no de seguridad: con una clave en el
+   entorno, Ajustes muestra «Guardada en FileSecretStore» aunque venga del entorno, y «Borrar» parece no
+   hacer nada; convendría que `/settings` dijera el origen de la clave.
 
 Consecuencia: **los E2E de T17 (`video-preview.spec.ts`) no se han podido verificar de punta a punta**;
 solo los tests unitarios de la preview pasan.
@@ -120,8 +132,8 @@ omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
 - ~~`video-render` (4)~~ (resuelto, commit 79c2e9b): `render-dialogo` pasa al elemento `role="dialog"`
   (`Dialog` admite `testid`); mismo nombre, `pantallas.md` precisa el elemento.
 
-**Estado final de los E2E (suite completa, tras los arreglos):** 179 OK, 1 omitido, 24 fallan. Los 24 son
-exactamente los excluidos a propósito: las 23 capturas de `visual.spec.ts` y `ajustes.spec.ts:80`. Todos
+**Estado final de los E2E (suite completa, tras el arreglo de la clave):** 180 OK, 1 omitido, 23 fallan:
+solo las 23 capturas de `visual.spec.ts`, pendientes de que Marc decida regenerarlas (ver arriba). Todos
 los E2E de vídeo pasan. El omitido es `cambio_se_ve_sin_render` (CA4), con `test.fixme` «depende del panel
 de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `pnpm test` 389/389.
 
@@ -142,7 +154,8 @@ de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `
 
 1. ~~Arreglar el contrato de listados, las sondas de la preview y los 5 E2E de vídeo~~ (hecho, ver arriba).
    Queda activar `cambio_se_ve_sin_render` (quitar el `fixme` ahora que T18 está dentro).
-2. Diagnosticar las 23 capturas y el E2E de la clave (¿regenerar referencias o regresión?).
+2. Regenerar las 23 capturas si Marc da el visto bueno a los cambios de navegación y formato de vídeo (la
+   clave, resuelta).
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
    `video-editor`, y repetir la tabla de pruebas negativas y la R2 de punta a punta.
