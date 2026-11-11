@@ -719,9 +719,11 @@ async def test_real_xss_en_la_composicion(real, tmp_path, ataque, sufijo):
     assert r.status_code == 201, r.text
     pid = (await real.post("/video/proyectos", json={"guion_id": r.json()["id"], "perfil_id": "defecto"})).json()["id"]
     salida = tmp_path / "salida" / "_composicion"
-    p = subprocess.run(
+    # En un hilo: un subprocess.run directo bloquearía el bucle de eventos de la prueba async.
+    p = await asyncio.to_thread(
+        subprocess.run,
         ["node", str(MOTOR_DIR / "scripts" / "componer-proyecto.mjs"), str(real.raiz), pid, str(salida)],
-        capture_output=True, text=True, timeout=120,
+        check=False, capture_output=True, text=True, timeout=120,
     )
     assert p.returncode == 0, p.stderr[-800:]
     resultado = json.loads(p.stdout)
@@ -739,7 +741,7 @@ async def test_real_xss_en_la_composicion(real, tmp_path, ataque, sufijo):
         t = f.read_text(encoding="utf8", errors="replace")
         if "vendor" in f.parts:  # JS de terceros con hash fijado: los escanea `urlsDeRed`, no un texto del atacante
             continue
-        if ataque.startswith("<") or ataque.startswith('"'):
+        if ataque.startswith(("<", '"')):
             assert ataque not in t, f"{f.name} contiene {ataque!r} sin escapar"
         # Sin marcadores `{{X}}` sin sustituir, salvo el del propio ataque (una sola pasada: el valor no se vuelve a expandir)
         assert f.suffix != ".html" or not re.findall(r"\{\{[A-Z_]+\}\}(?!Q7)", t), f.name

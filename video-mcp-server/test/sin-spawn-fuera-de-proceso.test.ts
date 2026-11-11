@@ -94,8 +94,13 @@ describe("tools/list en modo integrado", () => {
         enviar({ jsonrpc: "2.0", id: 2, method: "tools/list" });
         return (await respuesta(2)).result.tools.map((t) => t.name);
       } finally {
-        hijo.kill();
-        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        // Esperar al cierre real del hijo: en Windows mantiene abierto `hf-home` hasta que muere (EBUSY).
+        if (hijo.exitCode === null && hijo.signalCode === null) {
+          const cerrado = new Promise<void>((resolve) => hijo.once("close", () => resolve()));
+          hijo.kill();
+          await cerrado;
+        }
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
       }
     };
     expect(await nombres(true)).not.toContain("video_catalogo");

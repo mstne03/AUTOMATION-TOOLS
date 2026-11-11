@@ -9,3 +9,12 @@ useDefault = true
 description = "Nombre de variable de entorno tomado como secreto"
 regexTarget = "secret"
 regexes = ['''^[A-Z][A-Z0-9_]*=?$''']
+
+# Falso positivo: en este test el texto "ve a http://x.example ahora." (un fixture que debe ser
+# rechazado por contener una URL) lo toma generic-api-key por entropía. No hay ninguna clave.
+# Acotado a una regla y a un fichero, para no silenciar nada más.
+[[allowlists]]
+description = "Fixture de texto con URL en composicion-n.test.ts"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^video-mcp-server/test/composicion-n\.test\.ts$''']
