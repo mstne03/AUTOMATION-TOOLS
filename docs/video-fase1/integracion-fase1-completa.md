@@ -106,11 +106,24 @@ omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
   `sonda_red_cero` cuenta como salida cualquier respuesta o fallo que no sea de la CSP, y exige que la
   imagen la corte la CSP; `leerMarco` devuelve `undefined` mientras el iframe no ha cargado (en
   `sandbox_solo_atributo` había una carrera que antes ganaba por suerte). 9/9 en tres repeticiones.
-- `video-preview` `seek_pinta_fotograma` (motor real): el iframe no llega a aparecer. Sin diagnosticar;
-  probablemente falta ffmpeg o el runtime en este entorno, como en el test real de T11 que se omite.
-- `video-render` (4): `render-dialogo` (`RenderDialogo.tsx:145`) está en un `div` vacío que Playwright
-  considera oculto, aunque el diálogo se pinta. Hay que cambiar el testid de sitio o el contenido (T20),
-  y actualizar `pantallas.md` en el mismo commit.
+- ~~`video-preview` `seek_pinta_fotograma`~~ (resuelto, commit 003c3db). No era el entorno: el motor
+  rechazaba montar la preview («Faltan las voces de 4 frase(s)… Genera la voz antes») porque el test
+  creaba un proyecto sin voz. Y la voz de pruebas no podía funcionar: el backend reenviaba
+  `VIDEO_PRUEBAS_TTS_URL` pero no `VIDEO_E2E`, y el motor integrado la ignora sin ella (`tts.ts:17`);
+  además el motor integrado solo usa `FFMPEG_DIR` (no el PATH), y en desarrollo el backend solo lo ponía si
+  existía la carpeta del bundle. Cambios: `entorno_motor` reenvía `VIDEO_E2E` y `FFMPEG_DIR` **solo fuera
+  del bundle** (`not FROZEN`; en el producto, `FFMPEG_DIR` es siempre el del bundle y `VIDEO_E2E` no pasa,
+  con test); `global-setup.ts` fija `VIDEO_E2E=1` y `FFMPEG_DIR` (de `FFMPEG_DIR` o del PATH, con ffmpeg y
+  ffprobe) y expone `E2E_FFMPEG`; el test genera la voz por la API con el ElevenLabs falso, confirmando el
+  coste, y se salta con motivo explícito si no hay ffmpeg (la misma condición que los tests reales de T11).
+  El aviso `video_voces … 404` del log es del mock, que no tiene catálogo de voces; el backend lo tolera.
+- ~~`video-render` (4)~~ (resuelto, commit 79c2e9b): `render-dialogo` pasa al elemento `role="dialog"`
+  (`Dialog` admite `testid`); mismo nombre, `pantallas.md` precisa el elemento.
+
+**Estado final de los E2E (suite completa, tras los arreglos):** 179 OK, 1 omitido, 24 fallan. Los 24 son
+exactamente los excluidos a propósito: las 23 capturas de `visual.spec.ts` y `ajustes.spec.ts:80`. Todos
+los E2E de vídeo pasan. El omitido es `cambio_se_ve_sin_render` (CA4), con `test.fixme` «depende del panel
+de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `pnpm test` 389/389.
 
 ## Hallazgos abiertos heredados (ninguno bloquea la integración)
 
@@ -127,8 +140,8 @@ omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
 
 ## Lo que queda para T21
 
-1. ~~Arreglar el contrato de listados~~ (hecho, ver arriba). Las sondas de aislamiento de la preview, también. Quedan 5 E2E
-   de vídeo: `seek_pinta_fotograma` y los 4 de `render-dialogo`.
+1. ~~Arreglar el contrato de listados, las sondas de la preview y los 5 E2E de vídeo~~ (hecho, ver arriba).
+   Queda activar `cambio_se_ve_sin_render` (quitar el `fixme` ahora que T18 está dentro).
 2. Diagnosticar las 23 capturas y el E2E de la clave (¿regenerar referencias o regresión?).
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
