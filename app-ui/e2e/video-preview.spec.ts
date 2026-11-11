@@ -193,12 +193,8 @@ test("preview_error_visible: un 503 de puerto ocupado se ve en la preview", asyn
   await expect(page.getByTestId("editor")).toBeVisible();
 });
 
-test("seek_pinta_fotograma: reproducir mueve el tiempo y cambia lo que pinta el iframe (motor real)", async ({ page }) => {
-  // Misma condición que los tests reales de T11: el motor necesita ffmpeg para la voz y la preview.
-  test.skip(!process.env.E2E_FFMPEG, "Hace falta ffmpeg (FFMPEG_DIR o PATH) para el motor real");
-  test.setTimeout(120_000);
-  const id = await proyectoDeCocina();
-  // El motor no monta la preview sin voz: se genera con el ElevenLabs falso, confirmando el coste.
+/** El motor no monta la preview sin voz: se genera con el ElevenLabs falso, confirmando el coste. */
+async function generarVoz(id: string) {
   const coste = await api<{ plan: string; caracteres: number }>(`/video/proyectos/${id}/voz/coste`, { method: "POST", body: "{}" });
   const voz = await api<{ generadas: number; fallo?: unknown }>(`/video/proyectos/${id}/voz`, {
     method: "POST",
@@ -206,6 +202,14 @@ test("seek_pinta_fotograma: reproducir mueve el tiempo y cambia lo que pinta el 
   });
   expect(voz.fallo).toBeUndefined();
   expect(voz.generadas).toBeGreaterThan(0);
+}
+
+test("seek_pinta_fotograma: reproducir mueve el tiempo y cambia lo que pinta el iframe (motor real)", async ({ page }) => {
+  // Misma condición que los tests reales de T11: el motor necesita ffmpeg para la voz y la preview.
+  test.skip(!process.env.E2E_FFMPEG, "Hace falta ffmpeg (FFMPEG_DIR o PATH) para el motor real");
+  test.setTimeout(120_000);
+  const id = await proyectoDeCocina();
+  await generarVoz(id);
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-marco")).toBeVisible();
   await expect(page.getByTestId("preview-cargando")).toHaveCount(0, { timeout: 30_000 });
@@ -219,9 +223,10 @@ test("seek_pinta_fotograma: reproducir mueve el tiempo y cambia lo que pinta el 
 });
 
 test("cambio_se_ve_sin_render: editar un texto recarga la preview con el cambio (CA4, parte 1)", async ({ page }) => {
-  // Necesita el campo de texto del panel de escena (T18, `escena-campo-texto`): se activa al integrarse.
-  test.fixme(true, "depende del panel de escena de T18");
+  test.skip(!process.env.E2E_FFMPEG, "Hace falta ffmpeg (FFMPEG_DIR o PATH) para el motor real");
+  test.setTimeout(120_000);
   const id = await proyectoDeCocina();
+  await generarVoz(id);
   const posts: number[] = [];
   page.on("request", (r) => {
     if (r.method() === "POST" && r.url().endsWith(`/video/proyectos/${id}/preview`)) posts.push(Date.now());
@@ -229,8 +234,10 @@ test("cambio_se_ve_sin_render: editar un texto recarga la preview con el cambio 
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-cargando")).toHaveCount(0, { timeout: 30_000 });
   const primera = posts.length;
-  await page.getByTestId("escena-campo-texto").fill("Texto nuevo de prueba");
+  await page.locator('[data-testid^="clip-escena-"]').first().click(); // la primera escena es un cartel
+  await page.getByTestId("escena-campo-texto").getByRole("textbox").fill("Texto nuevo de prueba");
   await expect.poll(() => posts.length, { timeout: 10_000 }).toBeGreaterThan(primera);
   await expect(page.getByTestId("preview-cargando")).toHaveCount(0, { timeout: 30_000 });
-  await expect(marco(page).locator("body")).toContainText("Texto nuevo de prueba");
+  // El cartel parte el texto en una pieza por palabra (karaoke) y la plantilla lo pone en mayúsculas por CSS.
+  await expect(marco(page).locator("body")).toContainText(/texto\s*nuevo\s*de\s*prueba/i);
 });

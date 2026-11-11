@@ -17,6 +17,12 @@ Motor de vídeo: sin `<exe>.parent/video-engine/node/node.exe`, comprueba que GE
 comprueba GET /video/capacidades contra el motor del bundle: HyperFrames 0.8.206, telemetría
 desactivada y ffmpeg LGPL (sin libx264) del propio bundle.
 
+Vídeo, fase 1 (T21): `VIDEO_PRUEBAS_TTS_URL`, `VIDEO_E2E` y `ELEVENLABS_VOICE_ID` se fijan en el entorno del
+sidecar con valores centinela y, con motor, se lee el entorno real de sus procesos node (PEB): ninguna de las tres
+puede llegar al motor congelado. `/docs`, `/redoc` y `/openapi.json` dan 404 en la API y en los puertos de la preview.
+La preview responde en su puerto con su CSP, el runtime del bundle tiene el SHA-256 fijado y el sidecar lo da por
+bueno (POST …/preview no falla por puerto ni por runtime).
+
 Navegador del render (SEO-108): el bundle NO lleva Chrome (I12). Siempre se comprueba
 GET /video/navegador (401 sin token, versión fijada). Con motor hace falta uno de los dos:
 `--cft-zip ZIP` instala un zip local antes de arrancar (`python -m app_backend.navegador --zip`, mismo
@@ -59,6 +65,15 @@ FFMPEG = "n7.1.5"  # el LGPL de la tarea 2; el de winget (8.1) delataría que no
 CFT_VERSION = "156.0.8078.73"  # la de config.NAVEGADOR_VERSION
 CFT_FICHEROS = 288
 APP_BACKEND = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(APP_BACKEND))  # `config` del backend (puertos y hash de la preview): la verdad del repo
+from app_backend import config
+
+# Solo para desarrollo y E2E: el sidecar congelado no las reenvía al motor (T21). Centinelas válidos para el motor.
+VARIABLES_DE_PRUEBA = {
+    "VIDEO_PRUEBAS_TTS_URL": "http://127.0.0.1:9",
+    "VIDEO_E2E": "1",
+    "ELEVENLABS_VOICE_ID": "voz-smoke-centinela",
+}
 HASHES_PARCHE = f"hyperframes+{HYPERFRAMES}.sha256.json"
 
 # Nivel de integridad: RID del SID de TokenIntegrityLevel. Negativos: no se pudo leer (ver `_cerrar`).
@@ -109,6 +124,157 @@ def post(base: str, ruta: str, token: str = TOKEN, timeout: float = 30) -> tuple
             return r.status, r.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
+
+
+def post_json(base: str, ruta: str, cuerpo: dict, token: str = TOKEN, timeout: float = 60) -> tuple[int, str]:
+    req = urllib.request.Request(
+        base + ruta,
+        data=json.dumps(cuerpo).encode(),
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+
+def entorno_de(pid: int) -> dict[str, str]:
+    """Entorno de un proceso x64 propio (PEB -> ProcessParameters -> Environment). Sin wmic ni CIM: no lo dan."""
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    n = ctypes.WinDLL("ntdll")
+    asa = ctypes.c_void_p
+    k.OpenProcess.restype = asa
+    k.ReadProcessMemory.argtypes = (asa, asa, asa, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t))
+    k.CloseHandle.argtypes = (asa,)
+    n.NtQueryInformationProcess.argtypes = (asa, ctypes.c_int, asa, ctypes.c_ulong, asa)
+    h = k.OpenProcess(0x0410, False, pid)  # QUERY_INFORMATION | VM_READ
+    assert h, f"No pude abrir el proceso {pid} para leer su entorno (error {ctypes.get_last_error()})"
+    try:
+
+        def leer(direccion: int, largo: int) -> bytes:
+            b = ctypes.create_string_buffer(largo)
+            hecho = ctypes.c_size_t(0)
+            assert k.ReadProcessMemory(h, direccion, b, largo, ctypes.byref(hecho)), f"ReadProcessMemory {direccion:#x}"
+            return b.raw[: hecho.value]
+
+        pbi = (ctypes.c_void_p * 6)()  # PROCESS_BASIC_INFORMATION: el 2.º campo es PebBaseAddress
+        assert n.NtQueryInformationProcess(h, 0, pbi, ctypes.sizeof(pbi), None) == 0
+        puntero = lambda d: int.from_bytes(leer(d, 8), "little")
+        parametros = puntero(pbi[1] + 0x20)  # PEB.ProcessParameters
+        entorno, tamano = puntero(parametros + 0x80), puntero(parametros + 0x3F0)  # Environment, EnvironmentSize
+        texto = leer(entorno, tamano).decode("utf-16-le")
+    finally:
+        k.CloseHandle(h)
+    pares = (linea.partition("=") for linea in texto.split("\0") if "=" in linea[1:])
+    return {nombre.upper(): valor for nombre, _, valor in pares}
+
+
+def descendientes(raiz: int, imagen: str) -> list[int]:
+    """PIDs de los procesos `imagen` que cuelgan de `raiz` (Toolhelp: una instantánea basta, el motor ya está vivo)."""
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    k.Process32FirstW.argtypes = k.Process32NextW.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    k.CloseHandle.argtypes = (ctypes.c_void_p,)
+    h = k.CreateToolhelp32Snapshot(2, 0)
+    filas = []
+    try:
+        e = _EntradaProceso(dwSize=ctypes.sizeof(_EntradaProceso))
+        hay = k.Process32FirstW(h, ctypes.byref(e))
+        while hay:
+            filas.append((e.th32ProcessID, e.th32ParentProcessID, e.szExeFile.lower()))
+            hay = k.Process32NextW(h, ctypes.byref(e))
+    finally:
+        k.CloseHandle(h)
+    arbol, crece = {raiz}, True
+    while crece:
+        crece = False
+        for pid, ppid, _ in filas:
+            if ppid in arbol and pid not in arbol:
+                arbol.add(pid)
+                crece = True
+    return [pid for pid, _, img in filas if pid in arbol and pid != raiz and img == imagen]
+
+
+def comprobar_docs_ausentes(base: str) -> None:
+    """Sin /docs, /redoc ni /openapi.json en la API (con token válido: un 401 no probaría nada) ni en la preview."""
+    for ruta in ("/docs", "/redoc", "/openapi.json"):
+        st, _ = get(base, ruta)
+        assert st == 404, f"GET {ruta} en la API -> {st}, esperado 404"
+    print("/docs, /redoc y /openapi.json dan 404 en la API")
+
+
+def sondear_preview(puerto: int, ruta: str = "/docs") -> tuple[int, str | None]:
+    """GET sin token a un puerto de la preview, con su `Host`. (0, None) si no hay nadie escuchando."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{puerto}{ruta}", timeout=5) as r:
+            return r.status, r.headers.get("Content-Security-Policy")
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Security-Policy")
+    except OSError:
+        return 0, None
+
+
+def csp_esperada(puerto: int) -> str:
+    """La de `preview.cabecera_csp` con el binario congelado: sin el origen de Vite (`localhost:1420`)."""
+    o = f"http://127.0.0.1:{puerto}"
+    return (
+        "sandbox allow-scripts; default-src 'none'; "
+        f"script-src {o} 'unsafe-inline'; style-src {o} 'unsafe-inline'; img-src {o} data: blob:; "
+        f"font-src {o} data:; media-src {o} blob:; connect-src {o}; worker-src 'none'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors http://tauri.localhost https://tauri.localhost"
+    )
+
+
+def comprobar_preview(base: str, motor: Path | None) -> None:
+    """La preview responde en su puerto con su CSP, su runtime es el fijado y el sidecar lo da por bueno."""
+    vivos = {}
+    for puerto in config.PUERTOS_PREVIEW:
+        st, csp = sondear_preview(puerto)
+        if st:
+            vivos[puerto] = (st, csp)
+    propios = {p: v for p, v in vivos.items() if v[1] is not None}
+    assert propios, f"Ningún puerto de la preview {config.PUERTOS_PREVIEW} responde con CSP: {vivos}"
+    for puerto, (st, csp) in propios.items():
+        assert st == 404, f"GET /docs en el puerto de la preview {puerto} -> {st}, esperado 404"
+        assert csp == csp_esperada(puerto), f"CSP de la preview en {puerto}: {csp!r}, esperada {csp_esperada(puerto)!r}"
+        st, csp = sondear_preview(puerto, "/p/inexistente/index.html")
+        assert st == 404 and csp == csp_esperada(puerto), f"clave inexistente en {puerto} -> {st}, csp={csp!r}"
+    print(f"La preview responde con su CSP en el puerto {sorted(propios)} (404 en /docs y con clave inexistente)")
+    if motor is None:
+        return
+    runtime = motor / "app" / Path(*config.RUNTIME_PREVIEW_REL)
+    sha = hashlib.sha256(runtime.read_bytes()).hexdigest()
+    assert sha == config.RUNTIME_SHA256, f"El runtime del bundle {runtime} tiene SHA-256 {sha}, no el fijado"
+    # Un proyecto sin voz no se puede montar (haría falta ElevenLabs: sin red en el smoke), pero el POST solo
+    # llega al motor si el sidecar ya reservó puerto y verificó el runtime: un 503 aquí es uno de los dos fallos.
+    guion = {
+        "version": 1,
+        "titulo": "Smoke",
+        "gancho": "Hola",
+        "escenas": [{"frases": ["Hola."], "base": {"tipo": "cartel", "texto": "Hola"}}],
+        "opciones": {"fondo": "ninguno", "look": "normal", "subtitulos": "karaoke", "destellos": []},
+    }
+    st, cuerpo = post_json(base, "/video/guiones", {"guion": guion})
+    assert st in (200, 201), f"POST /video/guiones -> {st}: {cuerpo}"
+    st, cuerpo = post_json(base, "/video/proyectos", {"guion_id": json.loads(cuerpo)["id"], "perfil_id": "defecto"})
+    assert st in (200, 201), f"POST /video/proyectos -> {st}: {cuerpo}"
+    st, cuerpo = post_json(base, f"/video/proyectos/{json.loads(cuerpo)['id']}/preview", {})
+    assert st != 503, f"POST …/preview -> 503 (sin puerto de la preview o runtime no verificado): {cuerpo}"
+    print(f"Runtime de la preview con el SHA-256 fijado; el sidecar lo acepta (POST …/preview sin voz -> {st})")
+
+
+def comprobar_motor_sin_pruebas(sidecar: int) -> None:
+    """El entorno de los procesos node del motor no lleva ninguna variable de pruebas (T21, I14)."""
+    nodos = descendientes(sidecar, "node.exe")
+    assert nodos, "No hay ningún node.exe colgando del sidecar: el motor no está vivo para medir su entorno"
+    for pid in nodos:
+        env = entorno_de(pid)
+        assert env.get("VIDEO_ENGINE_EMBEDDED") == "1", f"node.exe #{pid} no parece el motor (sin VIDEO_ENGINE_EMBEDDED)"
+        colados = sorted(set(VARIABLES_DE_PRUEBA) & set(env))
+        assert not colados, f"El motor congelado (#{pid}) recibió variables de pruebas: {colados}"
+    print(f"Entorno del motor OK: {len(nodos)} proceso(s) node sin {sorted(VARIABLES_DE_PRUEBA)}")
 
 
 def esperar_navegador(base: str, limite: float = 900) -> dict:
@@ -588,6 +754,7 @@ def arrancar_y_comprobar(
         "APP_BACKEND_DIR": estado,
         "APP_BACKEND_SECRETS": "file",
         "KB_UPDATE_URL": "http://127.0.0.1:9/kb/",  # puerto discard: falla rapido, sin red
+        **VARIABLES_DE_PRUEBA,  # el sidecar congelado no las pasa al motor (comprobar_motor_sin_pruebas)
     }
     env.pop("HF_HUB_OFFLINE", None)  # el hijo no debe heredarla ni fijarla el mismo
     proc = subprocess.Popen([str(exe)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=exe.parent)
@@ -615,6 +782,7 @@ def arrancar_y_comprobar(
         assert st == 200, f"GET /kb/buscar -> {st}: {cuerpo}"
         print(f"GET /kb/buscar OK en {time.time() - t0:.1f} s (modelo de embeddings cargado sin red)")
 
+        comprobar_docs_ausentes(base)
         comprobar_navegador(base, cft_zip, cft_descargar)
         if motor is None:
             # Release sin VIDEO_ENGINE: el módulo no instalado es un 503 legible, no un 500.
@@ -627,6 +795,10 @@ def arrancar_y_comprobar(
             comprobar_dist_alterado(base, estado, proc.pid, dist_alterado)
         else:
             comprobar_video(base, motor, estado, t0, proc.pid)
+            comprobar_preview(base, motor)
+            comprobar_motor_sin_pruebas(proc.pid)
+        if motor is None:
+            comprobar_preview(base, None)
         return 0
     finally:
         proc.kill()

@@ -1,0 +1,74 @@
+{
+  "perfil": {
+    "nombre": "Canal de cocina",
+    "voz": "Vz98765432CD",
+    "idioma": "es",
+    "colores": {
+      "fondo": "#2A1608",
+      "texto": "#FFF6E8",
+      "acento": "#FF9F43",
+      "contorno": "#1A0D04",
+      "secundario": "#5A3317"
+    },
+    "fuente": "Inter Tight"
+  },
+  "guion": {
+    "version": 1,
+    "titulo": "La tortilla perfecta",
+    "gancho": "Con cebolla o sin cebolla.",
+    "escenas": [
+      {
+        "frases": [
+          "Nació en la cocina de una casa de campo."
+        ],
+        "base": {
+          "tipo": "mapa",
+          "region": "espana",
+          "destacar": [
+            "Madrid"
+          ],
+          "etiqueta": "Cuna de la receta"
+        }
+      },
+      {
+        "frases": [
+          "Esta receta divide a media España."
+        ],
+        "base": {
+          "tipo": "cartel",
+          "texto": "Tortilla de patatas",
+          "subtexto": "Receta clásica"
+        }
+      },
+      {
+        "frases": [
+          "Cuaja la sartén durante cuatro minutos."
+        ],
+        "base": {
+          "tipo": "cifra",
+          "valor": 4,
+          "sufijo": " min",
+          "etiqueta": "Tiempo en la sartén"
+        }
+      },
+      {
+        "frases": [
+          "Dale la vuelta con confianza.",
+          "Y sírvela caliente."
+        ],
+        "base": {
+          "tipo": "cartel",
+          "texto": "Buen provecho"
+        }
+      }
+    ],
+    "opciones": {
+      "fondo": "gradiente",
+      "look": "pelicula",
+      "subtitulos": "pildora",
+      "destellos": [
+        0
+      ]
+    }
+  }
+}

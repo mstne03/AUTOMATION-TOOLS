@@ -569,8 +569,10 @@ T5 no haga que el motor lea `VIDEO_PRUEBAS_TTS_URL`, ningún E2E de voz debe pod
 
 ## Regresión visual
 
-`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `ajustes-video` (Ajustes desplazado a «Motor de vídeo»), `onboarding` y el catálogo
+`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `ajustes-video` (Ajustes desplazado a «Motor de vídeo»), `video` (lista de proyectos con los cuatro estados), `video-editor` (editor de un proyecto de cocina con la
+preview simulada: composición fija de 10 s, sin motor ni voz), `onboarding` y el catálogo
 (`/#/catalogo`) en claro y oscuro, a 1200×800 y 900×600 (el catálogo muestra los dos temas, así que
 solo se captura una vez por tamaño). Los datos que varían (ajustes, canal, estado de la KB) se
-simulan y el reloj se fija (`ajustes-video` muestra el navegador sin descargar); las referencias están en `e2e/__capturas__/`.
+simulan y el reloj se fija (`ajustes-video` muestra el navegador sin descargar; `video` simula `GET /video/proyectos`; `video-editor` usa un
+proyecto real del sidecar y simula solo `POST …/preview` y la página del iframe); las referencias están en `e2e/__capturas__/`.
 
