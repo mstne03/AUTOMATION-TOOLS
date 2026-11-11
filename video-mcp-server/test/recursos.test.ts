@@ -495,6 +495,56 @@ describe("tools", () => {
   }, 60_000);
 });
 
+describe("cierres de la revisión 1 de seguridad (M-1, M-2, L-2, L-5)", () => {
+  requiere("M-1: la foto y el clip se decodifican con -max_pixels (el decodificador no se fía de la cabecera)", async () => {
+    const id = crearProyecto();
+    await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("pequena.png"))), clase: "foto" });
+    const f = ffLanzados().find((l) => l.includes("-frames:v") && l.includes("image2"));
+    expect(f).toBeDefined();
+    expect(Number(f![f!.indexOf("-max_pixels") + 1])).toBeGreaterThanOrEqual(LIMITES_MEDIO.foto.pixeles);
+    expect(f!.indexOf("-max_pixels")).toBeLessThan(f!.indexOf("-i"));
+    lanzados.length = 0;
+    await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("vertical.mp4"))), clase: "clip" });
+    const c = ffLanzados().find((l) => l.includes("-fps_mode"));
+    expect(c![c!.indexOf("-max_pixels") + 1]).toBe(String(LIMITES_MEDIO.clip.lado ** 2));
+  }, 60_000);
+
+  it("M-1: ffmpeg rechaza un fotograma por encima de -max_pixels aunque la cabecera diga otra cosa", async () => {
+    const r = await ejecutar(ffmpeg!.ffmpeg, ["-v", "error", "-max_pixels", "100", "-i", fx("pequena.png"), "-f", "null", "-"], { timeoutMs: 30_000 });
+    expect(r.stderr).toMatch(/max pixel count/);
+  });
+
+  it("L-2: un .uso-* huérfano de más de una hora se limpia; uno reciente se respeta", async () => {
+    const id = crearProyecto();
+    const dir = carpetaBandeja(RAIZ);
+    fs.mkdirSync(dir, { recursive: true });
+    const viejo = path.join(dir, `${"a".repeat(32)}.uso-aaaaaaaaaaaa`);
+    const nuevo = path.join(dir, `${"b".repeat(32)}.uso-bbbbbbbbbbbb`);
+    fs.writeFileSync(viejo, "x");
+    fs.writeFileSync(nuevo, "x");
+    const hace2h = new Date(Date.now() - 2 * 3600_000);
+    fs.utimesSync(viejo, hace2h, hace2h);
+    await falla(importarRecurso(cfg(), { id, bandejaId: bandeja(Buffer.from("no es un medio")), clase: "foto" })); // consume y limpia
+    expect(fs.existsSync(viejo)).toBe(false);
+    expect(fs.existsSync(nuevo)).toBe(true);
+  });
+
+  requiere("L-5: borrar un recurso con recursos/ convertido en enlace se rechaza y no toca el destino", async () => {
+    const id = crearProyecto();
+    const r = await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("pequena.png"))), clase: "foto" });
+    const dir = path.join(RAIZ, id, "recursos");
+    const ajeno = path.join(BASE, "ajeno-recursos");
+    fs.mkdirSync(ajeno);
+    fs.writeFileSync(path.join(ajeno, `${r.recurso.id}.png`), "intacto");
+    fs.rmSync(dir, { recursive: true });
+    fs.symlinkSync(ajeno, dir, "junction");
+    const e = await falla(() => borrarRecurso(cfg(), { id, recursoId: r.recurso.id }));
+    expect(codigos(e)).toContain("enlace_no_permitido");
+    expect(fs.readFileSync(path.join(ajeno, `${r.recurso.id}.png`), "utf8")).toBe("intacto");
+    fs.rmdirSync(dir); // quita solo la junction
+  });
+});
+
 describe("ffmpeg en CI", () => {
   it("en CI hay ffmpeg (si no, los tests de medios se saltarían en silencio)", () => {
     if (process.env.CI) expect(ffmpeg).not.toBeNull();

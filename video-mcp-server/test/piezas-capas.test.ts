@@ -49,7 +49,7 @@ describe("capa de foto", () => {
     const corte = Number(/data-start="([\d.]+)"/.exec(host(p, "esc2"))![1]) + 0.15; // la escena entra SOLAPE antes de su corte
     expect(inicio).toBeCloseTo(corte + 0.5, 1);
     expect(dur).toBeCloseTo(2, 3);
-    expect(p.copias.filter((c) => c.destino.startsWith("assets/capa"))).toEqual([{ origen: path.join(BASE, "foto.png"), destino: "assets/capa2.png" }]);
+    expect(p.copias.filter((c) => c.destino.startsWith("assets/capa"))).toEqual([{ origen: path.join(BASE, "foto.png"), destino: "assets/capa2.png", recurso: true }]);
     expect(html).toContain('src="assets/capa2.png"');
   });
 

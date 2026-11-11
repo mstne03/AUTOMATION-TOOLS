@@ -26,7 +26,8 @@ No se ha lanzado ningún Chrome, Chromium ni Edge, ni la caché de HyperFrames o
 
 - **T13 (comando nativo).** Es quien escribe `<estado>/video/bandeja/<32hex>.bin` y quien pasa el nombre del archivo por
   `nombre_original` (el motor lo recorta, lo pasa por `textoSeguro` y lo guarda solo como texto de UI). El motor consume la
-  entrada **una sola vez** (también si falla) y quita cualquier enlace que encuentre en la bandeja; la limpieza de entradas
+  entrada **una sola vez** en cuanto empieza a abrirla (también si falla después); si el error es de validación previa (proyecto o clase
+  inválidos) no la abre y sigue en la bandeja. Quita cualquier enlace que encuentre en ella y limpia los `.uso-*` huérfanos de más de una hora; la limpieza de entradas
   que nadie consume nunca (la app murió entre el diálogo y la importación) es de T13.
 - **Música en la composición.** T7 solo importa y lista (`video_musica_importar`, `video_musica_listar`, biblioteca
   `<estado>/video/musica/m-<16hex>.m4a` + `.json`). El montaje de T6 no mezcla todavía `proyecto.musica` (la pista, su
@@ -39,14 +40,21 @@ No se ha lanzado ningún Chrome, Chromium ni Edge, ni la caché de HyperFrames o
 
 ## Límites conocidos (documentados, sin arreglo en T7)
 
+- **N-1 (Media, abierto; ver `seguridad-T7.md`, Revisión 2).** ffprobe (`sondear`) sobre el clip y la música, y el ffmpeg de la música,
+  no llevan `-max_pixels`: al abrir el fichero pueden decodificar un fotograma por pista de vídeo (carátulas incluidas). Sacrifica
+  robustez frente a un medio hostil con una carátula enorme; los límites de tamaño de fichero y el tiempo (30 s) siguen acotando el daño.
+  Arreglo previsto: pasar `maxPixeles` por `argsEntrada`/`sondear` (hay que comprobar que ffprobe acepta la opción).
+- **N-3 (Baja, abierto).** Un clip que falle en el decodificador (`archivo_danado`) prueba los cuatro codificadores: hasta 4 × 240 s,
+  más que los 420 s del backend. Falta un plazo total en `importarA`.
+
 - **ffprobe decodifica a veces.** El tamaño de las fotos se lee de la cabecera (PNG, JPEG, WebP) antes de lanzar nada; en los
   clips, ffprobe sondea el contenedor y puede decodificar algún fotograma para fijar parámetros. No hay un tope de memoria del
-  proceso hijo: solo el tiempo (30 s) y los límites de tamaño de fichero. Acotarlo de verdad pide un job object de Windows
-  (`CreateJobObject` con límite de memoria), que es trabajo de T12.
+  proceso hijo: solo el tiempo (30 s) y los límites de tamaño de fichero. Acotarlo de verdad pediría un job object de Windows
+  (`CreateJobObject` con límite de memoria); no está asignado a ninguna tarea todavía.
 - **JPEG real no se genera en los tests.** El ffmpeg LGPL del bundle no trae `mjpeg`; el lector de cabecera JPEG se prueba con
   cabeceras escritas a mano (SOF de 20000×20000) y la importación real, con PNG. Un JPEG de verdad lo comprobará Marc a mano.
 - **Disco.** Importar un clip de 500 MB copia el fichero a una carpeta de trabajo `.imp-*` y escribe el MP4; si el disco no
   cabe, ffmpeg falla (`archivo_danado`) y la carpeta se borra. Las carpetas `.imp-*` de más de una hora se limpian al empezar
   otra importación.
 - **Formato de salida de la foto.** Siempre PNG (con transparencia si la tenía): una foto de 12 Mpx pesa varios MB. Si pesa
-  demasiado para el proyecto, la decisión es de producto (WebP no está en el build LGPL como codificador).
+  demasiado para el proyecto, la decisión es de producto (sin verificar si el ffmpeg del bundle trae un codificador WebP: en `componentes.conf` solo se vio como demuxer, decodificador y parser).

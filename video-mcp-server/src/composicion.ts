@@ -20,7 +20,9 @@ import {
   type OpcionesV2,
 } from "./formato.js";
 import { trazarMapa } from "./mapas.js";
-import { borrarArbol, type ImagenEncontrada } from "./paths.js";
+// Tope de un recurso del proyecto: el de un clip (500 MB, I15). No se importa de recursos.ts para no cerrar un ciclo con montaje.ts.
+const TOPE_COPIA_BYTES = 500 * 1024 * 1024;
+import { borrarArbol, copiarRecurso, type ImagenEncontrada } from "./paths.js";
 
 export const PLANTILLA_DIR = path.join(SERVER_ROOT, "plantilla");
 export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
@@ -252,7 +254,7 @@ export interface PlanComposicion {
   /** Archivos de texto a escribir, por ruta relativa a _composicion\. */
   archivos: Record<string, string>;
   /** Archivos a copiar: origen absoluto → ruta relativa. */
-  copias: { origen: string; destino: string }[];
+  copias: { origen: string; destino: string; /** recurso del usuario: se copia con copiarRecurso (abre una vez, sin enlaces) */ recurso?: true }[];
   avisos: string[];
   usaWebgpu: boolean;
   estiloSubtitulos: string;
@@ -398,11 +400,11 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
     }
     if (c.salida > v.visible) avisos.push(`La capa de la escena ${n} se acorta a lo que dura la escena (${v.visible} s).`);
     const medio = `capa${n}.${c.ext}`;
-    copias.push({ origen: c.origen, destino: `assets/${medio}` });
+    copias.push({ origen: c.origen, destino: `assets/${medio}`, recurso: true });
     let fondo = "";
     if (c.fondo) {
       fondo = `capa${n}-fondo.png`;
-      copias.push({ origen: c.fondo, destino: `assets/${fondo}` });
+      copias.push({ origen: c.fondo, destino: `assets/${fondo}`, recurso: true });
     }
     const fondoHtml = fondo ? `<img id="capa-esc${n}-fondo" class="fondo" src="assets/${escaparHtml(fondo)}" alt="" />` : "";
     const datos = jsonParaScript({ encuadre: c.encuadre, horizontal: c.ancho > c.alto, conFondo: !!fondo });
@@ -830,7 +832,7 @@ export function escribirPlan(destino: string, plan: PlanComposicion): void {
     return ruta;
   };
   const archivos = Object.entries(plan.archivos).map(([rel, contenido]) => [dentro(rel), contenido] as const);
-  const copias = plan.copias.map((c) => [dentro(c.destino), c.origen] as const);
+  const copias = plan.copias.map((c) => [dentro(c.destino), c.origen, c.recurso === true] as const);
   // En Windows un Chrome que acaba de cerrarse puede tener la carpeta abierta unos instantes.
   borrarArbol(destino);
   for (const [ruta, contenido] of archivos) {
@@ -838,11 +840,13 @@ export function escribirPlan(destino: string, plan: PlanComposicion): void {
     fs.writeFileSync(ruta, contenido, "utf8");
   }
   const hechas = new Set<string>();
-  for (const [ruta, origen] of copias) {
+  for (const [ruta, origen, recurso] of copias) {
     if (hechas.has(ruta)) continue;
     hechas.add(ruta);
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    fs.copyFileSync(origen, ruta);
+    // copiarRecurso abre una sola vez (fichero normal, un solo enlace, bajo el tope): sin ventana entre la comprobación y la copia (L-3).
+    if (recurso) copiarRecurso(origen, ruta, TOPE_COPIA_BYTES);
+    else fs.copyFileSync(origen, ruta); // fuentes, vendor e imágenes de escena: los pone este motor
   }
 }
 

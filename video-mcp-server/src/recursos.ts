@@ -26,7 +26,8 @@ export const LIMITES_MEDIO = {
 /** Lado máximo de la foto normalizada. */
 const LADO_FOTO = 3840;
 /** ffprobe lee cabeceras e índices (moov); más tiempo que esto es un fichero hostil. */
-const TIMEOUT_CODIFICAR_MS = 5 * 60_000;
+// 4 min por codificación y sin reintento tras un timeout: el peor caso queda por debajo del plazo del backend (420 s).
+const TIMEOUT_CODIFICAR_MS = 4 * 60_000;
 /** Fotograma fijo de fondo de los clips horizontales (M-D7): pequeño, porque se desenfoca. */
 const ANCHO_FONDO = 540;
 
@@ -155,14 +156,26 @@ function reclamarBandeja(raiz: string, bandejaId: unknown, maxBytes: number): st
     quitar(origen);
     throw new ErrorAlmacen("demasiado_grande", `El archivo pesa más de ${maxBytes / MiB} MB.`);
   }
+  limpiarUsosHuerfanos(dir);
   const uso = path.join(dir, `${bandejaId}.uso-${randomBytes(6).toString("hex")}`);
   try {
     fs.renameSync(origen, uso);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new ErrorAlmacen("no_encontrado", "Esa entrada de la bandeja ya se usó.");
+    quitar(origen); // un solo uso también si el rename falla (EBUSY, permisos)
     throw e;
   }
   return uso;
+}
+/** Los `.uso-*` de más de una hora son de una importación que murió a medias (L-2). */
+function limpiarUsosHuerfanos(dir: string): void {
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.isFile() && /^[0-9a-f]{32}\.uso-[0-9a-f]{12}$/.test(e.name) && Date.now() - fs.statSync(path.join(dir, e.name)).mtimeMs > 3600_000) quitar(path.join(dir, e.name));
+    }
+  } catch {
+    /* otra instancia la está limpiando */
+  }
 }
 const isLink = (ruta: string): boolean => {
   try {
@@ -220,7 +233,7 @@ async function normalizarFoto(h: Herramientas, entrada: string, tipo: TipoMedio,
   if (d.ancho * d.alto > L.pixeles) throw limite(`más de ${L.pixeles / 1e6} megapíxeles`);
   const salida = path.join(trabajo, "salida.png");
   const escala = `scale='min(${LADO_FOTO},iw)':'min(${LADO_FOTO},ih)':force_original_aspect_ratio=decrease`;
-  await ffmpegSalida(h, [...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-frames:v", "1", "-an", "-sn", "-vf", escala, "-c:v", "png", "-f", "image2", "-update", "1", salida], "Foto");
+  await ffmpegSalida(h, ["-max_pixels", String(L.pixeles + 64 * L.lado), /* ffmpeg compara con el ancho redondeado a 64 */ ...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-frames:v", "1", "-an", "-sn", "-vf", escala, "-c:v", "png", "-f", "image2", "-update", "1", salida], "Foto");
   const info = await sondear(h.ffprobe, salida);
   if (info.codecVideo !== "png" || !info.ancho || !info.alto) throw esquema("La foto normalizada no es válida.", "archivo_danado", "clase");
   const avisos: AvisoRecurso[] = [];
@@ -251,14 +264,14 @@ async function normalizarClip(h: Herramientas, entrada: string, tipo: TipoMedio,
       // -an/-sn/-dn: el audio, los subtítulos y los datos del clip se descartan. -t acota lo que diga el contenedor. CFR para que el seek caiga exacto.
       await ffmpegSalida(
         h,
-        [...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-map", "0:v:0", "-an", "-sn", "-dn", "-t", String(L.segundos + 1), "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", "-fps_mode", "cfr", "-r", cfr, "-c:v", cod, ...extra, "-movflags", "+faststart", "-f", "mp4", salida],
+        ["-max_pixels", String(L.lado * L.lado), ...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-map", "0:v:0", "-an", "-sn", "-dn", "-t", String(L.segundos + 1), "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", "-fps_mode", "cfr", "-r", cfr, "-c:v", cod, ...extra, "-movflags", "+faststart", "-f", "mp4", salida],
         `Clip con ${cod}`,
       );
       if (fallidos.length) log.info(`Clip: ${fallidos.join(", ")} falló; se usó ${cod}.`);
       log.info(`Clip normalizado con ${cod}.`);
       return await verificarClip(h, salida, cod, trabajo, fallidos);
     } catch (e) {
-      if (!(e instanceof ErrorAlmacen) || !["archivo_danado", "tiempo_excedido"].includes(e.problemas[0]?.codigo ?? "")) throw e;
+      if (!(e instanceof ErrorAlmacen) || e.problemas[0]?.codigo !== "archivo_danado") throw e;
       fallidos.push(cod);
       log.warn(`Clip: la codificación con ${cod} falló.`);
       fs.rmSync(salida, { force: true });
@@ -410,6 +423,7 @@ export function borrarRecurso(cfg: Config, a: { id: string; recursoId: unknown }
     return p.recursos.filter((r) => r.id !== rid);
   });
   const dir = carpetaRecursos(cfg.videoRoot, a.id);
+  if (!sinEnlace(dir)) throw esquema("La carpeta de recursos es un enlace o pasa por uno.", "enlace_no_permitido", "recursoId");
   for (const f of [`${rid}.${quitado!.ext}`, `${rid}.fondo.png`]) {
     if (fs.existsSync(path.join(dir, f))) borrarArbol(path.join(dir, f));
   }
