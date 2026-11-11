@@ -541,9 +541,13 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
         raise MotorNoDisponible(str(e)) from None
     if not config.FROZEN:
         # Solo desarrollo y E2E: nunca en el producto instalado (el motor, además, lo ignora fuera de VIDEO_E2E).
-        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID"):
+        # VIDEO_E2E: sin ella el motor integrado ignora la URL de pruebas. FFMPEG_DIR: el motor integrado
+        # no mira el PATH; en desarrollo, si no hay ffmpeg en la carpeta del motor, vale el del entorno.
+        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID", "VIDEO_E2E"):
             if os.environ.get(nombre):
                 env[nombre] = os.environ[nombre]
+        if "FFMPEG_DIR" not in env and os.environ.get("FFMPEG_DIR"):
+            env["FFMPEG_DIR"] = os.environ["FFMPEG_DIR"]
     clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave

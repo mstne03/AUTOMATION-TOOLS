@@ -594,9 +594,15 @@ def test_canal_de_render_sin_video_estado():
 def test_entorno_reenvia_tts_de_pruebas_solo_si_no_esta_congelado(tmp_path, monkeypatch):
     monkeypatch.setenv("VIDEO_PRUEBAS_TTS_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    monkeypatch.setenv("VIDEO_E2E", "1")
+    monkeypatch.setenv("FFMPEG_DIR", str(tmp_path / "ffmpeg-dev"))
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", tmp_path / "sin-bundle")
     env = entorno_motor(StoreFalso())
     assert env["VIDEO_PRUEBAS_TTS_URL"] == "http://127.0.0.1:9999"
     assert env["ELEVENLABS_VOICE_ID"] == "21m00Tcm4TlvDq8ikWAM"
+    # E2E con motor real (T17): sin VIDEO_E2E el motor integrado ignora la URL de pruebas, y sin
+    # FFMPEG_DIR no tiene ffmpeg (no mira el PATH).
+    assert env["VIDEO_E2E"] == "1" and env["FFMPEG_DIR"] == str(tmp_path / "ffmpeg-dev")
     d = _bundle(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", True)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
@@ -605,3 +611,4 @@ def test_entorno_reenvia_tts_de_pruebas_solo_si_no_esta_congelado(tmp_path, monk
     monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
     env = entorno_motor(StoreFalso())
     assert "VIDEO_PRUEBAS_TTS_URL" not in env and "ELEVENLABS_VOICE_ID" not in env
+    assert "VIDEO_E2E" not in env and env["FFMPEG_DIR"] == str(d / "ffmpeg")  # instalado: solo el del bundle

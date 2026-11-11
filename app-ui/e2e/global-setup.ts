@@ -1,8 +1,8 @@
 /** Arranca el sidecar REAL (APP_BACKEND_SECRETS=file, directorio temporal, token fijo) apuntando
  *  a un Anthropic falso, y Vite en el puerto 1420 (el único origen de desarrollo admitido por el CORS del sidecar) con las variables VITE_SIDECAR_*. */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { EOL, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startAnthropicMock } from "./anthropic-mock";
@@ -45,6 +45,17 @@ function esperarPuerto(url: string, ms: number, init?: RequestInit): Promise<voi
   });
 }
 
+/** Carpeta con ffmpeg y ffprobe para el motor real (FFMPEG_DIR o el PATH); "" si no la hay. El motor
+ *  integrado solo usa FFMPEG_DIR, así que los E2E que lo necesitan se saltan con motivo si falta. */
+function carpetaFfmpeg(): string {
+  const exe = process.platform === "win32" ? ".exe" : "";
+  const completa = (d: string) => existsSync(join(d, `ffmpeg${exe}`)) && existsSync(join(d, `ffprobe${exe}`));
+  if (process.env.FFMPEG_DIR && completa(process.env.FFMPEG_DIR)) return process.env.FFMPEG_DIR;
+  const r = spawnSync(process.platform === "win32" ? "where" : "which", ["ffmpeg"], { encoding: "utf8" });
+  const ruta = r.status === 0 ? (r.stdout.trim().split(EOL)[0] ?? "").trim() : "";
+  return ruta && completa(dirname(ruta)) ? dirname(ruta) : "";
+}
+
 export default async function globalSetup() {
   const raiz = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   limpiarEstadosHuerfanos();
@@ -65,6 +76,7 @@ export default async function globalSetup() {
   const mockVivo = await fetch(`${eleven.url}/__llamadas`).then((r) => r.ok).catch(() => false);
   if (!mockVivo) throw new Error(`El ElevenLabs falso no responde en ${eleven.url}: se aborta para no llegar a api.elevenlabs.io.`);
 
+  const ffmpeg = carpetaFfmpeg();
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
     cwd: resolve(raiz, "..", "app-backend"),
     env: entornoSidecar(process.env, {
@@ -74,6 +86,8 @@ export default async function globalSetup() {
       ANTHROPIC_BASE_URL: mock.url,
       APP_BACKEND_VIDEO_CMD: JSON.stringify(["node", join(motorDir, "dist", "index.js")]),
       VIDEO_PRUEBAS_TTS_URL: eleven.url,
+      VIDEO_E2E: "1", // sin ella el motor integrado ignora VIDEO_PRUEBAS_TTS_URL
+      ...(ffmpeg ? { FFMPEG_DIR: ffmpeg } : {}),
     }),
     shell: true,
     stdio: ["ignore", "pipe", "inherit"],
@@ -115,6 +129,7 @@ export default async function globalSetup() {
   process.env.E2E_SIDECAR = base;
   process.env.E2E_TOKEN = TOKEN;
   process.env.E2E_STATE_DIR = stateDir;
+  process.env.E2E_FFMPEG = ffmpeg;
   (globalThis as { __e2e?: unknown }).__e2e = { mock: mock.server, eleven: eleven.server, sidecar, vite };
 }
 

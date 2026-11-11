@@ -4,6 +4,7 @@
 import { expect, test, type Frame, type Page } from "@playwright/test";
 import { simularRutas, type Peticion } from "./sidecar-falso";
 import { irAlEditor, limpiarVideo, proyectoDeCocina } from "./video-comun";
+import { api } from "./api";
 
 const ORIGEN = "http://127.0.0.1:47810";
 const CSP =
@@ -193,7 +194,18 @@ test("preview_error_visible: un 503 de puerto ocupado se ve en la preview", asyn
 });
 
 test("seek_pinta_fotograma: reproducir mueve el tiempo y cambia lo que pinta el iframe (motor real)", async ({ page }) => {
+  // Misma condición que los tests reales de T11: el motor necesita ffmpeg para la voz y la preview.
+  test.skip(!process.env.E2E_FFMPEG, "Hace falta ffmpeg (FFMPEG_DIR o PATH) para el motor real");
+  test.setTimeout(120_000);
   const id = await proyectoDeCocina();
+  // El motor no monta la preview sin voz: se genera con el ElevenLabs falso, confirmando el coste.
+  const coste = await api<{ plan: string; caracteres: number }>(`/video/proyectos/${id}/voz/coste`, { method: "POST", body: "{}" });
+  const voz = await api<{ generadas: number; fallo?: unknown }>(`/video/proyectos/${id}/voz`, {
+    method: "POST",
+    body: JSON.stringify({ plan_confirmado: coste.plan, caracteres_confirmados: coste.caracteres }),
+  });
+  expect(voz.fallo).toBeUndefined();
+  expect(voz.generadas).toBeGreaterThan(0);
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-marco")).toBeVisible();
   await expect(page.getByTestId("preview-cargando")).toHaveCount(0, { timeout: 30_000 });
