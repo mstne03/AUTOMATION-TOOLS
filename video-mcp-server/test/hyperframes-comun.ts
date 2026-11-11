@@ -96,28 +96,48 @@ export function cli(
 }
 
 /**
- * Copia de HyperFrames SIN el parche, para los controles positivos. Vive dentro de node_modules para
- * que resuelva las mismas dependencias. Solo para composiciones de prueba contra sumideros locales.
+ * Copia de HyperFrames SIN el parche, para los controles positivos. Solo para composiciones de prueba
+ * contra sumideros locales.
+ *
+ * Vive en os.tmpdir(), NUNCA dentro de node_modules (incidente del 2026-11-10, ver CLAUDE.md): con
+ * `hyperframes` aplanado, `dirname(real)` es el propio node_modules y la junction de abajo apuntaba a su
+ * carpeta madre; una copia que siguiera junctions (robocopy /E sin /XJ) entraba en bucle y llenó el disco.
  */
 export function copiaSinParche(): { bin: string; borrar(): void } {
-  const dir = fs.mkdtempSync(path.join(SERVER_ROOT, "node_modules", ".sin-parche-"));
-  const hf = path.join(dir, "hyperframes");
-  // HF es una junction de pnpm: cpSync la recrearía como enlace simbólico (EPERM sin privilegio o modo desarrollador y,
-  // con él, un enlace al paquete real que el `git apply --reverse` parchearía). Se copia el directorio real, sin enlaces.
-  const real = fs.realpathSync(HF);
-  fs.cpSync(real, hf, { recursive: true, filter: (p) => !/[\\/]dist[\\/](skills|docs|templates)([\\/]|$)/.test(p) });
-  // Las dependencias de pnpm viven junto al paquete real: una junction (no exige privilegio) las hace resolubles desde la copia.
-  fs.symlinkSync(path.dirname(real), path.join(dir, "node_modules"), "junction");
-  const r = spawnSync("git", ["-c", "core.autocrlf=false", "apply", "--reverse", "-p3", PARCHE], {
-    cwd: hf,
-    env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(hf) },
-    encoding: "utf8",
-  });
-  if (r.status !== 0) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video-sin-parche-"));
+  const enlace = path.join(dir, "node_modules");
+  // Quita primero la junction (solo el enlace, sin entrar en su destino) y después la copia real.
+  const borrar = (): void => {
+    try {
+      fs.unlinkSync(enlace);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") fs.rmdirSync(enlace);
+    }
     fs.rmSync(dir, { recursive: true, force: true });
-    throw new Error(`no se pudo quitar el parche de la copia: ${r.stderr}`);
+  };
+  try {
+    const hf = path.join(dir, "hyperframes");
+    // HF es una junction de pnpm: cpSync la recrearía como enlace simbólico (EPERM sin privilegio o modo desarrollador y,
+    // con él, un enlace al paquete real que el `git apply --reverse` parchearía). Se copia el directorio real, sin enlaces.
+    const real = fs.realpathSync(HF);
+    fs.cpSync(real, hf, { recursive: true, filter: (p) => !/[\\/]dist[\\/](skills|docs|templates)([\\/]|$)/.test(p) });
+    // Las dependencias viven junto al paquete real: una junction (no exige privilegio) las hace resolubles desde la copia.
+    // Nunca hacia una carpeta que contenga la copia: eso sería un ciclo.
+    const destino = path.dirname(real);
+    const rel = path.relative(destino, dir);
+    if (!rel.startsWith("..") && !path.isAbsolute(rel)) throw new Error(`la junction formaría un ciclo: ${destino}`);
+    fs.symlinkSync(destino, enlace, "junction");
+    const r = spawnSync("git", ["-c", "core.autocrlf=false", "apply", "--reverse", "-p3", PARCHE], {
+      cwd: hf,
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(hf) },
+      encoding: "utf8",
+    });
+    if (r.status !== 0) throw new Error(`no se pudo quitar el parche de la copia: ${r.stderr}`);
+    return { bin: path.join(hf, path.relative(HF, HYPERFRAMES_BIN)), borrar };
+  } catch (e) {
+    borrar();
+    throw e;
   }
-  return { bin: path.join(hf, path.relative(HF, HYPERFRAMES_BIN)), borrar: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
 /** Entorno para correr un hijo de Node con test/espia-red.mjs, que anota y bloquea en `log`. */
