@@ -6,6 +6,7 @@ import { ClientContext } from "../api/context";
 import { cargar, deshacer, desvincularCliente, reiniciarEditor, seleccionar, useEditor, vincularCliente } from "../state/editor";
 import type { Proyecto, Recurso } from "../video/modelo";
 import { Panel } from "../video/panel/Panel";
+import { usePreviewRecarga } from "../video/previewRecarga";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
@@ -363,6 +364,29 @@ describe("perfil", () => {
     expect(cuerpo.colores).toEqual({ ...PERFIL.colores, acento: "#00ff00" });
     expect(cuerpo.id).toBe("defecto");
     expect(useEditor.getState().historial).toHaveLength(0);
+  });
+
+  it("guardar el perfil recarga la preview; si falla el guardado, no", async () => {
+    const guardarPerfil = vi.fn(async (_id: string, p: unknown) => p);
+    montar({ videoPerfilGuardar: guardarPerfil as unknown as Client["videoPerfilGuardar"] });
+    pestana("Perfil");
+    const antes = usePreviewRecarga.getState().contador;
+    const input = within(await screen.findByTestId("perfil-color-acento")).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "#00ff00" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(usePreviewRecarga.getState().contador).toBe(antes + 1));
+    cleanup();
+    const falla = vi.fn(async () => {
+      throw new Error("no");
+    });
+    montar({ videoPerfilGuardar: falla as unknown as Client["videoPerfilGuardar"] });
+    pestana("Perfil");
+    const input2 = within(await screen.findByTestId("perfil-color-acento")).getByRole("textbox");
+    fireEvent.change(input2, { target: { value: "#0000ff" } });
+    fireEvent.blur(input2);
+    await waitFor(() => expect(falla).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(usePreviewRecarga.getState().contador).toBe(antes + 1);
   });
 
   it("un color inválido no se envía y se marca", async () => {
