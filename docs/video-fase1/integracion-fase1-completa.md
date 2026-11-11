@@ -61,9 +61,11 @@ E2E, así que la base no tenía este dato.
    diff PNG muestran bloques desplazados, no antialiasing: (a) la barra lateral tiene una entrada nueva
    «Vídeo» entre Guiones y Canal, que baja Canal, Conocimiento y Conversaciones (afecta a todas las
    pantallas); (b) en Guiones, el selector Formato tiene una tercera opción «Vídeo» y el campo Duración se
-   desplaza; (c) en Ajustes, el índice tiene una sección nueva «Motor de vídeo». Regenerarlas es decisión de
-   Marc (`pnpm e2e e2e/visual.spec.ts --update-snapshots`), en un commit que diga que recogen la navegación
-   y el formato de vídeo.
+   desplaza; (c) en Ajustes, el índice tiene una sección nueva «Motor de vídeo». **Regeneradas con el visto
+   bueno de Marc** (`--update-snapshots`, commit aparte): cambian exactamente las 23 y `visual.spec.ts` pasa
+   34/34. Revisadas a ojo `catalogo-dark-900x600` y `ajustes-video-light-1200x800` (bloque de ElevenLabs,
+   aviso de codificadores, el modo ya se aplica al render); el índice resaltando «General» con la página
+   desplazada ya estaba en la referencia anterior.
 3. ~~**`ajustes.spec.ts:80`**~~ (resuelto, commit a9d332f). El backend sí borraba: `FileSecretStore.delete`
    hace `unlink` del fichero (`<estado>/anthropic_api_key.json`), comprobado ahora por un test del backend
    que lee el disco y por el propio E2E. La causa: `config.anthropic_api_key` usa `ANTHROPIC_API_KEY` del
@@ -133,7 +135,7 @@ omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
   (`Dialog` admite `testid`); mismo nombre, `pantallas.md` precisa el elemento.
 
 **Estado final de los E2E (suite completa, tras el arreglo de la clave):** 180 OK, 1 omitido, 23 fallan:
-solo las 23 capturas de `visual.spec.ts`, pendientes de que Marc decida regenerarlas (ver arriba). Todos
+solo las 23 capturas de `visual.spec.ts`, ya regeneradas (34/34 después). Todos
 los E2E de vídeo pasan. El omitido es `cambio_se_ve_sin_render` (CA4), con `test.fixme` «depende del panel
 de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `pnpm test` 389/389.
 
@@ -154,8 +156,7 @@ de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `
 
 1. ~~Arreglar el contrato de listados, las sondas de la preview y los 5 E2E de vídeo~~ (hecho, ver arriba).
    Queda activar `cambio_se_ve_sin_render` (quitar el `fixme` ahora que T18 está dentro).
-2. Regenerar las 23 capturas si Marc da el visto bueno a los cambios de navegación y formato de vídeo (la
-   clave, resuelta).
+2. ~~Capturas y clave~~ (resueltas).
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
    `video-editor`, y repetir la tabla de pruebas negativas y la R2 de punta a punta.
