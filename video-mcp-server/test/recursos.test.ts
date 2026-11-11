@@ -8,6 +8,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 // Espía de `ejecutar`: la implementación real se conserva y se cuenta qué se lanza (los límites tienen que cortar ANTES de ffmpeg).
 const lanzados: string[][] = [];
+// Y de los procesos que `sondear` lanza por dentro (su `ejecutar` no pasa por el espía de arriba): se mira en `spawn`.
+const spawns: string[][] = [];
+vi.mock("node:child_process", async (orig) => {
+  const m = await orig<typeof import("node:child_process")>();
+  return { ...m, spawn: (c: string, a: string[], ...r: unknown[]) => (spawns.push([c, ...(Array.isArray(a) ? a : [])]), (m.spawn as (...x: unknown[]) => unknown)(c, a, ...r)) };
+});
 vi.mock("../src/proceso.js", async (orig) => {
   const m = await orig<typeof import("../src/proceso.js")>();
   return { ...m, ejecutar: (c: string, a: string[], o: Parameters<typeof m.ejecutar>[2]) => (lanzados.push([c, ...a]), m.ejecutar(c, a, o)) };
@@ -43,6 +49,7 @@ beforeEach(() => {
   RAIZ = path.join(BASE, `caso${++n}`, "proyectos");
   fs.mkdirSync(RAIZ, { recursive: true });
   lanzados.length = 0;
+  spawns.length = 0;
 });
 
 const GUION = {
@@ -508,6 +515,30 @@ describe("cierres de la revisión 1 de seguridad (M-1, M-2, L-2, L-5)", () => {
     const c = ffLanzados().find((l) => l.includes("-fps_mode"));
     expect(c![c!.indexOf("-max_pixels") + 1]).toBe(String(LIMITES_MEDIO.clip.lado ** 2));
   }, 60_000);
+
+  requiere("N-1: ffprobe del clip y de la música, y el ffmpeg de la música, llevan -max_pixels antes de la entrada", async () => {
+    const id = crearProyecto();
+    const tope = String(LIMITES_MEDIO.clip.lado ** 2);
+    const sobreEntrada = (l: string[]) => l.some((a) => /entrada.bin$/.test(a));
+    const comprobar = (l: string[], marca: string) => {
+      const i = l.indexOf("-max_pixels");
+      expect(i, `${marca}: falta -max_pixels`).toBeGreaterThan(-1);
+      expect(l[i + 1]).toBe(tope);
+      expect(i).toBeLessThan(l.indexOf("-f"));
+    };
+    await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("vertical.mp4"))), clase: "clip" });
+    const probeClip = spawns.filter((l) => /ffmpeg|ffprobe/i.test(path.basename(l[0]))).find((l) => /ffprobe/i.test(path.basename(l[0])) && sobreEntrada(l));
+    expect(probeClip).toBeDefined();
+    comprobar(probeClip!, "ffprobe del clip");
+    spawns.length = 0;
+    await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("tono.m4a"))), clase: "musica" });
+    const probeMus = spawns.filter((l) => /ffmpeg|ffprobe/i.test(path.basename(l[0]))).find((l) => /ffprobe/i.test(path.basename(l[0])) && sobreEntrada(l));
+    expect(probeMus).toBeDefined();
+    comprobar(probeMus!, "ffprobe de la música");
+    const ffMus = spawns.filter((l) => /ffmpeg|ffprobe/i.test(path.basename(l[0]))).find((l) => /ffmpeg/i.test(path.basename(l[0])) && sobreEntrada(l) && l.includes("-vn"));
+    expect(ffMus).toBeDefined();
+    comprobar(ffMus!, "ffmpeg de la música");
+  }, 90_000);
 
   it("M-1: ffmpeg rechaza un fotograma por encima de -max_pixels aunque la cabecera diga otra cosa", async () => {
     const r = await ejecutar(ffmpeg!.ffmpeg, ["-v", "error", "-max_pixels", "100", "-i", fx("pequena.png"), "-f", "null", "-"], { timeoutMs: 30_000 });

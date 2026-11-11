@@ -257,3 +257,76 @@ como «nada que borrar». La ventana entre la comprobación y `borrarArbol` (ata
 
 Ningún hallazgo crítico ni alto. **M-1 y M-2 quedan parciales**: N-1 (Media) es el resto de M-1 y conviene cerrarlo antes de dar
 T7 por buena; N-3 (Baja) es el resto de M-2. N-2 es una regresión menor con un arreglo trivial. L-1, L-2, L-3 y L-5, cerrados.
+
+## Revisión 3 (re-revisión del diff de N-1)
+
+**Fecha:** 2026-11-11 · **Alcance:** solo el diff que cierra N-1 (`proceso.ts` `sondear`, `recursos.ts` clip y música,
+`test/recursos.test.ts`, 106 líneas). Sin navegador ni binarios nuevos; el comportamiento de ffmpeg/ffprobe se razona sobre su
+código (`ff_get_buffer`, `ff_set_dimensions`, `avformat_find_stream_info`) y la observación de `-max_pixels` en ffprobe que aporta
+quien corrige. `npx vitest run test/recursos.test.ts`: **37 pasan** (105 s, ffmpeg 8.1 *full build* de WinGet).
+
+### Estado de N-1: **Cerrado**
+
+- **ffprobe** del `entrada.bin` del clip y de la música: `-max_pixels 16777216` (4096²) antes de `argsEntrada` y del fichero. En
+  ffprobe es opción genérica de códec: va a `codec_opts`, que se aplica en `avformat_find_stream_info` (el único punto donde
+  ffprobe decodifica con `-show_format -show_streams`; sin `-show_frames`/`-count_frames` no decodifica más). Toda pista de vídeo,
+  carátulas *attached pic* incluidas, queda acotada.
+- **ffmpeg de la música**: `-max_pixels` antes de `-i`, igual que en foto y clip (opción de entrada que también llega a
+  `avformat_find_stream_info`). Con `-vn -map 0:a:0` la carátula no tiene decodificador después del sondeo, así que el único
+  decodificado es ese y queda acotado.
+- **M-1 pasa a Cerrado** en todo el camino de importación (foto, clip, música; ffprobe y ffmpeg). El segundo `sondear` de cada
+  rama (sobre la salida propia) sigue sin tope, y es correcto: es un PNG/MP4/M4A que generó el motor con las dimensiones ya acotadas.
+
+### `-max_pixels` en ffprobe: sale con 0 aunque rechace
+
+Que ffprobe imprima el error y salga con 0 es lo esperado: el fallo de decodificación dentro de `avformat_find_stream_info` no es
+fatal, solo deja la pista sin parámetros. Como `sondear` sin `soloMp4` ignora `stderr`, el efecto se reduce a lo que acabe en el
+JSON:
+
+- **¿Un hostil pasa como válido?** No. (a) Si la cabecera declara un tamaño > 4096 de lado, `ancho`/`alto` lo reflejan y el límite
+  de lado lo rechaza. (b) Si ffprobe no llega a conocer el tamaño (`width` ausente o 0), `normalizarClip` responde `sin_video`. (c) Si
+  la cabecera miente (pequeña) y el *bitstream* es grande, pasa el sondeo, pero el ffmpeg de normalización lleva el mismo tope y el
+  decodificador rechaza cada fotograma (`archivo_danado`, o fotogramas descartados con salida acotada). En todos los casos el
+  resultado se valida después con `verificarClip` / el `sondear` de la salida, que es fichero propio. La memoria queda acotada en
+  todos.
+- **¿Cambia la duración?** No: sale de `format.duration` y de la pista (contenedor), no de decodificar.
+- **¿Cambia el tamaño de un clip legítimo?** No: el clip ya exige ≤ 4096 por lado, luego `ancho × alto ≤ 4096²`; y como 4096 es
+  múltiplo de 64, `FFALIGN(ancho, 64) × alto ≤ 4096²` también (el matiz de N-2 no aplica al clip). Una pista secundaria de vídeo
+  mayor que el tope solo pierde sus parámetros; `sondear` toma la primera y ffmpeg mapea `0:v:0`.
+- **Música:** sin carátula no hay pista de vídeo y el tope no actúa. Con carátula ≤ 4096² decodifica igual que antes. Con carátula
+  mayor (rara, pero existen de 5000² o más), ffprobe sale con 0 y `normalizarMusica` solo mira `pistasAudio` y la duración, y el
+  ffmpeg falla el decodificado de la carátula dentro del sondeo sin abortar (aviso de parámetros no encontrados, código 0): la pista
+  se importa igual, sin su carátula, que se descartaba de todos modos. No verificado de forma empírica con una carátula > 4096²
+  (haría falta lanzar ffmpeg fuera del comando permitido).
+
+### Test
+
+El test nuevo observa `spawn` (el `ejecutar` interno de `sondear` no pasa por el espía del módulo) y exige `-max_pixels` con el
+valor exacto y antes del primer `-f` (el de `argsEntrada`, es decir, antes de la entrada) en el ffprobe del clip, el de la música y
+el ffmpeg de la música. Sin la corrección la búsqueda de `-max_pixels` da −1 y falla; si el `spawn` real no se interceptara, los
+`expect(...).toBeDefined()` fallarían en lugar de dar un falso verde. Correcto.
+
+### Hallazgos nuevos
+
+**N-7 · Informativa · Un clip mayor que el tope puede salir como «El archivo no tiene vídeo.»** Antes del diff, un clip de 8K
+llegaba con `width`/`height` y se rechazaba con `límite` («más de 4096 píxeles de lado»). Ahora, si el decodificador rechaza el
+tamaño en `ff_set_dimensions` antes de que ffprobe lo exporte (según demuxer y códec), la pista sale sin dimensiones y el error es
+`sin_video`, que no describe el problema. Falla cerrado; solo es el mensaje. No verificado empíricamente. **Arreglo:** en
+`normalizarClip`, si `pistasVideo > 0` y falta `ancho`/`alto`, responder un límite («más de 4096 píxeles de lado o archivo dañado»)
+en vez de `sin_video`; test con un MKV/MP4 de 4097×16 generado con `lavfi`.
+
+**N-8 · Informativa · `sondear` de la biblioteca de música sigue sin tope (fuera del alcance de T7).** `musica.ts:163` sondea cada
+pista de la carpeta de música sin `maxPixeles`. Es anterior a T7, la carpeta la elige el usuario y no es el camino de importación
+de I15, así que no reabre N-1; pero ahora el arreglo es una línea (`{ maxPixeles: LIMITES_MEDIO.clip.lado ** 2 }`) y cierra la misma
+clase de bomba de carátula también ahí.
+
+### Sin regresiones
+
+- La firma de `sondear` es compatible (parámetro opcional); el resto de llamadas no cambia de comportamiento.
+- `-max_pixels` va antes de `argsEntrada`: no altera `-protocol_whitelist`, `-format_whitelist` ni `-f`.
+- `maxPixeles: 0` o ausente no emite la opción (comprobación por valor *falsy*); ningún sitio pasa 0.
+
+### Veredicto
+
+**N-1 cerrado, y con él M-1.** Sin hallazgos críticos, altos, medios ni bajos nuevos; N-7 y N-8 son informativos. Siguen abiertos,
+ya conocidos, N-3 (plazo total en los reintentos) y L-4 (riesgo aceptado).

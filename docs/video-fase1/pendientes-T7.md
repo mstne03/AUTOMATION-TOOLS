@@ -40,10 +40,9 @@ No se ha lanzado ningún Chrome, Chromium ni Edge, ni la caché de HyperFrames o
 
 ## Límites conocidos (documentados, sin arreglo en T7)
 
-- **N-1 (Media, abierto; ver `seguridad-T7.md`, Revisión 2).** ffprobe (`sondear`) sobre el clip y la música, y el ffmpeg de la música,
-  no llevan `-max_pixels`: al abrir el fichero pueden decodificar un fotograma por pista de vídeo (carátulas incluidas). Sacrifica
-  robustez frente a un medio hostil con una carátula enorme; los límites de tamaño de fichero y el tiempo (30 s) siguen acotando el daño.
-  Arreglo previsto: pasar `maxPixeles` por `argsEntrada`/`sondear` (hay que comprobar que ffprobe acepta la opción).
+- **N-1 (Media): cerrado** en la Revisión 3 de `seguridad-T7.md` (`-max_pixels` también en ffprobe y en el ffmpeg de la música).
+  Quedan dos informativas: N-7 (un clip por encima del tope puede dar «no tiene vídeo» en lugar del error de límite) y N-8
+  (`musica.ts` sondea la biblioteca sin tope; es anterior a T7, se arregla con una línea).
 - **N-3 (Baja, abierto).** Un clip que falle en el decodificador (`archivo_danado`) prueba los cuatro codificadores: hasta 4 × 240 s,
   más que los 420 s del backend. Falta un plazo total en `importarA`.
 

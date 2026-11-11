@@ -243,7 +243,7 @@ async function normalizarFoto(h: Herramientas, entrada: string, tipo: TipoMedio,
 
 async function normalizarClip(h: Herramientas, entrada: string, tipo: TipoMedio, trabajo: string, deps: DepsRecursos): Promise<Normalizado> {
   const L = LIMITES_MEDIO.clip;
-  const info = await sondear(h.ffprobe, entrada, { demuxer: DEMUXER[tipo] }).catch(() => {
+  const info = await sondear(h.ffprobe, entrada, { demuxer: DEMUXER[tipo], maxPixeles: L.lado * L.lado }).catch(() => {
     throw esquema("El clip no se pudo leer.", "archivo_danado", "clase");
   });
   if (!info.pistasVideo || !info.ancho || !info.alto) throw esquema("El archivo no tiene vídeo.", "sin_video", "clase");
@@ -300,7 +300,8 @@ async function verificarClip(h: Herramientas, salida: string, cod: string, traba
 
 async function normalizarMusica(h: Herramientas, entrada: string, tipo: TipoMedio, trabajo: string): Promise<Normalizado> {
   const L = LIMITES_MEDIO.musica;
-  const info: InfoMedio = await sondear(h.ffprobe, entrada, { demuxer: DEMUXER[tipo] }).catch(() => {
+  // La carátula de una pista (MP3, FLAC, M4A) es un fotograma de vídeo: mismo tope que el de un clip.
+  const info: InfoMedio = await sondear(h.ffprobe, entrada, { demuxer: DEMUXER[tipo], maxPixeles: LIMITES_MEDIO.clip.lado ** 2 }).catch(() => {
     throw esquema("El audio no se pudo leer.", "archivo_danado", "clase");
   });
   if (!info.pistasAudio) throw esquema("El archivo no tiene audio.", "sin_audio", "clase");
@@ -308,7 +309,7 @@ async function normalizarMusica(h: Herramientas, entrada: string, tipo: TipoMedi
   if (!(dur > 0)) throw esquema("No se pudo saber cuánto dura el audio.", "archivo_danado", "clase");
   if (dur > L.segundos + 0.5) throw limite(`más de ${L.segundos / 60} minutos`);
   const salida = path.join(trabajo, "salida.m4a");
-  await ffmpegSalida(h, [...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-vn", "-sn", "-dn", "-map", "0:a:0", "-t", String(L.segundos + 1), "-ar", "44100", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", salida], "Audio");
+  await ffmpegSalida(h, ["-max_pixels", String(LIMITES_MEDIO.clip.lado ** 2), ...argsEntrada(entrada, DEMUXER[tipo]), "-i", entrada, "-vn", "-sn", "-dn", "-map", "0:a:0", "-t", String(L.segundos + 1), "-ar", "44100", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", salida], "Audio");
   const fin = await sondear(h.ffprobe, salida);
   if (!fin.pistasAudio || fin.pistasVideo || !(fin.duracion! > 0)) throw esquema("El audio normalizado no es válido.", "archivo_danado", "clase");
   return { ext: "m4a", ancho: 1, alto: 1, duracion: r3(fin.duracion!), avisos: [], salida };

@@ -20,7 +20,7 @@ Rama `feat/7-recursos`. Recursos normalizados (foto, clip, música) y capas de f
 ## Seguridad
 
 Informe en `seguridad-T7.md` (Opus): Revisión 1 sin Críticos ni Altos (2 Medios, 5 Bajos); Revisión 2 acotada al diff de las correcciones.
-Cerrados: M-1 (parcial), M-2 (parcial), L-1, L-2, L-3, L-5, N-2, N-4, N-5. Abiertos: N-1 (Media) y N-3 (Baja), documentados en `pendientes-T7.md`. L-4 es riesgo aceptado.
+Cerrados: M-1 y N-1 (Revisión 3), L-1, L-2, L-3, L-5, N-2, N-4, N-5. Parcial: M-2. Abierto: N-3 (Baja), documentado en `pendientes-T7.md`. L-4 es riesgo aceptado.
 
 ## Pendiente
 
