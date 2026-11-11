@@ -61,6 +61,12 @@ const marco = (page: Page): Frame => {
   return f;
 };
 
+/** Lee `window[clave]` del iframe; `undefined` mientras no haya cargado, para que `expect.poll` reintente. */
+const leerMarco = (page: Page, clave: string): Promise<unknown> => {
+  const f = page.frames().find((x) => x.url().startsWith(`${ORIGEN}/p/`));
+  return f ? f.evaluate((k) => (window as unknown as Record<string, unknown>)[k], clave) : Promise.resolve(undefined);
+};
+
 test("atributos_exactos: sandbox y allow, sin allow-same-origin", async ({ page }) => {
   const id = await proyectoDeCocina();
   await conFixture(page, id, pagina(CONTROL));
@@ -77,17 +83,19 @@ test("iframe_sin_token: sin acceso al padre, al almacenamiento ni a Tauri", asyn
     const r = {};
     try { r.padre = typeof parent.document.title; } catch (e) { r.padre = "bloqueado"; }
     try { localStorage.getItem("x"); r.local = "accesible"; } catch (e) { r.local = "lanza"; }
+    try { document.cookie; r.cookie = "accesible"; } catch (e) { r.cookie = "lanza"; }
     r.tauri = typeof window.__TAURI__;
-    r.origen = location.origin;
+    r.origen = self.origin; // origen efectivo: "null" si es opaco (location.origin conserva la URL)
     window.__sonda = r;
   `;
   await conFixture(page, id, pagina(CONTROL + sonda));
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-marco")).toBeVisible();
   await expect(page.getByTestId("preview-marco")).toHaveAttribute("sandbox", "allow-scripts");
-  await expect.poll(() => marco(page).evaluate(() => (window as unknown as { __sonda?: unknown }).__sonda)).toEqual({
+  await expect.poll(() => leerMarco(page, "__sonda")).toEqual({
     padre: "bloqueado",
     local: "lanza",
+    cookie: "lanza",
     tauri: "undefined",
     origen: "null",
   });
@@ -99,16 +107,18 @@ test("sandbox_solo_atributo: sin cabecera CSP, el atributo aísla por sí solo",
     const r = {};
     try { r.padre = typeof parent.document.title; } catch (e) { r.padre = "bloqueado"; }
     try { localStorage.getItem("x"); r.local = "accesible"; } catch (e) { r.local = "lanza"; }
-    r.origen = location.origin;
+    try { document.cookie; r.cookie = "accesible"; } catch (e) { r.cookie = "lanza"; }
+    r.origen = self.origin; // origen efectivo: "null" si es opaco (location.origin conserva la URL)
     window.__sonda = r;
   `;
   await conFixture(page, id, pagina(CONTROL + sonda), {}, false);
   await irAlEditor(page, id);
   const f = page.getByTestId("preview-marco");
   await expect(f).toHaveAttribute("sandbox", "allow-scripts"); // exacto: ni allow-same-origin ni otros
-  await expect.poll(() => marco(page).evaluate(() => (window as unknown as { __sonda?: unknown }).__sonda)).toEqual({
+  await expect.poll(() => leerMarco(page, "__sonda")).toEqual({
     padre: "bloqueado",
     local: "lanza",
+    cookie: "lanza",
     origen: "null",
   });
 });
@@ -137,16 +147,26 @@ test("sonda_red_cero: fetch, WebSocket e imagen externa no salen", async ({ page
     window.__red = r;
   `;
   await conFixture(page, id, pagina(CONTROL + sonda));
+  // Chromium emite `request` también para lo que la CSP corta sin salir a la red (falla con "csp"):
+  // cuenta como salida cualquier respuesta, o un fallo que no sea de la CSP (p. ej. DNS: sí salió).
+  const ajena = (u: string) => !u.startsWith("http://127.0.0.1") && !u.startsWith("http://localhost") && !u.startsWith("data:");
   const externas: string[] = [];
-  page.on("request", (r) => {
-    if (!r.url().startsWith("http://127.0.0.1") && !r.url().startsWith("http://localhost") && !r.url().startsWith("data:")) externas.push(r.url());
+  const cortadas: string[] = [];
+  page.on("response", (r) => {
+    if (ajena(r.url())) externas.push(r.url());
+  });
+  page.on("requestfailed", (r) => {
+    if (!ajena(r.url())) return;
+    if (r.failure()?.errorText === "csp") cortadas.push(r.url());
+    else externas.push(r.url());
   });
   await irAlEditor(page, id);
   await expect(page.getByTestId("preview-marco")).toBeVisible();
   await expect
-    .poll(() => marco(page).evaluate(() => (window as unknown as { __red: Record<string, string> }).__red))
+    .poll(() => leerMarco(page, "__red"))
     .toEqual({ fetch: "bloqueado", ws: "bloqueado", img: "bloqueado" });
   expect(externas.filter((u) => u.includes("evil.example"))).toEqual([]);
+  expect(cortadas).toContain("https://evil.example/p.png"); // la imagen la corta la CSP, no el DNS
 });
 
 test("mensaje_hostil_ignorado: un tipo desconocido del iframe no cambia la UI", async ({ page }) => {

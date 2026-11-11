@@ -89,11 +89,23 @@ Resultados tras el arreglo: pytest de vídeo 361 OK (el único fallo era un test
 `["proyecto"]`, ya corregido y verificado); `pnpm test` 389/389; **E2E de vídeo: 20 OK, 8 fallan, 1
 omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
 
-- `video-preview` `iframe_sin_token`, `sandbox_solo_atributo`, `sonda_red_cero`: la sonda del iframe
-  informa `origen: "http://127.0.0.1:47810"` donde espera `"null"`. El atributo `sandbox="allow-scripts"`
-  sí está (`atributos_exactos` pasa). Hay que ver si la sonda mide `location.origin` (que conserva la URL
-  aunque el origen sea opaco) o si de verdad el documento no queda aislado. **Es de seguridad: revisar con
-  quien hizo T17 antes de T21.**
+- ~~`video-preview` `iframe_sin_token`, `sandbox_solo_atributo`, `sonda_red_cero`~~: **resueltos, el
+  aislamiento es efectivo y las sondas medían mal** (tercer commit). Prueba empírica con el Chromium de
+  Playwright, padre en `localhost:1420` e iframe `sandbox="allow-scripts"` en `127.0.0.1:47810`, con la
+  CSP de fixture y sin ella: `self.origin` y `window.origin` = `"null"`; `location.origin` = la URL
+  (conserva la URL aunque el origen sea opaco: era lo que medía la sonda); `document.cookie`,
+  `localStorage`, `parent.document` y `top.location.href` lanzan `SecurityError`; `fetch` externo lanza
+  `TypeError`. Contraprueba con `allow-scripts allow-same-origin`: `self.origin` pasa a ser la URL y
+  `cookie`/`localStorage` quedan accesibles. `parent.document` sigue bloqueado por ser de otro origen, así
+  que solo no prueba el aislamiento. La cabecera real (`preview.py:235`) lleva `sandbox allow-scripts` e
+  `img-src` limitado a su origen, `data:` y `blob:`.
+  Red: Chromium emite el evento `request` también para la imagen que corta la CSP (`requestfailed` con
+  `errorText: "csp"`, sin salir a la red); sin CSP sí sale y muere por DNS (`ERR_NAME_NOT_RESOLVED`). El test
+  contaba el evento `request` como salida.
+  Cambios en `video-preview.spec.ts`: las sondas leen `self.origin` y exigen que `document.cookie` lance;
+  `sonda_red_cero` cuenta como salida cualquier respuesta o fallo que no sea de la CSP, y exige que la
+  imagen la corte la CSP; `leerMarco` devuelve `undefined` mientras el iframe no ha cargado (en
+  `sandbox_solo_atributo` había una carrera que antes ganaba por suerte). 9/9 en tres repeticiones.
 - `video-preview` `seek_pinta_fotograma` (motor real): el iframe no llega a aparecer. Sin diagnosticar;
   probablemente falta ffmpeg o el runtime en este entorno, como en el test real de T11 que se omite.
 - `video-render` (4): `render-dialogo` (`RenderDialogo.tsx:145`) está en un `div` vacío que Playwright
@@ -115,8 +127,8 @@ omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
 
 ## Lo que queda para T21
 
-1. ~~Arreglar el contrato de listados~~ (hecho, ver arriba). Quedan los 8 E2E de vídeo descritos: la sonda
-   de origen de la preview (seguridad), `seek_pinta_fotograma` y el testid de `render-dialogo`.
+1. ~~Arreglar el contrato de listados~~ (hecho, ver arriba). Las sondas de aislamiento de la preview, también. Quedan 5 E2E
+   de vídeo: `seek_pinta_fotograma` y los 4 de `render-dialogo`.
 2. Diagnosticar las 23 capturas y el E2E de la clave (¿regenerar referencias o regresión?).
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
