@@ -36,7 +36,7 @@ function contarPost(page: Page) {
 
 async function generar(page: Page, tema = "E2E-VIDEO tortilla") {
   await page.goto("/#/guiones");
-  await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo" }).click();
+  await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo", exact: true }).click();
   await page.getByTestId("escribir-tema").fill(tema);
   await expect(page.getByTestId("escribir-generar")).toBeEnabled();
   await page.getByTestId("escribir-generar").click();
@@ -161,7 +161,7 @@ test.describe("Guiones en modo Vídeo", () => {
     });
     await simularRutas(page, { "/video/guiones/esquema": () => [503, { detail: "Módulo de vídeo no instalado" }] });
     await page.goto("/#/guiones");
-    await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo" }).click();
+    await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo", exact: true }).click();
     await page.getByTestId("escribir-tema").fill("tema");
     await expect(page.getByTestId("escribir-video-sin-motor")).toBeVisible();
     await expect(page.getByTestId("escribir-generar")).toBeDisabled();
@@ -171,7 +171,7 @@ test.describe("Guiones en modo Vídeo", () => {
   test("los guiones guardados de antes aparecen al abrir el formato", async ({ page }) => {
     const g = await crearGuion();
     await page.goto("/#/guiones");
-    await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo" }).click();
+    await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo", exact: true }).click();
     await expect(page.getByTestId(`guion-guardado-${g.id}`)).toContainText("Tortilla perfecta");
   });
 });

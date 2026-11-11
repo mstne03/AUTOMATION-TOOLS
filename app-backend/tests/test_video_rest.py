@@ -620,11 +620,11 @@ async def _proyecto_real(c) -> str:
 
 async def test_real_proyecto_manipulado_422(real):
     pid = await _proyecto_real(real)
-    leido = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    leido = (await real.get(f"/video/proyectos/{pid}")).json()
     assert leido["id"] == pid
     r = await real.put(f"/video/proyectos/{pid}", json={"revision": leido["revision"], "proyecto": leido})
     assert r.status_code == 200, r.text  # sin cambios: el motor lo acepta, así que los 422 de abajo son por la manipulación
-    leido = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    leido = (await real.get(f"/video/proyectos/{pid}")).json()
     for cambio in ({"manipulado": True}, {"recursos": {"r-0123456789abcdef": {"ruta": "C:\\x"}}}, {"id": "video999"}):
         r = await real.put(f"/video/proyectos/{pid}", json={"revision": leido["revision"], "proyecto": {**leido, **cambio}})
         assert r.status_code == 422, (cambio, r.text)
@@ -644,7 +644,7 @@ async def test_real_url_en_texto_inerte(real):
         r = await real.post("/video/guiones", json={"guion": _guion_real(escenas=[escena])})
         assert r.status_code == 422 and "url_en_texto" in _codigos(r), r.text
     lista = await real.get("/video/guiones")
-    assert lista.json() == {"guiones": []} and "evil.example" not in lista.text
+    assert lista.json() == [] and "evil.example" not in lista.text
 
 
 XSS = "<img src=x onerror=alert(1)>"

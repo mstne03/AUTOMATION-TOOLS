@@ -393,6 +393,22 @@ def _http(e: video.MotorError) -> HTTPException:
     return _error(502, MENSAJE_502, "error_motor")
 
 
+def _lista(datos: Any, clave: str) -> list:
+    """El motor lista como `{clave: [...]}`; la UI (`client.ts`) espera la lista sola."""
+    lista = datos.get(clave) if isinstance(datos, dict) else None
+    if not isinstance(lista, list):
+        raise _inesperada()
+    return lista
+
+
+def _proyecto(datos: Any) -> dict:
+    """`video_proyecto_leer` devuelve `{proyecto, avisos}`; la UI (`client.ts`) espera el proyecto solo."""
+    doc = datos.get("proyecto") if isinstance(datos, dict) else None
+    if not isinstance(doc, dict) or not isinstance(doc.get("id"), str):
+        raise _inesperada()
+    return doc
+
+
 async def _llamar(estado, tool: str, args: dict | None = None, timeout: float | None = None, protegida: bool = False) -> Any:
     try:
         r = await video.motor_de(estado, tool).llamar(tool, args, timeout, protegida)
@@ -754,7 +770,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.get("/guiones")
     async def listar_guiones():
-        return await _llamar(estado, "video_guion_listar")
+        return _lista(await _llamar(estado, "video_guion_listar"), "guiones")
 
     @r.post("/guiones", status_code=201)
     async def crear_guion(request: Request):
@@ -772,15 +788,12 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.get("/proyectos")
     async def listar_proyectos():
-        datos = await _llamar(estado, "video_proyecto_listar")
-        lista = datos.get("proyectos") if isinstance(datos, dict) else datos
-        if not isinstance(lista, list):
-            raise _inesperada()
+        lista = _lista(await _llamar(estado, "video_proyecto_listar"), "proyectos")
         jobs = estado.jobs.list(200) if getattr(estado, "jobs", None) is not None else []
         for p in lista:
             if isinstance(p, dict):
                 p["estado"] = await asyncio.to_thread(_estado_proyecto, estado, p.get("id"), jobs)
-        return datos
+        return lista
 
     @r.post("/proyectos", status_code=201)
     async def crear_proyecto(request: Request):
@@ -792,7 +805,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
 
     @r.get("/proyectos/{id}")
     async def leer_proyecto(id: IdProyecto):
-        return await _llamar(estado, "video_proyecto_leer", {"id": id})
+        return _proyecto(await _llamar(estado, "video_proyecto_leer", {"id": id}))
 
     @r.put("/proyectos/{id}")
     async def guardar_proyecto(id: IdProyecto, request: Request):
@@ -840,9 +853,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
             if not isinstance(carpeta, str) or not re.fullmatch(r"r[0-9]{1,9}", carpeta, re.ASCII):
                 log.warning("video_montar_preview devolvió una carpeta inesperada")
                 raise _error(502, MENSAJE_502, "error_motor")
-            leido = await _llamar(estado, "video_proyecto_leer", {"id": id})
-            doc = leido.get("proyecto", leido) if isinstance(leido, dict) else None
-            creado = doc.get("creado") if isinstance(doc, dict) else None
+            creado = _proyecto(await _llamar(estado, "video_proyecto_leer", {"id": id})).get("creado")
             if not isinstance(creado, str) or not 1 <= len(creado) <= 64:
                 log.warning("video_proyecto_leer no devolvió `creado`")
                 raise _error(502, MENSAJE_502, "error_motor")

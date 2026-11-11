@@ -137,6 +137,29 @@ describe("cliente de vídeo", () => {
     expect(ultima().url).toBe("http://127.0.0.1:5000/video/proyectos/video001/render");
   });
 
+  it("contrato_backend: perfiles, voces y música llegan en sobre y salen como lista", async () => {
+    ok({ perfiles: [{ id: "defecto" }] });
+    expect(await client.videoPerfiles()).toEqual([{ id: "defecto" }]);
+    ok({ voces: [{ id: "v", nombre: "V" }] });
+    expect(await client.videoVoces()).toEqual([{ id: "v", nombre: "V" }]);
+    ok({ pistas: [] });
+    expect(await client.videoMusica()).toEqual([]);
+  });
+
+  it("contrato_backend: un sobre sin lista es un error, no datos", async () => {
+    ok({ perfiles: { id: "defecto" } });
+    await expect(client.videoPerfiles()).rejects.toBeInstanceOf(ApiError);
+    ok([{ id: "v" }]);
+    await expect(client.videoVoces()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("guardar perfil manda {perfil} y devuelve el perfil enviado (el servidor solo responde {id})", async () => {
+    ok({ id: "defecto" });
+    const perfil = { id: "defecto", nombre: "Canal" } as never;
+    expect(await client.videoPerfilGuardar("defecto", perfil)).toEqual(perfil);
+    expect(JSON.parse(ultima().init.body as string)).toEqual({ perfil });
+  });
+
   it("sin_rutas_en_cliente: ni los tipos ni los métodos de vídeo reciben rutas (I6)", () => {
     const prohibido = /\b(ruta|rutas|path|paths|file_path|filePath|filename|uri)\??\s*:/i;
     // Excepción única: `ruta` de un aviso es la ruta dentro del documento, no del sistema de ficheros.

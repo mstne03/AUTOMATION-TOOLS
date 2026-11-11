@@ -136,6 +136,13 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     }
     return (await res.json()) as T;
   }
+  /** Listas que el backend devuelve en sobre (`{ perfiles: [...] }`): lo que no sea una lista es un error. */
+  async function lista<T>(path: string, clave: string): Promise<T[]> {
+    const d = await req<Record<string, unknown>>(path);
+    const l = d && typeof d === "object" && !Array.isArray(d) ? d[clave] : undefined;
+    if (!Array.isArray(l)) throw new ApiError(502, "Respuesta inesperada del servidor.", "error_motor");
+    return l as T[];
+  }
   const q = (params: Record<string, string | number | undefined>) => {
     const sp = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
@@ -224,13 +231,14 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
       req(`/video/proyectos/${encodeURIComponent(id)}/recursos/${encodeURIComponent(rid)}`, { method: "DELETE" }),
     videoRender: (id, modo) =>
       req(`/video/proyectos/${encodeURIComponent(id)}/render`, { method: "POST", body: JSON.stringify({ modo }) }),
-    videoPerfiles: () => req("/video/perfiles"),
+    videoPerfiles: () => lista("/video/perfiles", "perfiles"),
     videoPerfilDuplicar: (pid) => req(`/video/perfiles/${encodeURIComponent(pid)}/duplicar`, { method: "POST" }),
+    // El backend responde `{ id }`: el perfil guardado es el enviado.
     videoPerfilGuardar: (pid, perfil) =>
-      req(`/video/perfiles/${encodeURIComponent(pid)}`, { method: "PUT", body: JSON.stringify(perfil) }),
-    videoVoces: () => req("/video/voces"),
+      req(`/video/perfiles/${encodeURIComponent(pid)}`, { method: "PUT", body: JSON.stringify({ perfil }) }).then(() => perfil),
+    videoVoces: () => lista("/video/voces", "voces"),
     videoVozMuestra: (voiceId, cuerpo) => req("/video/voces/muestra", { method: "POST", body: JSON.stringify({ voiceId, ...cuerpo }) }),
-    videoMusica: () => req("/video/musica"),
+    videoMusica: () => lista("/video/musica", "pistas"),
     videoMusicaImportar: (bandejaId) => req("/video/musica", { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId }) }),
   };
 }

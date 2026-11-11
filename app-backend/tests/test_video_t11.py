@@ -530,7 +530,7 @@ async def _esperar(api, job_id):
 
 async def _estado(api, pid) -> str:
     lista = (await api.get("/video/proyectos")).json()
-    lista = lista["proyectos"] if isinstance(lista, dict) else lista
+    assert isinstance(lista, list), lista  # la UI espera la lista sola
     return next(p["estado"] for p in lista if p["id"] == pid)
 
 
@@ -1162,7 +1162,7 @@ async def test_real_recurso_en_uso_409(real, monkeypatch):
     assert any(a["codigo"] == "foto_pequena" for a in r.json()["avisos"])
     assert not (bandeja / f"{BANDEJA}.bin").exists()  # la bandeja se consume
     assert (await real.post(f"/video/proyectos/{pid}/recursos", json={"bandeja_id": BANDEJA, "clase": "foto"})).status_code == 404
-    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()
     assert [x["id"] for x in proyecto["recursos"]] == [rec["id"]]
     proyecto["escenas"][0]["capa"] = {"recursoId": rec["id"], "modo": "encima", "encuadre": "zoom", "entrada": 0, "salida": 1}
     g = await real.put(f"/video/proyectos/{pid}", json={"revision": proyecto["revision"], "proyecto": proyecto})
@@ -1170,7 +1170,7 @@ async def test_real_recurso_en_uso_409(real, monkeypatch):
     r = await real.delete(f"/video/proyectos/{pid}/recursos/{rec['id']}")
     assert r.status_code == 409 and r.json()["detail"]["codigo"] == "recurso_en_uso", r.text
     # Sin la capa se puede borrar.
-    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()["proyecto"]
+    proyecto = (await real.get(f"/video/proyectos/{pid}")).json()
     del proyecto["escenas"][0]["capa"]
     assert (await real.put(f"/video/proyectos/{pid}", json={"revision": proyecto["revision"], "proyecto": proyecto})).status_code == 200
     assert (await real.delete(f"/video/proyectos/{pid}/recursos/{rec['id']}")).status_code == 200

@@ -120,7 +120,7 @@ async def video_guion_guardar(guion: Any, id: str | None = None) -> CallToolResu
 
 @mcp.tool()
 def video_guion_listar() -> CallToolResult:
-    return _ok("Guiones", [{"id": g, "titulo": v.get("titulo", "")} for g, v in _GUIONES.items()])
+    return _ok("Guiones", {"guiones": [{"id": g, "titulo": v.get("titulo", "")} for g, v in _GUIONES.items()]})  # forma del motor real
 
 
 @mcp.tool()
@@ -177,7 +177,7 @@ def video_proyecto_crear(guionId: str, perfilId: str) -> CallToolResult:
 
 @mcp.tool()
 def video_proyecto_listar() -> CallToolResult:
-    return _ok("Proyectos", [{"id": k, "titulo": v["titulo"], "estado": "sin_voz"} for k, v in _PROYECTOS.items()])
+    return _ok("Proyectos", {"proyectos": [{"id": k, "titulo": v["titulo"], "estado": "sin_voz"} for k, v in _PROYECTOS.items()]})  # forma del motor real
 
 
 @mcp.tool()
@@ -186,7 +186,7 @@ def video_proyecto_leer(id: str) -> CallToolResult:
         return _error("no_encontrado", "No existe ese proyecto.")
     creado = Path(os.environ["VIDEO_ROOT"]) / id / "creado.txt"  # un test lo cambia para simular un id reutilizado
     marca = creado.read_text(encoding="utf-8").strip() if creado.is_file() else "2026-11-07T10:00:00.000Z"
-    return _ok("Proyecto", {**_PROYECTOS[id], "creado": marca, "avisos": []})
+    return _ok("Proyecto", {"proyecto": {**_PROYECTOS[id], "creado": marca}, "avisos": []})  # forma del motor real
 
 
 @mcp.tool()

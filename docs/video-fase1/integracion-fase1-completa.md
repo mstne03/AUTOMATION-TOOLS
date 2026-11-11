@@ -64,6 +64,42 @@ E2E, así que la base no tenía este dato.
 Consecuencia: **los E2E de T17 (`video-preview.spec.ts`) no se han podido verificar de punta a punta**;
 solo los tests unitarios de la preview pasan.
 
+## Corrección del contrato REST ↔ motor ↔ UI (segundo commit de la rama)
+
+Causa común: `app-backend/tests/motor_falso.py` no imitaba la forma real del motor, y el cliente de la UI
+(`client.ts`) se escribió contra otro contrato. Los tests de la UI simulan el cliente, así que nadie lo veía.
+Cada endpoint se ha corregido en el lado que contradecía su contrato documentado:
+
+| Endpoint | Antes (motor real) | Ahora | Dónde |
+|---|---|---|---|
+| `GET /video/proyectos` | `{proyectos: [...]}` | lista (validada: si no es lista, 502 `error_motor`) | backend, `_lista` |
+| `GET /video/guiones` | `{guiones: [...]}` | lista (ídem) | backend, `_lista` |
+| `GET /video/proyectos/{id}` | `{proyecto, avisos}` → el editor caía (`p.frases` indefinido) | el proyecto (validado: objeto con `id`) | backend, `_proyecto` (también en `abrir_preview`, que toleraba ambas formas) |
+| `GET /video/perfiles`, `/voces`, `/musica` | la UI esperaba lista y recibía el sobre documentado (`contrato-voz.md:102`); `PanelPerfil` hacía `.find` sobre un objeto | el cliente desenvuelve y rechaza (`ApiError` 502) lo que no sea lista | `client.ts`, `lista()` |
+| `PUT /video/perfiles/{pid}` | la UI mandaba el perfil a pelo (el backend exige `{perfil}`) y esperaba el perfil de vuelta (el backend da `{id}`): el cambio se perdía en la caché | manda `{perfil}` y devuelve el enviado | `client.ts` |
+
+Tests: `motor_falso.py` devuelve ya la forma real (sin el arreglo, `test_ciclo_de_guiones` y
+`test_crear_listar_leer_y_guardar_proyecto` fallan); `test_real_url_en_texto_inerte`,
+`test_real_proyecto_manipulado_422`, `test_real_recurso_en_uso_409` y `_estado` de T11 asertan la lista o
+el proyecto plano en vez de tolerar el sobre. Tres tests nuevos en `client.test.ts` (`contrato_backend`, y
+guardar perfil). `video-guion.spec.ts`: el selector `radio "Vídeo"` pasa a `exact: true` (chocaba con
+«Vídeo largo»).
+
+Resultados tras el arreglo: pytest de vídeo 361 OK (el único fallo era un test real que leía
+`["proyecto"]`, ya corregido y verificado); `pnpm test` 389/389; **E2E de vídeo: 20 OK, 8 fallan, 1
+omitido** (antes, 0 de 29). Los 8 que quedan no son de contrato:
+
+- `video-preview` `iframe_sin_token`, `sandbox_solo_atributo`, `sonda_red_cero`: la sonda del iframe
+  informa `origen: "http://127.0.0.1:47810"` donde espera `"null"`. El atributo `sandbox="allow-scripts"`
+  sí está (`atributos_exactos` pasa). Hay que ver si la sonda mide `location.origin` (que conserva la URL
+  aunque el origen sea opaco) o si de verdad el documento no queda aislado. **Es de seguridad: revisar con
+  quien hizo T17 antes de T21.**
+- `video-preview` `seek_pinta_fotograma` (motor real): el iframe no llega a aparecer. Sin diagnosticar;
+  probablemente falta ffmpeg o el runtime en este entorno, como en el test real de T11 que se omite.
+- `video-render` (4): `render-dialogo` (`RenderDialogo.tsx:145`) está en un `div` vacío que Playwright
+  considera oculto, aunque el diálogo se pinta. Hay que cambiar el testid de sitio o el contenido (T20),
+  y actualizar `pantallas.md` en el mismo commit.
+
 ## Hallazgos abiertos heredados (ninguno bloquea la integración)
 
 - T12 Medium: `disable_non_proxied_udp` no cierra WebRTC del todo (solo evita la fuga de IP local).
@@ -79,8 +115,8 @@ solo los tests unitarios de la preview pasan.
 
 ## Lo que queda para T21
 
-1. **Arreglar el contrato de listados** (`GET /video/proyectos` y `GET /video/guiones` devuelven lista) y
-   un test REST contra la forma real del motor; volver a ejecutar `pnpm e2e` y confirmar los 29 de vídeo.
+1. ~~Arreglar el contrato de listados~~ (hecho, ver arriba). Quedan los 8 E2E de vídeo descritos: la sonda
+   de origen de la preview (seguridad), `seek_pinta_fotograma` y el testid de `render-dialogo`.
 2. Diagnosticar las 23 capturas y el E2E de la clave (¿regenerar referencias o regresión?).
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
