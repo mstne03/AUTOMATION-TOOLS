@@ -540,7 +540,7 @@ Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.
   flechas ±0,1 s, Mayús ±1 s, Inicio y Fin; en `clip-escena-<id>` Alt+flecha reordena; en
   `clip-voz-<fraseId>` Mayús+flecha ajusta el final del recorte a una palabra; en
   `clip-recurso-<escenaId>` Alt+flecha mueve la entrada y Mayús+flecha la salida.
-- **Render** (Task 20): `editor-render` abre `render-dialogo` (se monta solo abierto: cada apertura
+- **Render** (Task 20): `editor-render` abre `render-dialogo` (el elemento `role="dialog"`; se monta solo abierto: cada apertura
   vuelve a mirar la voz). Envía `POST /video/proyectos/{id}/render { modo }` con el modo efectivo de
   Ajustes (solo el id y el modo, nunca rutas); el progreso sale del job `video_render` del proyecto
   (`args.id`), sigue vivo si se cierra el diálogo y se retoma al reabrirlo.

@@ -132,6 +132,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
       onOpenChange={(abierto) => !abierto && onClose()}
       title="Renderizar vídeo"
       description={descripcion}
+      testid="render-dialogo"
       footer={
         <>
           <Button onClick={onClose}>Cerrar</Button>
@@ -142,7 +143,7 @@ export function RenderDialogo({ id, onClose }: { id: string; onClose: () => void
           )}
         </>
       }>
-      <div className={s.cuerpo} data-testid="render-dialogo">
+      <div className={s.cuerpo}>
         {bloqueo && !activo && (
           <p className={s.bloqueo} role="status" data-testid="render-bloqueo" data-motivo={bloqueo.motivo}>
             {bloqueo.texto}
