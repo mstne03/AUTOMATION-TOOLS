@@ -21,7 +21,7 @@ Se pasa por `FFMPEG_DIR`; el del PATH (full build de WinGet) no se usa. El build
 | `npm test` | 1150 OK, 69 omitidos |
 | `render:mock` | 1 OK |
 | `render:sandbox` | 21 OK |
-| `render:aceptacion` (`aceptacion` + `fidelidad-preview`, una sola ejecución) | 12 OK, 9 fallan: los 9 son CA4 (ver abajo); CA1, CA5, CA7 y CA8 pasan |
+| `render:aceptacion` (`aceptacion` + `fidelidad-preview`) | CA1, CA5, CA7, CA8: 11 OK (cocina empieza ya por `cartel`); CA4: 10 OK con la métrica nueva (ver «Arreglos tras la R2») |
 | `render-real` (`VIDEO_E2E_REAL=1`) | 7 OK, 2 omitidos, 1 falla: el oráculo de sockets (ver abajo) |
 | `rendimiento_180s` sin carga (90 escenas, 179 s) | OK: montar 5,2 s / 120 s; `check` 144 s / 600 s; seek máx. 266 ms / 2 s |
 | `pnpm e2e` completo | 212 OK (6,7 min) |
@@ -41,24 +41,31 @@ servidor de prueba en 127.0.0.1, ni dentro ni fuera del sandbox de la sesión. E
 falla cerrado, como debe («la tabla de escuchas no es fiable en este entorno»). La fila queda cubierta
 por `render:sandbox` (21 OK) y por la medida manual M-5.
 
-## Decisiones que necesita Marc
+## Arreglos tras la R2 (2026-11-12, con el sí de Marc)
 
-1. **CA4 inalcanzable a 0,99 contra el MP4.** La preview y el MP4 son visualmente idénticos (±1 nivel
-   en degradados oscuros, PSNR 48,8 dB). Pasar la propia preview por `h264_mf` ya da 0,983. Opciones:
-   umbral 0,98 contra un render sin pérdida, PSNR ≥ 40 dB, o subir el bitrate de `h264_mf`
-   (`render.ts:50`, cambio de motor). El test sigue estricto a 0,99.
-2. **Bug del motor (abrir issue en Plane):** si la escena 1 es `cartel` o `cifra`, `hyperframes check`
-   falla con `content_overlap` contra el gancho, y el render acaba en error. Causa probable:
-   `composicion.ts:543-549` solo acorta el gancho desde el bloque 2 (`slice(1)`). Los fixtures empiezan
-   por `mapa` para esquivarlo.
-3. **R2: 0 Critical, 0 High, 2 Medium (verificados en el código), 2 Low, 3 Info.**
-   - R2-1: la bandeja de importación está en dos rutas: Rust usa `<estado>\video\bandeja`
-     (`lib.rs:480`) y el motor usa `<estado>\video\video\bandeja` (`recursos.ts:48` con `VIDEO_ROOT`).
-     En la app instalada no funcionaría ninguna importación; los E2E no lo ven porque simulan Rust.
-   - R2-2: el aviso `puertos_preview_ajenos` llega sin `mensaje` (`video_rest.py:861`) y la UI pinta
-     `a.mensaje` (`Preview.tsx:257`), así que se ve «undefined». Era la mitigación de R0-7.
-4. **Layout del editor a 900×600** (capturas nuevas): el timeline no llega al borde derecho, la fila
-   «Música» queda fuera de vista y las píldoras «Pendiente» se recortan.
+| Punto | Arreglo | Prueba |
+|---|---|---|
+| R2-1 · bandeja en dos rutas | `carpetaBandeja` = `dirname(VIDEO_ROOT)/bandeja` = `<estado>ideoandeja`, la que escribe `lib.rs` | `recursos.test.ts` (contrato) y `test_bandeja_del_motor_es_la_de_rust` (backend) |
+| R2-2 · aviso «undefined» | La preview traduce el `codigo` con la tabla cerrada de `render/resultado.ts` (`aFrase`); el tipo `AvisoPreview` refleja el contrato real (`{ codigo, puertos? }`) | `preview.test.tsx` con la forma real de `POST …/preview` y texto hostil |
+| Escena 1 `cartel`/`cifra` (`content_overlap`) | Si el bloque 1 es una escena, su contenido entra cuando acaba el gancho (deja ≥ 1 s visible; si no cabe, el gancho se acorta a ≥ 0,9 s) | `composicion.test.ts` (cartel y cifra) y render real del fixture `cocina`, que empieza por `cartel` |
+| CA4 · métrica | Preview frente al render **sin pérdida**: PSNR ≥ 36 dB; preview frente al MP4 de `h264_mf`: SSIM ≥ 0,97 | `fidelidad-preview.test.ts` |
+
+**CA4, medidas (dos ejecuciones idénticas):** MP4 SSIM 0,978 en los 5 instantes; render sin pérdida
+PSNR 46,0 / 38,4 / 45,8 / 38,8 / 45,8 dB a 2 / 5 / 8 / 11 / 14 s. Propuse 40 dB con una sola medida
+(48,8 dB) y los carteles con el halo radial a pantalla completa dan 38,4–38,8 dB. La diferencia ×10 son
+anillos de cuantización del degradado y el antialias del texto, sin bordes dobles: no hay desfase de
+fotograma. Umbral calibrado a 36 dB (≈ 2,5 dB de margen sobre el peor caso).
+
+**Hallazgo menor (no arreglado):** el motor devuelve los avisos de la preview como texto (`plan.avisos`),
+y `video_rest.py` solo deja pasar objetos con `codigo`, así que esos avisos de texto no llegan a la UI.
+Tampoco pueden pintarse tal cual (regla de producto: texto del motor no confiable). Para una fase
+posterior: que el motor emita códigos.
+
+**Pendiente de Marc:**
+
+- Layout del editor a 900×600 (capturas nuevas): el timeline no llega al borde derecho, la fila
+  «Música» queda fuera de vista y las píldoras «Pendiente» se recortan.
+- R2 restante: 2 Low (R2-3 IPC desde el iframe sin prueba; R2-4 WebRTC en la preview) y 3 Info, en `R2-fase1.md`.
 
 ## Pruebas negativas mínimas de la spec, sobre la rama integrada
 
@@ -105,8 +112,6 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado)
    y W3.5 (borrado del spike).
 2. M-4 cerrada, M-5 medida y M2 hecha.
-3. R2-1 y R2-2 arreglados y probados con Rust real (no solo con E2E simulados).
-4. Bug `content_overlap` de la primera escena arreglado, o el piloto avisado de que no empiece por `cartel`/`cifra`.
-5. Decisión sobre CA4 (lo único que mantiene en rojo `render:aceptacion`) y M-5 medida con la app real.
-6. Decisión escrita sobre WebRTC en la preview y sonda de red con la app real.
-7. Build instalado a mano por Marc; sin release a `main`.
+3. R2-1 y R2-2 arreglados (hecho) y la importación probada con la app instalada (Rust real, no E2E simulados).
+4. Decisión escrita sobre WebRTC en la preview y sonda de red con la app real.
+5. Build instalado a mano por Marc; sin release a `main`.
