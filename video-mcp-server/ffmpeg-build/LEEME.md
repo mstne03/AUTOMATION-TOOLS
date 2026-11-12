@@ -71,9 +71,11 @@ Con esas banderas **la carpeta del `.exe` se busca antes que System32**: una `nv
 nunca se usan el cwd ni el PATH; eso vale solo para esa vía: las DLL de la tabla de importación
 estática las resuelve el cargador de Windows con su orden normal, que también empieza por la
 carpeta del `.exe`. Lo que cierra ambas vías es requisito de W3.2: el ffmpeg vive en una carpeta
-propia de la instalación con un manifiesto cerrado de ficheros (SHA-256 de
-`ffmpeg.exe`/`ffprobe.exe` y nada más), y el motor rechaza cualquier `.dll` extra en ella antes de
-invocarlo, como hace con el navegador (I4). `verificar-binario.sh` comprueba además que la tabla
+propia de la instalación que solo puede tener `ffmpeg.exe` y `ffprobe.exe` (SHA-256 fijado en
+`prepare-video-engine.sh` al empaquetar), y el motor rechaza cualquier fichero extra, subcarpeta o
+enlace en ella en cada uso (`revisarCarpetaFfmpeg`, I4). No se rehace el SHA-256 en ejecución: quien
+puede escribir en la instalación (la cuenta del usuario) también puede cambiar `node.exe` o el
+motor; la frontera es esa cuenta (revisión de la PR #28, M2). `verificar-binario.sh` comprueba además que la tabla
 de importación solo nombra DLL de System32 de una lista cerrada (`pe.sh`); esa lista cubre solo
 la tabla **estática**, no las delay-imports ni lo que se carga en ejecución.
 

@@ -91,7 +91,9 @@ validar_fila() { # campos de la fila
   [ "$ARRANQUE" = 1 ] && return 0
   hex "$sha" 64 || error "$nombre: sha256 no válido"
   case "$tipo" in
-    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)" ;;
+    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)"
+         # Solo el PKGBUILD oficial de Arch: en otro operador cualquiera podría publicar el hash (PR #28).
+         [ "$canal2" = - ] || [[ "$canal2" =~ $ARCH_PKGBUILD ]] || [[ "$(operador_url "$canal2" || true)" == "$(operador_url "$url" || true)" ]]            || error "$nombre: canal2 de un tarball debe ser el PKGBUILD oficial de Arch fijado a un commit" ;;
     git) hex "$commit" 40 || error "$nombre: commit de 40 hex obligatorio"
          [[ "$canal2" == https://*.git || "$canal2" =~ $ARCH_PKGBUILD ]]            || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable o un PKGBUILD de Arch que fije el commit" ;;
     *) error "$nombre: tipo '$tipo' desconocido" ;;
@@ -274,8 +276,7 @@ for linea in "${filas[@]}"; do
       # mismos bytes (los PKGBUILD de Arch traen sha512sums). Las firmas DSA/SHA-1 de dav1d y zlib
       # no se aceptan: van por aquí (decisión de la Tarea 10).
       obtener "$canal2" "$TRABAJO/canal2"
-      if [[ "$canal2" =~ $ARCH_PKGBUILD ]]; then sumas_pkgbuild "$TRABAJO/canal2" >"$TRABAJO/canal2.sumas"
-      else cp "$TRABAJO/canal2" "$TRABAJO/canal2.sumas"; fi
+      sumas_pkgbuild "$TRABAJO/canal2" >"$TRABAJO/canal2.sumas"
       grep -qw -e "$sha" -e "$(sha512sum "$f" | cut -d' ' -f1)" "$TRABAJO/canal2.sumas" || error "$nombre: canal2 no confirma el SHA-256 ni el SHA-512"
     fi
     mv "$f" "$TRABAJO/ok/"; [ "$firma" = - ] || mv "$f.asc" "$TRABAJO/ok/"

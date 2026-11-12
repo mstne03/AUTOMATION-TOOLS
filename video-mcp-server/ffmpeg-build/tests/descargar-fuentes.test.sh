@@ -174,6 +174,8 @@ correr k1 o-sf; debe_fallar "canal2 del mismo operador que el asset (github) →
 # en sha256sums/sha512sums, no en un comentario.
 lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://gitlab.archlinux.org/otro/paq/-/raw/0123456789abcdef0123456789abcdef01234567/PKGBUILD)"
 correr k1 o-sf; debe_fallar "canal2 en un fork de gitlab.archlinux.org → ≠ 0" oficial
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://code.videolan.org/cualquiera/paq/-/raw/main/sumas.txt)"
+correr k1 o-sf; debe_fallar "canal2 de un tarball fuera de Arch (proyecto de cualquier usuario) → ≠ 0" oficial
 printf "# %s\nsha256sums=('%064d')\n" "$SHA" 0 >"$T/o-sf/PKGBUILD"
 lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - "$ARCH")"
 correr k1 o-sf; debe_fallar "PKGBUILD con el SHA solo en un comentario → ≠ 0" canal2

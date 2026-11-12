@@ -933,6 +933,8 @@ let cache: Herramientas | null | undefined;
  * en su propia carpeta: una DLL plantada ahí se cargaría en lugar de la del driver (W3.2, I4).
  * Devuelve el motivo del rechazo, o undefined. Fuera de esa carpeta (desarrollo, E2E) no aplica.
  */
+let avisoFueraDelBundle = false;
+
 export function revisarCarpetaFfmpeg(dir: string, raiz = SERVER_ROOT): string | undefined {
   // realpath en los dos lados: un 8.3, un `\\?\` o una junction no desactivan la revisión (PR #28, B1).
   const real = (p: string): string => {
@@ -943,7 +945,10 @@ export function revisarCarpetaFfmpeg(dir: string, raiz = SERVER_ROOT): string | 
     }
   };
   if (!mismaRuta(real(dir), real(path.resolve(raiz, "..", "ffmpeg")))) {
-    if (esIntegrado()) log.warn(`ffmpeg fuera de la carpeta del bundle (${dir}): sin revisión de carpeta.`);
+    if (esIntegrado() && !avisoFueraDelBundle) {
+      avisoFueraDelBundle = true;
+      log.warn(`ffmpeg fuera de la carpeta del bundle (${dir}): sin revisión de carpeta.`);
+    }
     return undefined;
   }
   // Frontera: la cuenta del usuario. Quien puede escribir aquí puede cambiar node.exe o el propio
