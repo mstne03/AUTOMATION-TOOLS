@@ -786,3 +786,25 @@ def test_bandeja_del_motor_es_la_de_rust():
     """R2-1: el motor lee la bandeja en `dirname(VIDEO_ROOT)/bandeja` (`carpetaBandeja`) y Rust la escribe en
     `<estado>/video/bandeja` (`lib.rs`). Si VIDEO_ROOT se mueve, las dos dejan de coincidir."""
     assert config.VIDEO_ROOT.parent / "bandeja" == config.STATE_DIR / "video" / "bandeja"
+
+
+@pytest.mark.parametrize(
+    ("codigo", "esperado"),
+    [(c, m) for c, m in video_rest.MENSAJES_RECURSO.items()],
+)
+def test_recurso_rechazado_dice_por_que(codigo, esperado):
+    """Prueba con la app instalada (T21): un clip de más de 60 s salía como «no cumple el esquema»."""
+    e = video.MotorError("El archivo supera el límite: más de 60 s.", "esquema", [{"ruta": "clase", "codigo": codigo}])
+    detalle = video_rest._http(e).detail
+    assert detalle["mensaje"] == esperado
+    assert detalle["codigo"] == "esquema"
+    assert detalle["problemas"] == [{"ruta": "clase", "codigo": codigo}]
+
+
+def test_ffmpeg_ajeno_no_se_confunde_con_falta_ffmpeg():
+    """El motor integrado rechaza un ffmpeg con libopenh264: no es que falte, es que no es el del bundle."""
+    e = video.MotorError("El ffmpeg del motor no es el LGPL del bundle (trae libopenh264). Reinstala SEO Studio.")
+    detalle = video_rest._http(e).detail
+    assert detalle == {"mensaje": video_rest.MENSAJE_FFMPEG_AJENO, "codigo": "no_disponible"}
+    falta = video_rest._http(video.MotorError("Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación.")).detail
+    assert falta["mensaje"] == video_rest.MENSAJE_SIN_FFMPEG

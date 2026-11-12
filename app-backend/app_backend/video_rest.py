@@ -323,6 +323,14 @@ MENSAJE_503 = "El motor de vídeo no está disponible. Reinicia la aplicación o
 MENSAJE_TIMEOUT = "El motor de vídeo tardó demasiado y se ha reiniciado; vuelve a intentarlo."
 MENSAJE_502 = "El motor de vídeo no pudo completar la acción."
 MENSAJE_SIN_FFMPEG = "Falta ffmpeg en la instalación de SEO Studio: reinstala la aplicación."
+MENSAJE_FFMPEG_AJENO = "El ffmpeg de la instalación no es el previsto (trae codificadores no admitidos): reinstala SEO Studio."
+# Códigos de `problemas` de un recurso rechazado (recursos.ts) -> mensaje fijo.
+MENSAJES_RECURSO = {
+    "formato_no_admitido": "El archivo no es una foto, un clip ni un audio que SEO Studio admita.",
+    "clase_distinta": "El archivo no es del tipo elegido: una foto en «Añadir foto», un vídeo en «Añadir clip».",
+    "limite_excedido": "El archivo supera los límites: clips de 60 s como máximo (4096 px de lado, 60 fps); fotos de hasta 8192 px de lado.",
+    "archivo_danado": "El archivo está dañado o no se puede leer.",
+}
 MENSAJE_RENDER_FALLIDO = "El render no se pudo completar. Vuelve a intentarlo; si se repite, reinicia la aplicación."
 MENSAJE_RENDER_TIMEOUT = "El render tardó demasiado y se ha dado por fallido; vuelve a intentarlo."
 MENSAJE_RENDER_CERRADO = "La aplicación se cerró durante el render."
@@ -384,8 +392,14 @@ def _http(e: video.MotorError) -> HTTPException:
     if e.codigo in MENSAJES_POR_CODIGO:
         estado, mensaje, codigo = MENSAJES_POR_CODIGO[e.codigo]
         if estado == 422:
-            return _error(422, mensaje, codigo, _problemas_seguros(e.problemas))
+            problemas = _problemas_seguros(e.problemas)
+            # Un recurso rechazado no es «el documento no cumple el esquema»: se dice por qué, con texto fijo.
+            mensaje = next((MENSAJES_RECURSO[p["codigo"]] for p in problemas if p["codigo"] in MENSAJES_RECURSO), mensaje)
+            return _error(422, mensaje, codigo, problemas)
         return _error(estado, mensaje, codigo)
+    if e.codigo is None and "no es el LGPL del bundle" in str(e):
+        log.warning("Motor de vídeo: ffmpeg distinto del del bundle: %s", e)
+        return _error(503, MENSAJE_FFMPEG_AJENO, "no_disponible")
     if e.codigo is None and "ffmpeg" in str(e).lower():
         log.warning("Motor de vídeo: falta ffmpeg: %s", e)
         return _error(503, MENSAJE_SIN_FFMPEG, "no_disponible")
