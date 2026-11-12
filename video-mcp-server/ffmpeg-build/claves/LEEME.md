@@ -7,12 +7,15 @@ contenga **exactamente una** clave primaria, que sea la de la columna `huella`, 
 de la columna `anclaje`, de operadores distintos entre sí y del de la descarga (R0 H1, R1 LOW-2).
 Las claves se commitean: no se bajan en cada build.
 
-| Fichero | Clave | Huella candidata (sin confirmar) | Anclaje propuesto |
+| Fichero | Clave | Huella | Anclaje |
 |---|---|---|---|
-| `ffmpeg.asc` | FFmpeg release signing key | `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8` | `debian:ffmpeg` + `validpgpkeys` del PKGBUILD de Arch (`gitlab.archlinux.org/…/-/raw/<commit>/PKGBUILD`) |
-| `dav1d.asc` | VideoLAN (J.-B. Kempf) | `65F7 C6B4 206B D057 A7EB 7378 7180 713B E58D 1ADC` | `debian:dav1d` + PKGBUILD de Arch fijado a commit |
-| `zlib.asc` | Mark Adler | `5ED4 6A67 21D3 6558 7791 E2AA 783F CD8E 58BC AFBA` | `debian:zlib` + PKGBUILD de Arch fijado a commit (no madler.net: es el mismo operador que zlib.net) |
+| `ffmpeg.asc` (de `https://ffmpeg.org/ffmpeg-devel.asc`) | FFmpeg release signing key | `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8` | `debian:ffmpeg` (lo verifica el script) + `sources` del dist-git de Fedora fijado a commit, que fija por SHA-512 su `ffmpeg.keyring` del lookaside (revisado a mano el 2026-11-12: primaria FCF9…58D8) |
 
-Las huellas candidatas vienen del plan (de memoria o leídas del propio `.asc`): **no valen** como
-anclaje. El canal `debian:` lo verifica el script; el de Arch lo revisa un humano. Procedimiento
-en `../LEEME.md`, «Tarea 10».
+Sin clave, por decisión de la Tarea 10 (2026-11-12):
+
+- **dav1d y zlib**: firman con DSA y resumen SHA-1, que `verificar_firma` no acepta. Van como
+  tarball sin firma: SHA-256 fijado + `canal2` = PKGBUILD de Arch fijado a commit, que debe listar
+  el SHA-512 de esos mismos bytes. zlib sube a 1.4: zlib.net ya no sirve la 1.3.2 y Arch la
+  parchea por el CVE-2026-85091.
+- **AMF**: fuente `git` en el commit `e8c7cd7c…` (etiqueta `v1.4.33`, solo `amf/public/include`);
+  `canal2` = PKGBUILD de Arch 1.4.33-1 fijado a commit, que nombra ese commit.

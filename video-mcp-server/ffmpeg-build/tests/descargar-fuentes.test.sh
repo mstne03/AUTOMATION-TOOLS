@@ -42,7 +42,8 @@ debian() { # debian <dir> <huella de la clave que va en signing-key.asc>
   gpg --batch --armor --export "$2" >"$d/m/debian/upstream/signing-key.asc"
   tar -C "$d/m" -cJf "$d/paq_1.0-1.debian.tar.xz" debian; echo "Source: paq" >"$d/paq_1.0-1.dsc"
   sk() { echo " $(sha256sum <"$d/$1" | cut -d' ' -f1) $(wc -c <"$d/$1") $1"; }
-  printf 'Package: otro\nDirectory: pool/main/o/otro\n\nPackage: paq\nVersion: 1.0-1\nDirectory: pool/main/p/paq\nChecksums-Sha256:\n%s\n%s\n' \
+  # Orden real de Debian: Directory va después de Checksums-Sha256.
+  printf 'Package: otro\nDirectory: pool/main/o/otro\n\nPackage: paq\nVersion: 1.0-1\nChecksums-Sha256:\n%s\n%s\nDirectory: pool/main/p/paq\n' \
     "$(sk paq_1.0-1.dsc)" "$(sk paq_1.0-1.debian.tar.xz)" | xz -c >"$d/Sources.xz"
   printf 'Origin: Debian\nSuite: trixie\nDate: Tue, 14 Oct 2026 20:12:34 UTC\nSHA256:\n%s\n' \
     " $(sha256sum <"$d/Sources.xz" | cut -d' ' -f1) $(wc -c <"$d/Sources.xz") main/source/Sources.xz" >"$d/InRelease"
