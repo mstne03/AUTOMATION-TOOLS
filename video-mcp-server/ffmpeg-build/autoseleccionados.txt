@@ -6,10 +6,10 @@
 # anota aquí a mano, con motivo. Formato: <tipo> <nombre> <motivo…>
 # Tipos: protocol demuxer muxer decoder encoder bsf filter indev outdev.
 #
-# PENDIENTE-TAREA-10: revisada contra el configure de 7.1.5 (cierre de _select de ffmpeg y de la lista
-# declarada: hflip vflip transpose rotate, bsf vp9_superframe; el parser ac3 no tiene listado;
-# `rtpenc_chain` no es un muxer, así que no hay `rtp`). Falta cotejarla con los listados del primer
-# build real; entonces se quita esta línea. Mientras esté, verificar-binario.sh falla.
+# Revisada contra el configure de 7.1.5 (cierre de _select de ffmpeg y de la lista declarada:
+# hflip vflip transpose rotate, bsf vp9_superframe; el parser ac3 no tiene listado; `rtpenc_chain`
+# no es un muxer, así que no hay `rtp`) y cotejada con los listados del primer build real
+# (2026-11-12): los nueve listados de verificar-binario.sh coinciden exactamente.
 filter abuffer API de libavfilter (entrada de audio de todo grafo), siempre presente
 filter buffer API de libavfilter (entrada de vídeo de todo grafo), siempre presente
 filter abuffersink API de libavfilter (salida de audio de todo grafo), siempre presente

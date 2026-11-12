@@ -13,11 +13,11 @@ tarxz() { # tarxz <nombre-dir> <fichero-de-licencia>
   tar -C "$T/arbol" -cJf "$T/fuentes/$1.tar.xz" "$1"; echo firma >"$T/fuentes/$1.tar.xz.asc"
 }
 tarxz ffmpeg-7.1.5 COPYING.LGPLv2.1; tarxz dav1d-1.5.4 COPYING; tarxz zlib-1.3.2 LICENSE
-mkdir -p "$T/arbol/nv/include/ffnvcodec" "$T/arbol/amf/AMF/core"
+mkdir -p "$T/arbol/nv/include/ffnvcodec" "$T/arbol/amf/amf/public/include/core"
 printf '/*\n * MIT de NVIDIA\n */\nint x;\n' >"$T/arbol/nv/include/ffnvcodec/nvEncodeAPI.h"
-printf '//\n// MIT de AMD\n//\n#pragma once\n' >"$T/arbol/amf/AMF/core/Platform.h"
+printf '//\n// MIT de AMD\n//\n#pragma once\n' >"$T/arbol/amf/amf/public/include/core/Platform.h"
 tar -C "$T/arbol/nv" -cf "$T/fuentes/nv-codec-headers-n12.1.14.0.tar" include
-tar -C "$T/arbol/amf" -czf "$T/fuentes/AMF-headers-v1.4.36.tar.gz" AMF
+tar -C "$T/arbol/amf" -cf "$T/fuentes/amf-headers-v1.4.33.tar" amf  # git archive de amf/public/include
 sha() { sha256sum <"$T/fuentes/$1" | cut -d' ' -f1; }
 fila() { local IFS=$'\t'; echo "$*"; }
 {
@@ -25,7 +25,7 @@ fila() { local IFS=$'\t'; echo "$*"; }
   fila dav1d 1.5.4 tar https://x.invalid/dav1d-1.5.4.tar.xz "$(sha dav1d-1.5.4.tar.xz)" - - x - - -
   fila zlib 1.3.2 tar https://zlib.net/zlib-1.3.2.tar.xz "$(sha zlib-1.3.2.tar.xz)" - - x - - -
   fila nv-codec-headers n12.1.14.0 git https://x.invalid/nv.git "$(sha nv-codec-headers-n12.1.14.0.tar)" - - - - - -
-  fila amf-headers v1.4.36 tar https://github.com/x/AMF-headers-v1.4.36.tar.gz "$(sha AMF-headers-v1.4.36.tar.gz)" - - - - - https://gitlab.archlinux.org/x/PKGBUILD
+  fila amf-headers v1.4.33 git https://github.com/x/AMF.git "$(sha amf-headers-v1.4.33.tar)" - amf/public/include - - - https://gitlab.archlinux.org/x/PKGBUILD
   fila debian-inrelease trixie apt - - - - - - - -
   fila source-date-epoch 1767225600 meta - - - - - - - -
 } >"$T/lock"
@@ -67,7 +67,7 @@ P1="$T/paquete1/ffmpeg-fuente-correspondiente-7.1.5-abc.tar.xz"
 afirmar "existe el tarball de código fuente correspondiente" test -s "$P1"
 if [ -s "$P1" ]; then
   contenido=$(tar -tJf "$P1")
-  for f in ffmpeg-7.1.5.tar.xz ffmpeg-7.1.5.tar.xz.asc dav1d-1.5.4.tar.xz zlib-1.3.2.tar.xz nv-codec-headers-n12.1.14.0.tar AMF-headers-v1.4.36.tar.gz; do
+  for f in ffmpeg-7.1.5.tar.xz ffmpeg-7.1.5.tar.xz.asc dav1d-1.5.4.tar.xz zlib-1.3.2.tar.xz nv-codec-headers-n12.1.14.0.tar amf-headers-v1.4.33.tar; do
     afirmar "contiene fuentes/$f" grep -q "/fuentes/$f\$" <<<"$contenido"
   done
   for f in ffmpeg-build/fuentes.lock ffmpeg-build/compilar.sh ffmpeg-build/Dockerfile LICENSES/zlib-LICENSE.txt LEEME-FUENTE.txt; do

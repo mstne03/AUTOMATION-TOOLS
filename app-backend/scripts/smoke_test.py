@@ -15,7 +15,8 @@ el Credential Manager ni LOCALAPPDATA/seo-studio.
 Motor de vídeo: sin `<exe>.parent/video-engine/node/node.exe`, comprueba que GET /video/capacidades da 503
 («módulo de vídeo no instalado»). Si existe (o se pasa `--video-engine RUTA`),
 comprueba GET /video/capacidades contra el motor del bundle: HyperFrames 0.8.206, telemetría
-desactivada y ffmpeg LGPL (sin libx264) del propio bundle.
+desactivada y ffmpeg LGPL (sin libx264) del propio bundle, cuyo sondeo de codificadores
+(`revisarEncoders` integrado) debe pasar: rechaza un ffmpeg con libx264 o libopenh264.
 
 Vídeo, fase 1 (T21): `VIDEO_PRUEBAS_TTS_URL`, `VIDEO_E2E` y `ELEVENLABS_VOICE_ID` se fijan en el entorno del
 sidecar con valores centinela y, con motor, se lee el entorno real de sus procesos node (PEB): ninguna de las tres
@@ -61,7 +62,7 @@ from typing import Self
 
 TOKEN ="smoke-test-token"
 HYPERFRAMES = "0.8.206"
-FFMPEG = "n7.1.5"  # el LGPL de la tarea 2; el de winget (8.1) delataría que no se usa el bundle
+FFMPEG = "7.1.5-seo-studio"  # el LGPL propio (W1.5, --extra-version); cualquier otro delata que no se usa el bundle
 CFT_VERSION = "156.0.8078.73"  # la de config.NAVEGADOR_VERSION
 CFT_FICHEROS = 288
 APP_BACKEND = Path(__file__).resolve().parents[1]
@@ -659,6 +660,12 @@ def comprobar_video(base: str, motor: Path, estado: str, t0: float, sidecar: int
     ffmpeg = c.get("ffmpeg") or ""
     assert ffmpeg and "--enable-libx264" not in ffmpeg, f"ffmpeg={ffmpeg!r}"
     assert FFMPEG in ffmpeg, f"ffmpeg={ffmpeg!r}: no es el ffmpeg LGPL del bundle"
+    # El sondeo del render pasa por revisarEncoders en modo integrado: si el ffmpeg trae libx264 o
+    # libopenh264, lanza y el motor omite `codificadores` (es lo que rompe importar y renderizar).
+    codificadores = c.get("codificadores")
+    assert isinstance(codificadores, list), (
+        f"codificadores={codificadores!r}: falló el sondeo del render (¿ffmpeg con libopenh264? mira el log del motor)"
+    )
     chrome = c.get("chrome") or ""
     carpeta = navegador / CFT_VERSION
     assert chrome.lower().startswith(str(carpeta).lower()), f"chrome={chrome!r}: no es el de {carpeta}"
@@ -668,6 +675,7 @@ def comprobar_video(base: str, motor: Path, estado: str, t0: float, sidecar: int
     print(f"GET /video/capacidades OK en {time.time() - t0:.1f} s")
     print(f"  hyperframes {c['hyperframes']} · telemetria {c['telemetria']}")
     print(f"  {ffmpeg}")
+    print(f"  codificadores {[x['codificador'] for x in codificadores] or 'ninguno'}")
     print(f"  chrome {chrome}")
     control_vigilante(chrome, navegador)
 

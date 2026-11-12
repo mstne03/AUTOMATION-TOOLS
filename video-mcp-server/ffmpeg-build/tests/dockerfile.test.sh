@@ -37,8 +37,11 @@ afirmar "el grueso de paquetes va por https://snapshot" grep -q 'https://snapsho
 updates=$(grep -o 'apt-get update' "$DF" | wc -l)
 comprobaciones=$(grep -o 'comprobar-inrelease.sh /var/lib/apt/lists' "$DF" | wc -l)
 afirmar "cada apt-get update va seguido de comprobar-inrelease.sh" test "$updates" -ge 1 -a "$updates" -eq "$comprobaciones"
-estrictos=$(grep -o 'apt-get update --error-on=any -o Acquire::http::AllowRedirect=false -o Acquire::https::AllowRedirect=false' "$DF" | wc -l)
-afirmar "cada apt-get update con --error-on=any y sin redirecciones (R1 LOW-9)" test "$estrictos" -eq "$updates"
+estrictos=$(grep -o 'apt-get update --error-on=any' "$DF" | wc -l)
+afirmar "cada apt-get update con --error-on=any" test "$estrictos" -eq "$updates"
+# R1 LOW-9 pedía apt sin redirecciones; snapshot.debian.org redirige todo (302 a /file/<sha1>) y la
+# integridad la da el InRelease anclado. Lo que no se admite es relajar el salto https→http.
+negar "apt sin AllowRedirect=false (snapshot redirige todo)" grep -q 'AllowRedirect=false' "$TMP_TEST/instrucciones"
 for p in 'trusted=yes' 'allow-insecure' '--allow-unauthenticated' 'AllowInsecureRepositories' 'AllowDowngradeToInsecureRepositories' '--force-yes' 'Verify-Peer' 'AllowUnauthenticated'; do
   negar "apt sin '$p'" grep -qi -- "$p" "$TMP_TEST/instrucciones"
 done

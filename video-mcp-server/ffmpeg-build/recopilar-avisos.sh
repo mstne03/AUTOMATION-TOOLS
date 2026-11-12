@@ -28,7 +28,7 @@ declare -A LICENCIA=(
   [dav1d]="fichero:COPYING"
   [zlib]="fichero:LICENSE"
   [nv-codec-headers]="cabecera:include/ffnvcodec/nvEncodeAPI.h"
-  [amf-headers]="cabecera:core/Platform.h"
+  [amf-headers]="cabecera:amf/public/include/core/Platform.h"
 )
 declare -A DESTINO=([ffmpeg]=ffmpeg-COPYING.LGPLv2.1.txt [dav1d]=dav1d-COPYING.txt [zlib]=zlib-LICENSE.txt
   [nv-codec-headers]=nv-codec-headers-LICENSE.txt [amf-headers]=amf-headers-LICENSE.txt)

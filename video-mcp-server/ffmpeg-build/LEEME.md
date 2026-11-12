@@ -71,9 +71,11 @@ Con esas banderas **la carpeta del `.exe` se busca antes que System32**: una `nv
 nunca se usan el cwd ni el PATH; eso vale solo para esa vía: las DLL de la tabla de importación
 estática las resuelve el cargador de Windows con su orden normal, que también empieza por la
 carpeta del `.exe`. Lo que cierra ambas vías es requisito de W3.2: el ffmpeg vive en una carpeta
-propia de la instalación con un manifiesto cerrado de ficheros (SHA-256 de
-`ffmpeg.exe`/`ffprobe.exe` y nada más), y el motor rechaza cualquier `.dll` extra en ella antes de
-invocarlo, como hace con el navegador (I4). `verificar-binario.sh` comprueba además que la tabla
+propia de la instalación que solo puede tener `ffmpeg.exe` y `ffprobe.exe` (SHA-256 fijado en
+`prepare-video-engine.sh` al empaquetar), y el motor rechaza cualquier fichero extra, subcarpeta o
+enlace en ella en cada uso (`revisarCarpetaFfmpeg`, I4). No se rehace el SHA-256 en ejecución: quien
+puede escribir en la instalación (la cuenta del usuario) también puede cambiar `node.exe` o el
+motor; la frontera es esa cuenta (revisión de la PR #28, M2). `verificar-binario.sh` comprueba además que la tabla
 de importación solo nombra DLL de System32 de una lista cerrada (`pe.sh`); esa lista cubre solo
 la tabla **estática**, no las delay-imports ni lo que se carga en ejecución.
 
@@ -212,6 +214,36 @@ Lo que **no** se ha podido cerrar, y por qué:
 - **SHA-256 del `git archive` de nv-codec-headers:** calculado con Git para Windows; idéntico en
   GitHub y en git.videolan.org (mismo commit 1889e62e…). Debe reconfirmarse dentro de la imagen
   fijada (permiso B).
+
+### Permiso B, paso 5 (2026-11-12)
+
+Imagen fijada: `debian:trixie-slim@sha256:a72b4433…b6b2` (índice multiarquitectura), snapshot
+`20261109T224401Z`, InRelease `0584fba3…6675` (`Date:` 2026-09-12) y la versión de cada paquete
+leída con `apt-cache policy` dentro de esa base. `docker build --no-cache` termina y deja
+`x86_64-w64-mingw32-gcc 14-posix` con usuario `build`. Dos cambios en el Dockerfile:
+
+- **Sin `AllowRedirect=false`** (deroga R1 LOW-9): snapshot.debian.org responde a todo con un 302
+  a `/file/<sha1>` del mismo host y apt no llegaba ni al InRelease. La integridad no cambia (el
+  InRelease está anclado y firmado; apt verifica cada índice y `.deb` contra él, y no admite
+  saltos de https a http).
+- `-oAcquire::Retries=5` en los `apt-get install`: snapshot corta conexiones con 100 MB seguidos.
+
+### Construcción local de testigo (2026-11-12, máquina de Marc, RTX 4060)
+
+`construir.sh` dos veces desde cero → `comparar-builds.sh`: idénticas bit a bit. `verificar-binario.sh`:
+todo verificado (sin `SIN_MF`). `h264_nvenc` y `h264_mf` codifican 30/30 fotogramas a 1080x1920.
+
+```
+f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85  ffmpeg.exe
+d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01  ffprobe.exe
+```
+
+Lo que destapó el primer build real (corregido, con test donde cabía): `gcc` nativo en la imagen
+(host cc de configure); `fd` en los protocolos (la CLI 7.x traduce `-` a `fd:`); `wrapped_avframe`
+como decoder (`-f lavfi`, el sondeo del motor) y como encoder (`-f null -`); comillas en las listas
+de `-buildconf`; `-L` con CRLF; `cat | grep -q` con pipefail en `compilar.sh`; la prueba `[gpu]`
+ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 3 cumplido; faltan 1 (`musica.ts`) y
+2 (el SHA-256 de CI debe coincidir con este).
 
 ### Descargas que pedirá la Tarea 10
 

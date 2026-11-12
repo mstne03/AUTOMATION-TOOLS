@@ -41,7 +41,7 @@ host() {
 # como canal (tampoco los keyservers). Subdominios incluidos (downloads.videolan.org → videolan).
 declare -A OPERADORES=(
   [ffmpeg.org]=ffmpeg [videolan.org]=videolan [zlib.net]=zlib-madler [madler.net]=zlib-madler
-  [github.com]=github [githubusercontent.com]=github [debian.org]=debian [archlinux.org]=arch
+  [github.com]=github [githubusercontent.com]=github [debian.org]=debian [archlinux.org]=arch [fedoraproject.org]=fedora
 )
 operador() { # <host> → operador, o falla si no está en la tabla
   local d
@@ -51,6 +51,14 @@ operador() { # <host> → operador, o falla si no está en la tabla
   return 1
 }
 operador_url() { local h; h=$(host "$1") || return 1; operador "$h"; }
+
+# Segundos canales: solo la ruta OFICIAL de cada distribución y fijada a commit (no vale un fork ni
+# otra cuenta del mismo dominio: revisión de la PR #28, M1).
+ARCH_PKGBUILD='^https://gitlab\.archlinux\.org/archlinux/packaging/packages/[a-z0-9._+-]+/-/raw/[0-9a-f]{40}/PKGBUILD$'
+FEDORA_SOURCES='^https://src\.fedoraproject\.org/rpms/[A-Za-z0-9._+-]+/raw/[0-9a-f]{40}/f/sources$'
+# Contenido de los arrays sha256sums=(…) y sha512sums=(…) de un PKGBUILD: el hash debe estar ahí, no
+# en un comentario ni en otra variable.
+sumas_pkgbuild() { awk '/^(sha256|sha512)sums=\(/ {f = 1} f {print} f && /\)/ {f = 0}' "$1"; }
 
 validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
   local e canal fpr op vistos=" " n=0 op_url op_firma
@@ -64,7 +72,8 @@ validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
       debian:?*) op=debian ;;
       https://?*)
         op=$(operador_url "$canal") || error "$1: anclaje: '$canal' no es de un operador conocido (ni keyserver ni host suelto)"
-        [ "$op" != arch ] || [[ "$canal" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$1: anclaje: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)" ;;
+        [ "$op" != arch ] || [[ "$canal" =~ $ARCH_PKGBUILD ]] || error "$1: anclaje: el PKGBUILD de Arch debe ser el oficial (archlinux/packaging/packages) y fijado a un commit (/-/raw/<40 hex>/)"
+        [ "$op" != fedora ] || [[ "$canal" =~ $FEDORA_SOURCES ]] || error "$1: anclaje: el dist-git de Fedora debe ser rpms/<paquete> fijado a un commit (/raw/<40 hex>/f/sources)" ;;
       *) error "$1: anclaje: canal no válido '$canal' (debian:<paquete> o https://…)" ;;
     esac
     [ "$op" != "$op_url" ] && [ "$op" != "$op_firma" ] || error "$1: anclaje en el operador de la descarga ($op)"
@@ -82,9 +91,11 @@ validar_fila() { # campos de la fila
   [ "$ARRANQUE" = 1 ] && return 0
   hex "$sha" 64 || error "$nombre: sha256 no válido"
   case "$tipo" in
-    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)" ;;
+    tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)"
+         # Solo el PKGBUILD oficial de Arch: en otro operador cualquiera podría publicar el hash (PR #28).
+         [ "$canal2" = - ] || [[ "$canal2" =~ $ARCH_PKGBUILD ]] || [[ "$(operador_url "$canal2" || true)" == "$(operador_url "$url" || true)" ]]            || error "$nombre: canal2 de un tarball debe ser el PKGBUILD oficial de Arch fijado a un commit" ;;
     git) hex "$commit" 40 || error "$nombre: commit de 40 hex obligatorio"
-         [[ "$canal2" == https://*.git ]] || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable" ;;
+         [[ "$canal2" == https://*.git || "$canal2" =~ $ARCH_PKGBUILD ]]            || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable o un PKGBUILD de Arch que fije el commit" ;;
     *) error "$nombre: tipo '$tipo' desconocido" ;;
   esac
   if [ "$canal2" != - ]; then
@@ -92,7 +103,7 @@ validar_fila() { # campos de la fila
     op2=$(operador_url "$canal2") || error "$nombre: canal2 no es de un operador conocido ($canal2)"
     op=$(operador_url "$url") || error "$nombre: la URL no está en la tabla de operadores"
     [ "$op2" != "$op" ] || error "$nombre: canal2 es del mismo operador que la descarga ($op)"
-    [ "$op2" != arch ] || [[ "$canal2" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$nombre: canal2: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)"
+    [ "$op2" != arch ] || [[ "$canal2" =~ $ARCH_PKGBUILD ]] || error "$nombre: canal2: el PKGBUILD de Arch debe ser el oficial (archlinux/packaging/packages) y fijado a un commit (/-/raw/<40 hex>/)"
   fi
   if [ "$firma" != - ]; then
     [[ "$huella" =~ ^[0-9A-F]{40}$ ]] || error "$nombre: huella de 40 hex en mayúsculas obligatoria"
@@ -116,6 +127,7 @@ obtener() { # <url> <destino>
   op=$(operador_url "$u") || error "la URL no está en la tabla de operadores: $u"
   for _ in 1 2 3 4; do
     r=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-redirs 0 \
+      --retry 4 --retry-all-errors --retry-delay 5 \
       --max-filesize 209715200 -o "$2" -w '%{http_code} %{redirect_url}' "$u") || error "descarga fallida: $u"
     codigo=${r%% *}; siguiente=${r#* }
     case "$codigo" in
@@ -136,7 +148,7 @@ obtener() { # <url> <destino>
 verificar_firma() { # <nombre> <fichero> <asc> <huella o ->
   local gh estado primaria algoritmo claves fallo=""
   gh=$(mktemp -d)
-  if ! GNUPGHOME=$gh gpg --batch --quiet --import "$CLAVES/$1.asc" 2>/dev/null; then fallo="clave ilegible"
+  if ! GNUPGHOME=$gh gpg --batch --quiet --no-autostart --import "$CLAVES/$1.asc" 2>/dev/null; then fallo="clave ilegible"
   else
     claves=$(GNUPGHOME=$gh gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '/^pub/ {p = 1; next} p && /^fpr/ {print $10; p = 0}')
     if [ -z "$claves" ] || [ "$(wc -l <<<"$claves")" -ne 1 ]; then fallo="claves/$1.asc debe tener exactamente una clave primaria"
@@ -177,11 +189,14 @@ verificar_anclaje_debian() { # <nombre> <paquete> <huella>
   awk -v p="$2" 'BEGIN {RS = ""; FS = "\n"}
     !hecho { pkg = ""; for (i = 1; i <= NF; i++) if ($i ~ /^Package: /) pkg = substr($i, 10)
       if (pkg != p) next
-      dir = ""; cs = 0; hecho = 1
+      # Directory va después de Checksums-Sha256 en la estrofa: se imprime al terminar de leerla.
+      dir = ""; cs = 0; n = 0; hecho = 1
       for (i = 1; i <= NF; i++) {
         if ($i ~ /^Directory: /) dir = substr($i, 12)
         if ($i ~ /^Checksums-Sha256:/) { cs = 1; continue }
-        if (cs && $i ~ /^ /) { split($i, a, " "); print dir, a[1], a[3] } else cs = 0 } }' "$d/Sources" >"$d/ficheros"
+        if (cs && $i ~ /^ /) { split($i, a, " "); n++; s[n] = a[1]; f[n] = a[3] } else cs = 0 }
+      if (dir == "") exit 1
+      for (i = 1; i <= n; i++) print dir, s[i], f[i] }' "$d/Sources" >"$d/ficheros" || error "$1: el paquete fuente $2 no tiene Directory en Sources"
   [ -s "$d/ficheros" ] || error "$1: el paquete fuente $2 no está en Sources"
   while read -r dir sha nombre_f; do
     case "$nombre_f" in *.dsc) dsc=$nombre_f ;; *.debian.tar.*) deb=$nombre_f ;; *) continue ;; esac
@@ -191,7 +206,7 @@ verificar_anclaje_debian() { # <nombre> <paquete> <huella>
   done <"$d/ficheros"
   [ -n "$dsc" ] && [ -n "$deb" ] || error "$1: falta el .dsc o el debian.tar del paquete $2"
   tar -xOf "$d/$deb" debian/upstream/signing-key.asc >"$d/clave.asc" 2>/dev/null || error "$1: $deb sin debian/upstream/signing-key.asc"
-  claves=$(GNUPGHOME=$d gpg --batch --quiet --import "$d/clave.asc" 2>/dev/null; GNUPGHOME=$d gpg --batch --with-colons --list-keys 2>/dev/null |
+  claves=$(GNUPGHOME=$d gpg --batch --quiet --no-autostart --import "$d/clave.asc" 2>/dev/null; GNUPGHOME=$d gpg --batch --with-colons --list-keys 2>/dev/null |
     awk -F: '/^pub/ {p = 1; next} p && /^fpr/ {print $10; p = 0}')
   GNUPGHOME=$d gpgconf --kill all 2>/dev/null || true
   grep -qx "$3" <<<"$claves" || error "$1: anclaje: el signing-key.asc de Debian ($2) no contiene la huella $3"
@@ -257,9 +272,12 @@ for linea in "${filas[@]}"; do
         [[ "$e" != debian:* ]] || { e=${e#debian:}; verificar_anclaje_debian "$nombre" "${e%=*}" "$huella"; }
       done
     else
-      # Sin firma: el segundo canal (un .sha256 de otro operador) debe contener el mismo SHA-256.
+      # Sin firma: el segundo canal (de otro operador) debe contener el SHA-256 o el SHA-512 de estos
+      # mismos bytes (los PKGBUILD de Arch traen sha512sums). Las firmas DSA/SHA-1 de dav1d y zlib
+      # no se aceptan: van por aquí (decisión de la Tarea 10).
       obtener "$canal2" "$TRABAJO/canal2"
-      grep -qw "$sha" "$TRABAJO/canal2" || error "$nombre: canal2 no confirma el SHA-256"
+      sumas_pkgbuild "$TRABAJO/canal2" >"$TRABAJO/canal2.sumas"
+      grep -qw -e "$sha" -e "$(sha512sum "$f" | cut -d' ' -f1)" "$TRABAJO/canal2.sumas" || error "$nombre: canal2 no confirma el SHA-256 ni el SHA-512"
     fi
     mv "$f" "$TRABAJO/ok/"; [ "$firma" = - ] || mv "$f.asc" "$TRABAJO/ok/"
   else
@@ -269,10 +287,17 @@ for linea in "${filas[@]}"; do
     real=$(sha256sum "$f" | cut -d' ' -f1)
     if [ "$ARRANQUE" = 1 ]; then echo "$nombre	commit=$c1	sha256=$real"; continue; fi
     [ "$real" = "$sha" ] || error "$nombre: SHA-256 del git archive $real ≠ fijado $sha"
-    # Segundo canal: otro repositorio, de otro operador, con el mismo commit y archive (L1).
-    archivo_git "$canal2" "$version" "$commit" "$ruta" "$f.2" >/dev/null
-    [ "$(sha256sum "$f.2" | cut -d' ' -f1)" = "$sha" ] || error "$nombre: el espejo $canal2 da otro contenido"
-    rm -f "$f.2"
+    # Segundo canal: otro repositorio, de otro operador, con el mismo commit y archive (L1), o un
+    # PKGBUILD de Arch fijado a commit que nombra ese commit (AMF no tiene espejo).
+    if [[ "$canal2" == *.git ]]; then
+      archivo_git "$canal2" "$version" "$commit" "$ruta" "$f.2" >/dev/null
+      [ "$(sha256sum "$f.2" | cut -d' ' -f1)" = "$sha" ] || error "$nombre: el espejo $canal2 da otro contenido"
+      rm -f "$f.2"
+    else
+      obtener "$canal2" "$TRABAJO/canal2"
+      # El commit como valor de _tag/_commit o en el #tag=/#commit= de source, no en cualquier sitio.
+      grep -qE "^_(tag|commit)=['\"]?$commit['\"]?[[:space:]]*$|^source=.*#(tag|commit)=$commit" "$TRABAJO/canal2"         || error "$nombre: canal2 no fija el commit $commit"
+    fi
     mv "$f" "$TRABAJO/ok/"
   fi
   echo "verificado: $nombre $version"

@@ -68,7 +68,7 @@ comprobar listados "ningún codificador, decodificador ni filtro prohibido (x264
 "$FF" -hide_banner -buildconf >"$T/buildconf"; "$FF" -hide_banner -encoders >"$T/encoders"
 comprobar licencia "-buildconf pasa la puerta de componentes.conf" bash "$AQUI/verificar-configuracion.sh" "$T/buildconf" "$T/encoders"
 comprobar licencia "-version sin --enable-gpl ni --enable-nonfree" bash -c "! '$FF' -hide_banner -version | grep -E -- '--enable-(gpl|nonfree)'"
-lgpl21() { "$1" -hide_banner -L | tr '\n' ' ' | grep -E 'GNU Lesser General Public License.*version 2\.1 of the License.*any later version'; }
+lgpl21() { "$1" -hide_banner -L | tr -d '\r' | tr '\n' ' ' | grep -E 'GNU Lesser General Public License.*version 2\.1 of the License.*any later version'; }
 comprobar licencia "ffmpeg -L: LGPL 2.1 o posterior" lgpl21 "$FF"
 comprobar licencia "ffprobe -L: LGPL 2.1 o posterior" lgpl21 "$FP"
 
@@ -111,6 +111,9 @@ else
     awk -v d="$(fp -show_entries format=duration -of csv=p=0 "$T/final.mp4")" 'BEGIN { exit !(d >= 0.9 && d <= 1.1) }' || { echo "duración fuera de 1 ± 0,1 s"; return 1; }
   }
   comprobar tubería ".mov → h264_mf + AAC 192k +faststart; h264+aac y 1 ± 0,1 s" mf
+  # El sondeo exacto de sondearCodificadores (render.ts): lavfi necesita el decoder wrapped_avframe.
+  comprobar tubería "sondeo del motor: lavfi color 1080x1920 → h264_mf (render.ts)" ff -f lavfi \
+    -i color=size=1080x1920:rate=30:duration=1 -frames:v 1 -c:v h264_mf -f null -
   final=$T/final.mp4
 fi
 comprobar tubería "loudnorm I=-14 sobre WAV (musica.ts)" ff -i "$M/musica.wav" -af loudnorm=I=-14:TP=-1.5:LRA=11 -ar 44100 -f null -
@@ -124,7 +127,10 @@ comprobar tubería "sonda de color a rawvideo (capacidades.ts)" ff -ss 0.5 -i "$
 gpu() {
   local rc; timeout 10 "$FF" -hide_banner -nostdin -v error -f lavfi -i color=size=320x240:rate=1:duration=1 -c:v "$1" -f null - 2>"$T/err"; rc=$?
   [ "$rc" -ne 124 ] || { echo "$1 no terminó en 10 s"; return 1; }
-  if [ "$rc" -eq 0 ]; then echo "$1: codifica (hay GPU)"; else [ -s "$T/err" ] || { echo "$1: código $rc sin mensaje"; return 1; }; fi
+  if [ "$rc" -eq 0 ]; then echo "$1: codifica (hay GPU)"; return 0; fi
+  [ -s "$T/err" ] || { echo "$1: código $rc sin mensaje"; return 1; }
+  # Un fallo del build (decoder o encoder ausente) no es «sin GPU»: lo ocultaría en cualquier máquina.
+  ! grep -qiE 'no decoder found|encoder not found|unknown encoder' "$T/err" || { cat "$T/err"; return 1; }
 }
 for e in h264_nvenc h264_amf; do comprobar gpu "$e: codifica o falla en < 10 s con mensaje" gpu "$e"; done
 

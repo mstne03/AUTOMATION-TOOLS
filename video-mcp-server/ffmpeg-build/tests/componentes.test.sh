@@ -25,7 +25,7 @@ for o in "${FF_CONFIGURE_ENABLE[@]}"; do
 done
 afirmar "--disable-everything presente" grep -q -- '--disable-everything' <<<"${FF_CONFIGURE_ENABLE[*]}"
 afirmar "--disable-network presente" grep -q -- '--disable-network' <<<"${FF_CONFIGURE_ENABLE[*]}"
-afirmar "protocolos: exactamente file y pipe" test "${FF_LISTAS[protocol]}" = "file pipe"
+afirmar "protocolos: exactamente file, pipe y fd" test "${FF_LISTAS[protocol]}" = "file pipe fd"
 afirmar "lavfi va como indev, no como demuxer" test "${FF_LISTAS[indev]}" = "lavfi"
 negar "lavfi no es demuxer" grep -qw lavfi <<<"${FF_LISTAS[demuxer]}"
 

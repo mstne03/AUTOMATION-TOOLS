@@ -28,7 +28,8 @@ for o in "${opciones[@]}"; do
   if [[ "$o" == *=* ]]; then
     tipo=${o%%=*}; tipo=${tipo#--enable-}
     if [ -z "${FF_LISTAS[$tipo]+x}" ]; then error "$o: tipo '$tipo' que componentes.conf no declara"; continue; fi
-    reales[$tipo]+=" ${o#*=}"
+    # configure guarda las listas con comillas simples (--enable-decoder='h264,aac'): fuera.
+    v=${o#*=}; reales[$tipo]+=" ${v//\'/}"
   elif [[ " ${FF_LISTA_BLANCA_ENABLE[*]} " != *" $o "* ]]; then
     error "$o: fuera de la lista blanca de componentes.conf"
   fi
