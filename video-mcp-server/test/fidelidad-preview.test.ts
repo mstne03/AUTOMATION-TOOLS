@@ -1,7 +1,8 @@
 // CA4 `fotogramas_fijos_ssim` (T21): la preview (iframe sandbox con la CSP real, seek del runtime) y el MP4 del motor
-// real (CfT + ffmpeg LGPL, h264_mf, ElevenLabs simulado) enseñan lo mismo en 5 instantes fijos: SSIM ≥ 0,99 con el
-// filtro `ssim` de ffmpeg. Fondo CSS (sin WebGPU): WebGPU en WebView2 es la prueba manual M2. Falla, no salta, si faltan
-// FFMPEG_DIR o el navegador.
+// real (CfT + ffmpeg LGPL, h264_mf, ElevenLabs simulado) enseñan lo mismo en 5 instantes fijos. Métrica decidida por
+// Marc (2026-11-12): la fidelidad de la preview se mide contra el render SIN pérdida de la misma composición (PSNR ≥ 40 dB),
+// y contra el MP4 (que suma la pérdida de h264_mf: el propio códec deja el SSIM en ~0,983) se exige SSIM ≥ 0,97.
+// Fondo CSS (sin WebGPU): WebGPU en WebView2 es la prueba manual M2. Falla, no salta, si faltan FFMPEG_DIR o el navegador.
 //   VIDEO_E2E_FFMPEG=<bin LGPL> VIDEO_E2E_NAVEGADOR=<carpeta con chrome-headless-shell-win64> npx vitest run test/fidelidad-preview.test.ts
 import fs from "node:fs";
 import path from "node:path";
@@ -27,10 +28,11 @@ const F = vi.hoisted(() => {
 import { montarPreviewTool, renderizar } from "../src/herramientas.js";
 import { ejecutar } from "../src/proceso.js";
 import { HYPERFRAMES_BIN, esperarJob, ultimasLineasUtiles } from "../src/render.js";
-import { abrirPreview, configDe, elevenLabsSimulado, exigirEntorno, fotogramaDe, proyectoConVoz, ssimDe } from "./ayudas-aceptacion.js";
+import { abrirPreview, configDe, elevenLabsSimulado, exigirEntorno, fotogramaDe, proyectoConVoz, psnrDe, ssimDe } from "./ayudas-aceptacion.js";
 
 const INSTANTES = [2, 5, 8, 11, 14];
-const UMBRAL = 0.99;
+const PSNR_MIN_DB = 40; // preview frente al render sin pérdida
+const SSIM_MIN_MP4 = 0.97; // preview frente al MP4 de h264_mf
 const RAIZ = path.join(F.base, "videos");
 
 afterAll(() => {
@@ -39,7 +41,7 @@ afterAll(() => {
 
 describe("CA4 · fotogramas_fijos_ssim", () => {
   const ssim: { t: number; v: number }[] = [];
-  const ssimSinPerdida: { t: number; v: number }[] = [];
+  const psnrSinPerdida: { t: number; v: number }[] = [];
   const medida = (t: number) => ssim.find((x) => x.t === t)?.v;
 
   beforeAll(async () => {
@@ -85,24 +87,24 @@ describe("CA4 · fotogramas_fijos_ssim", () => {
     if (r.code !== 0) throw new Error(`render sin pérdida (código ${r.code}): ${(r.stderr || r.stdout).slice(-800)}`);
     for (const t of INSTANTES) {
       const ref = path.join(pngs, `frame_${String(Math.round(t * 30) + 1).padStart(6, "0")}.png`);
-      ssimSinPerdida.push({ t, v: await ssimDe(ffmpegDir, png(t), ref) });
+      psnrSinPerdida.push({ t, v: await psnrDe(ffmpegDir, png(t), ref) });
       if (process.env.VIDEO_E2E_CONSERVAR) fs.copyFileSync(ref, path.join(process.env.VIDEO_E2E_CONSERVAR, `sinperdida-${t}.png`));
     }
-    const fila = (t: number) => `  ${String(t).padStart(2)} s · MP4 ${ssim.find((x) => x.t === t)!.v.toFixed(5)} · render sin pérdida ${ssimSinPerdida.find((x) => x.t === t)!.v.toFixed(5)}`;
+    const fila = (t: number) => `  ${String(t).padStart(2)} s · MP4 ${ssim.find((x) => x.t === t)!.v.toFixed(5)} · render sin pérdida PSNR ${psnrSinPerdida.find((x) => x.t === t)!.v.toFixed(1)} dB`;
     const tabla = INSTANTES.map(fila).join("\n");
     process.stderr.write(`[medida] SSIM de la preview (${job.modo ?? "?"}, fondo ${JSON.stringify(job.fondo)}):\n${tabla}\n`);
     if (process.env.VIDEO_E2E_MEDIDAS) fs.appendFileSync(process.env.VIDEO_E2E_MEDIDAS, `fidelidad:\n${tabla}\n`);
   }, 20 * 60_000);
 
   for (const t of INSTANTES) {
-    it(`a ${t} s la preview y el render sin pérdida coinciden (SSIM ≥ ${UMBRAL})`, () => {
-      const v = ssimSinPerdida.find((x) => x.t === t)?.v;
+    it(`a ${t} s la preview y el render sin pérdida coinciden (PSNR ≥ ${PSNR_MIN_DB} dB)`, () => {
+      const v = psnrSinPerdida.find((x) => x.t === t)?.v;
       expect(v, `no hay medida a ${t} s`).toBeDefined();
-      expect(v!).toBeGreaterThanOrEqual(UMBRAL);
+      expect(v!).toBeGreaterThanOrEqual(PSNR_MIN_DB);
     });
-    it(`a ${t} s la preview y el MP4 coinciden (SSIM ≥ ${UMBRAL})`, () => {
+    it(`a ${t} s la preview y el MP4 coinciden (SSIM ≥ ${SSIM_MIN_MP4})`, () => {
       expect(medida(t), `no hay medida a ${t} s`).toBeDefined();
-      expect(medida(t)!).toBeGreaterThanOrEqual(UMBRAL);
+      expect(medida(t)!).toBeGreaterThanOrEqual(SSIM_MIN_MP4);
     });
   }
 });

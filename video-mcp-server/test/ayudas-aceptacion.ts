@@ -152,6 +152,15 @@ export async function ssimDe(ffmpegDir: string, a: string, b: string): Promise<n
   return Number(m[1]);
 }
 
+/** PSNR medio (dB) entre dos imágenes con el filtro `psnr` del ffmpeg LGPL; `inf` (idénticas) cuenta como 99 dB. */
+export async function psnrDe(ffmpegDir: string, a: string, b: string): Promise<number> {
+  const h = herramientasFfmpeg(ffmpegDir)!;
+  const r = await ejecutar(h.ffmpeg, ["-hide_banner", "-i", a, "-i", b, "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"], { timeoutMs: 60_000 });
+  const m = /PSNR[^\n]*average:(inf|[\d.]+)/.exec(r.stderr);
+  if (r.code !== 0 || !m) throw new Error(`psnr: ${r.stderr.slice(-400)}`);
+  return m[1] === "inf" ? 99 : Number(m[1]);
+}
+
 /** Fotograma del MP4 en el instante `t` (PNG). */
 export async function fotogramaDe(ffmpegDir: string, mp4: string, t: number, salida: string): Promise<void> {
   const h = herramientasFfmpeg(ffmpegDir)!;
