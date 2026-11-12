@@ -120,6 +120,10 @@ rm -rf "$HF_APP/vendor/npm" "$HF_APP/studio"
 rc=0
 grep -rIlE "$LICENCIA_GSAP" "$DEST/app" || rc=$?
 [ "$rc" -eq 1 ] || falla "el bundle lleva GSAP, o la búsqueda falló (I12)"
+# three147: el motor solo copia build/three.min.js (composicion.ts, con SHA-256 fijado). examples/ (~30 MB) trae
+# rutas de más de 140 caracteres que, desde un worktree profundo, pasan del MAX_PATH de 260 y makensis aborta.
+rm -rf "$DEST/app/node_modules/three147/examples"
+[ -f "$DEST/app/node_modules/three147/build/three.min.js" ] || falla "falta three147/build/three.min.js en el bundle"
 
 echo "== Node $NODE_VERSION"
 zip=$(descargar "node-$NODE_VERSION" "$NODE_URL" "$NODE_ZIP" "$NODE_SHA256")
