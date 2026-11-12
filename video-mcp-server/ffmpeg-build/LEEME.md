@@ -213,6 +213,19 @@ Lo que **no** se ha podido cerrar, y por qué:
   GitHub y en git.videolan.org (mismo commit 1889e62e…). Debe reconfirmarse dentro de la imagen
   fijada (permiso B).
 
+### Permiso B, paso 5 (2026-11-12)
+
+Imagen fijada: `debian:trixie-slim@sha256:a72b4433…b6b2` (índice multiarquitectura), snapshot
+`20261109T224401Z`, InRelease `0584fba3…6675` (`Date:` 2026-09-12) y la versión de cada paquete
+leída con `apt-cache policy` dentro de esa base. `docker build --no-cache` termina y deja
+`x86_64-w64-mingw32-gcc 14-posix` con usuario `build`. Dos cambios en el Dockerfile:
+
+- **Sin `AllowRedirect=false`** (deroga R1 LOW-9): snapshot.debian.org responde a todo con un 302
+  a `/file/<sha1>` del mismo host y apt no llegaba ni al InRelease. La integridad no cambia (el
+  InRelease está anclado y firmado; apt verifica cada índice y `.deb` contra él, y no admite
+  saltos de https a http).
+- `-oAcquire::Retries=5` en los `apt-get install`: snapshot corta conexiones con 100 MB seguidos.
+
 ### Descargas que pedirá la Tarea 10
 
 | # | Qué | Origen | Tamaño aprox. | Permiso |
