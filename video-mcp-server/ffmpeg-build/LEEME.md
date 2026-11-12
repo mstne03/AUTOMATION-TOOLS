@@ -242,7 +242,7 @@ Lo que destapó el primer build real (corregido, con test donde cabía): `gcc` n
 (host cc de configure); `fd` en los protocolos (la CLI 7.x traduce `-` a `fd:`); `wrapped_avframe`
 como decoder (`-f lavfi`, el sondeo del motor) y como encoder (`-f null -`); comillas en las listas
 de `-buildconf`; `-L` con CRLF; `cat | grep -q` con pipefail en `compilar.sh`; la prueba `[gpu]`
-ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 3 cumplido; faltan 1 (`musica.ts`) y
+ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 1 (`musica.ts` en WAV desde T2) y 3 cumplidos; falta
 2 (el SHA-256 de CI debe coincidir con este).
 
 ### Descargas que pedirá la Tarea 10
