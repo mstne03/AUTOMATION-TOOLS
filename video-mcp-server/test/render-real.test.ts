@@ -80,7 +80,7 @@ async function prepararVideo(id: string) {
   };
   const colores = ["0x1f5c3a", "0x3a1f5c", "0x5c3a1f", "0x1f3a5c", "0x5c1f3a", "0x3a5c1f"];
   for (let n = 1; n <= 6; n++) await ff(["-f", "lavfi", "-i", `color=c=${colores[n - 1]}:s=1080x1920:d=1`, "-frames:v", "1", path.join(dir, `img${n}.jpg`)]);
-  await ff(["-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "aac", "-f", "adts", path.join(dir, "voz.mp3")]);
+  await ff(["-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "libmp3lame", "-b:a", "128k", path.join(dir, "voz.mp3")]);
   const guion = parsearGuion(GUION);
   const chars = [...guion.narracion];
   const paso = 4.6 / chars.length;

@@ -1,4 +1,4 @@
-# Aceptación de la fase 1 de vídeo (T21 · SEO-107) — estado a 2026-11-12, en curso
+# Aceptación de la fase 1 de vídeo (T21 · SEO-107) — estado a 2026-11-12
 
 Rama `feat/21-aceptacion` desde `feat/video-fase1-integrada` (4366e03). Sin PR ni fusión a `ds/v1`.
 Detalle por pieza: `T21-aceptacion-motor.md`, `T21-fidelidad-rendimiento.md`, `T21-smoke-capturas.md`
@@ -21,14 +21,25 @@ Se pasa por `FFMPEG_DIR`; el del PATH (full build de WinGet) no se usa. El build
 | `npm test` | 1150 OK, 69 omitidos |
 | `render:mock` | 1 OK |
 | `render:sandbox` | 21 OK |
-| `aceptacion.test.ts` (CA1, CA5, CA7, CA8), ejecución del subagente | 11/11 OK en 611 s |
-| `video-preview.spec.ts` + `visual.spec.ts` (Playwright) | 51 OK |
-| `rendimiento_180s` (90 escenas, 179 s) | OK: montar 5,9 s / 120 s; `check` 145 s / 600 s; seek máx. 426 ms / 2 s |
-| `fidelidad-preview` CA4 `fotogramas_fijos_ssim` | **FALLA**: SSIM 0,978 frente a 0,99 (ver abajo) |
+| `render:aceptacion` (`aceptacion` + `fidelidad-preview`, una sola ejecución) | 12 OK, 9 fallan: los 9 son CA4 (ver abajo); CA1, CA5, CA7 y CA8 pasan |
+| `render-real` (`VIDEO_E2E_REAL=1`) | 7 OK, 2 omitidos, 1 falla: el oráculo de sockets (ver abajo) |
+| `rendimiento_180s` sin carga (90 escenas, 179 s) | OK: montar 5,2 s / 120 s; `check` 144 s / 600 s; seek máx. 266 ms / 2 s |
+| `pnpm e2e` completo | 212 OK (6,7 min) |
+| CI (`workflow_dispatch` sobre la rama) | Verde tras trocear la clave centinela de CA7 (`gitleaks` la tomaba por `generic-api-key`) |
 
-**Pendiente de ejecutar** (interrumpido a petición de Marc): `render:aceptacion` completo de una
-vez, `pnpm e2e` completo, `render-real` (`VIDEO_E2E_REAL=1`, filas 4, 7, 14 y 20 de la tabla
-negativa) y `rendimiento_180s` sin carga. Después: commit final, push y CI.
+**Correcciones de test hechas en la rama:**
+
+- `render-real.test.ts` generaba `voz.mp3` con AAC/ADTS dentro. Desde SEO-110 el motor fuerza el
+  demuxer por extensión (`argsEntrada`) y lo rechaza, que es lo correcto. Ahora el fixture es un MP3 de
+  verdad (`libmp3lame`, como `e2e-mock`).
+- La clave centinela falsa de CA7 se monta troceada, y `.gitleaks.toml` acota el commit 920c1a6 (regla,
+  fichero y commit).
+
+**Oráculo de sockets de `render-real` (fila 14 de la tabla negativa):** en esta máquina,
+`Get-NetTCPConnection` y `netstat` solo ven 6 sockets en escucha en todo el sistema, y no ven ni un
+servidor de prueba en 127.0.0.1, ni dentro ni fuera del sandbox de la sesión. El test lo detecta y
+falla cerrado, como debe («la tabla de escuchas no es fiable en este entorno»). La fila queda cubierta
+por `render:sandbox` (21 OK) y por la medida manual M-5.
 
 ## Decisiones que necesita Marc
 
@@ -76,7 +87,8 @@ negativa) y `rendimiento_180s` sin carga. Después: commit final, push y CI.
 | 21 | Renderer Untrusted | `sandbox-render.test.ts` «renderer Untrusted…» | `render:sandbox` | Completa |
 
 Huecos: la fila 4 no mide conexiones a `registry.npmjs.org` y la fila 12 no comprueba que el motor
-siga vivo. Las filas que dependen de `render-real` están pendientes de ejecutar (ver arriba).
+siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta rama; la fila 14 en
+`render-real` no es medible en esta máquina (ver arriba).
 
 ## Pasos manuales de Marc
 
@@ -95,6 +107,6 @@ siga vivo. Las filas que dependen de `render-real` están pendientes de ejecutar
 2. M-4 cerrada, M-5 medida y M2 hecha.
 3. R2-1 y R2-2 arreglados y probados con Rust real (no solo con E2E simulados).
 4. Bug `content_overlap` de la primera escena arreglado, o el piloto avisado de que no empiece por `cartel`/`cifra`.
-5. Decisión sobre CA4 y la suite completa en verde: `render:aceptacion`, `render-real` y `pnpm e2e`.
+5. Decisión sobre CA4 (lo único que mantiene en rojo `render:aceptacion`) y M-5 medida con la app real.
 6. Decisión escrita sobre WebRTC en la preview y sonda de red con la app real.
 7. Build instalado a mano por Marc; sin release a `main`.
