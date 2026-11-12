@@ -4,12 +4,12 @@
  *  motor: `POST /video/guiones` decide y sus errores se muestran tal cual (T9). */
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Clapperboard, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Clapperboard, FolderOpen, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { ApiError } from "../api/client";
 import { useClient } from "../api/context";
 import { useGuionesVideo } from "../api/queries";
-import { crearVideo, editarCabeceraVideo, editarEscenaVideo, empezarDeNuevo, guardarGuionVideo, moverEscenaVideo, useGuiones } from "../state/guiones";
+import { abrirGuionGuardado, crearVideo, editarCabeceraVideo, editarEscenaVideo, empezarDeNuevo, guardarGuionVideo, moverEscenaVideo, useGuiones } from "../state/guiones";
 import { Button, Chip, ConfirmDialog, Field, IconButton, Input, Select, Textarea } from "../ui";
 import { erroresServidor } from "./modelo";
 import s from "./Guiones.module.css";
@@ -129,8 +129,18 @@ export function GuionesGuardados() {
   const qc = useQueryClient();
   const lista = useGuionesVideo();
   const [aBorrar, setABorrar] = useState<{ id: string; titulo: string } | null>(null);
+  const [aAbrir, setAAbrir] = useState<{ id: string; titulo: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const abierto = useGuiones((st) => st.escribir.videoGuardadoId);
+  const sinGuardar = useGuiones((st) => st.escribir.guionVideo !== null && st.escribir.videoGuardadoId === null);
+  const ocupado = useGuiones((st) => st.escribir.videoOcupado);
   if (!lista.data?.length) return null;
+  // Un guion editado y sin guardar se perdería al abrir otro: se pregunta antes.
+  const abrir = async (id: string) => {
+    setError(null);
+    setError(await abrirGuionGuardado(client, id));
+  };
+  const pedirAbrir = (gu: { id: string; titulo: string }) => (sinGuardar ? setAAbrir(gu) : void abrir(gu.id));
   const borrar = async (id: string) => {
     setError(null);
     try {
@@ -151,6 +161,18 @@ export function GuionesGuardados() {
         {lista.data.map((gu) => (
           <li key={gu.id} className={s.guardado} data-testid={`guion-guardado-${gu.id}`}>
             <span className={s.guardadoTitulo}>{gu.titulo}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={FolderOpen}
+              data-testid={`guion-guardado-abrir-${gu.id}`}
+              aria-label={`Abrir el guion ${gu.titulo}`}
+              aria-current={abierto === gu.id ? "true" : undefined}
+              disabled={ocupado || abierto === gu.id}
+              onClick={() => pedirAbrir(gu)}
+            >
+              {abierto === gu.id ? "Abierto" : "Abrir"}
+            </Button>
             <IconButton size="sm" icon={Trash2} aria-label={`Borrar el guion ${gu.titulo}`} data-testid={`guion-guardado-borrar-${gu.id}`} onClick={() => setABorrar({ id: gu.id, titulo: gu.titulo })} />
           </li>
         ))}
@@ -160,6 +182,17 @@ export function GuionesGuardados() {
           {error}
         </p>
       )}
+      <ConfirmDialog
+        open={aAbrir !== null}
+        onOpenChange={(a) => !a && setAAbrir(null)}
+        title="¿Abrir otro guion?"
+        description="El guion que estás editando no está guardado y se perderá."
+        confirmLabel="Abrir sin guardar"
+        tone="danger"
+        onConfirm={() => {
+          if (aAbrir) return abrir(aAbrir.id);
+        }}
+      />
       <ConfirmDialog
         open={aBorrar !== null}
         onOpenChange={(a) => !a && setABorrar(null)}

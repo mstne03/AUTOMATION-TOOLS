@@ -503,7 +503,7 @@ Hasta que U2 las rellene, ambas pantallas están vacías.
 `guion-video-escenas`, `guion-video-escena` (`li`), `guion-video-frase`, `guion-video-tipo`,
 `guion-video-subir`, `guion-video-bajar`, `guion-video-recurso`, `guion-video-avisos`,
 `guion-video-errores` (`role=alert`), `guion-video-guardar`, `guion-video-crear`,
-`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-borrar-<id>` (abre un diálogo de confirmación «Borrar»/«Cancelar»; si el borrado falla
+`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-abrir-<id>` (carga el guion en el editor como ya guardado; texto «Abierto» y deshabilitado si es el que está abierto; con un guion sin guardar en pantalla pide confirmación «Abrir sin guardar»/«Cancelar»), `guion-guardado-borrar-<id>` (abre un diálogo de confirmación «Borrar»/«Cancelar»; si el borrado falla
 se muestra un `role=alert`).
 
 ### Editor (`/video/:id`)

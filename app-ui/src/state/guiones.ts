@@ -182,6 +182,25 @@ export async function guardarGuionVideo(client: Client): Promise<string | null> 
   }
 }
 
+/** `GET /video/guiones/{gid}` y lo abre en el editor de Escribir. Ya está guardado: «Crear vídeo» usa
+ *  ese id sin volver a guardarlo (editarlo lo marca como no guardado, como cualquier edición).
+ *  Devuelve el motivo si no se pudo abrir (lo pinta la lista: puede no haber guion en pantalla). */
+export async function abrirGuionGuardado(client: Client, gid: string): Promise<string | null> {
+  if (useGuiones.getState().escribir.videoOcupado) return null;
+  parcharEscribir({ videoOcupado: true });
+  try {
+    const r = await client.videoGuion(gid);
+    const g = aGuionVideo(esObjeto(r) ? r.guion : null);
+    if (!g) return "El guion guardado no se puede abrir: su formato no es el esperado.";
+    parcharEscribir({ formato: "video", guionVideo: g, videoGuardadoId: gid, videoAvisos: [], videoErrores: [], jsonError: false });
+    return null;
+  } catch (e) {
+    return `No se pudo abrir el guion: ${textoError(e)[0] ?? "error desconocido"}`;
+  } finally {
+    parcharEscribir({ videoOcupado: false });
+  }
+}
+
 /** Guardar + `POST /video/proyectos` con el perfil «defecto» (o el primero que haya). Devuelve el id
  *  del proyecto para ir a `/video/:id`, o null si algo falló (el motivo queda en `videoErrores`). */
 export async function crearVideo(client: Client): Promise<string | null> {

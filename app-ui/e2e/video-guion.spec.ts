@@ -174,4 +174,22 @@ test.describe("Guiones en modo Vídeo", () => {
     await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo", exact: true }).click();
     await expect(page.getByTestId(`guion-guardado-${g.id}`)).toContainText("Tortilla perfecta");
   });
+
+  test("abrir un guion guardado lo carga y crea el vídeo sin volver a guardarlo", async ({ page }) => {
+    const g = await crearGuion();
+    const n = contarPost(page);
+    await page.goto("/#/guiones");
+    await page.getByTestId("escribir-formato").getByRole("radio", { name: "Vídeo", exact: true }).click();
+    const abrir = page.getByTestId(`guion-guardado-abrir-${g.id}`);
+    await abrir.click();
+    await expect(page.getByTestId("guion-video-titulo")).toHaveValue("Tortilla perfecta");
+    await expect(page.getByTestId("guion-video-escenas").locator("li")).toHaveCount(GUION_COCINA.escenas.length);
+    await expect(abrir).toHaveText("Abierto");
+    await expect(abrir).toBeDisabled();
+    await page.getByTestId("guion-video-crear").click();
+    await expect(page.getByTestId("editor")).toBeVisible();
+    expect(n).toEqual({ guiones: 0, proyectos: 1 });
+    const [p] = await listarProyectos();
+    expect((await leerProyecto(p.id)).titulo).toBe("Tortilla perfecta");
+  });
 });

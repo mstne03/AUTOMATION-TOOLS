@@ -140,12 +140,15 @@ describe("carrera entre editar y guardar", () => {
 describe("GuionesGuardados", () => {
   afterEach(() => {
     cleanup();
+    reiniciarGuiones();
   });
 
-  const montarGuardados = (borrar: () => Promise<unknown>) => {
+  const montarGuardados = (borrar: () => Promise<unknown> = async () => undefined, extra: Partial<Client> = {}) => {
     const client = {
       videoGuiones: vi.fn(async () => [{ id: "g1", titulo: HOSTIL }]),
       videoGuionBorrar: vi.fn(borrar),
+      videoGuion: vi.fn(async () => ({ id: "g1", guion: GUION })),
+      ...extra,
     } as unknown as Client;
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -157,6 +160,52 @@ describe("GuionesGuardados", () => {
     );
     return client;
   };
+
+  it("abrir carga el guion guardado como ya guardado: «Crear vídeo» no lo vuelve a guardar", async () => {
+    const c = montarGuardados(undefined, {
+      videoGuionCrear: vi.fn(async () => ({ id: "otro", avisos: [] })),
+      videoPerfiles: vi.fn(async () => [{ id: "defecto" }]),
+      videoProyectoCrear: vi.fn(async () => ({ id: "p1" })),
+    } as Partial<Client>);
+    fireEvent.click(await screen.findByTestId("guion-guardado-abrir-g1"));
+    await waitFor(() => expect(useGuiones.getState().escribir.guionVideo?.titulo).toBe(HOSTIL));
+    expect(c.videoGuion).toHaveBeenCalledWith("g1");
+    expect(useGuiones.getState().escribir.videoGuardadoId).toBe("g1");
+    expect(useGuiones.getState().escribir.formato).toBe("video");
+    const b = screen.getByTestId("guion-guardado-abrir-g1") as HTMLButtonElement;
+    expect(b.textContent).toBe("Abierto");
+    expect(b.disabled).toBe(true);
+    expect(await crearVideo(c)).toBe("p1");
+    expect(c.videoGuionCrear).not.toHaveBeenCalled();
+    expect(c.videoProyectoCrear).toHaveBeenCalledWith("g1", "defecto");
+  });
+
+  it("con un guion sin guardar en pantalla, abrir otro pide confirmación", async () => {
+    parcharEscribir({ formato: "video", esperando: true });
+    recibirRespuesta("escribir", JSON.stringify({ ...GUION, titulo: "Sin guardar" }));
+    const c = montarGuardados();
+    fireEvent.click(await screen.findByTestId("guion-guardado-abrir-g1"));
+    expect((await screen.findByRole("dialog")).textContent).toMatch(/no está guardado/);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(c.videoGuion).not.toHaveBeenCalled();
+    expect(useGuiones.getState().escribir.guionVideo?.titulo).toBe("Sin guardar");
+    fireEvent.click(screen.getByTestId("guion-guardado-abrir-g1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir sin guardar" }));
+    await waitFor(() => expect(useGuiones.getState().escribir.guionVideo?.titulo).toBe(HOSTIL));
+  });
+
+  it("un guion ilegible o un fallo al abrir se avisa como texto y no toca lo que hay", async () => {
+    montarGuardados(undefined, { videoGuion: vi.fn(async () => ({ guion: { version: 9 } })) } as Partial<Client>);
+    fireEvent.click(await screen.findByTestId("guion-guardado-abrir-g1"));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/no se puede abrir/);
+    expect(useGuiones.getState().escribir.guionVideo).toBeNull();
+    cleanup();
+    montarGuardados(undefined, { videoGuion: vi.fn(async () => Promise.reject(new ApiError(404, JSON.stringify({ mensaje: HOSTIL })))) } as Partial<Client>);
+    fireEvent.click(await screen.findByTestId("guion-guardado-abrir-g1"));
+    expect((await screen.findByRole("alert")).textContent).toContain("No se pudo abrir el guion");
+    expect(document.querySelector("img")).toBeNull();
+  });
 
   it("borrar_guion_pide_confirmacion: cancelar no borra", async () => {
     const c = montarGuardados(async () => undefined);
