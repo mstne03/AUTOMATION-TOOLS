@@ -780,3 +780,9 @@ async def test_capacidades_sin_rutas_en_errores(api, monkeypatch, clase):
     r = await api.get("/video/capacidades")
     assert r.status_code in (502, 503)
     _sin_rutas(r.text)
+
+
+def test_bandeja_del_motor_es_la_de_rust():
+    """R2-1: el motor lee la bandeja en `dirname(VIDEO_ROOT)/bandeja` (`carpetaBandeja`) y Rust la escribe en
+    `<estado>/video/bandeja` (`lib.rs`). Si VIDEO_ROOT se mueve, las dos dejan de coincidir."""
+    assert config.VIDEO_ROOT.parent / "bandeja" == config.STATE_DIR / "video" / "bandeja"

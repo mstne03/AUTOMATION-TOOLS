@@ -44,8 +44,11 @@ type Recurso = Proyecto["recursos"][number];
 
 // ---------- Rutas ----------
 
-/** `<dirname(VIDEO_ROOT)>/video/bandeja`: junto a guiones/ y perfiles/. */
-export const carpetaBandeja = (raiz: string): string => path.join(path.dirname(path.resolve(raiz)), "video", "bandeja");
+/**
+ * `<dirname(VIDEO_ROOT)>/bandeja`: con `VIDEO_ROOT = <estado>/video/proyectos` es `<estado>/video/bandeja`,
+ * donde la escribe el comando nativo de Rust (T13, `lib.rs`). Contrato compartido con Rust y el backend (R2-1).
+ */
+export const carpetaBandeja = (raiz: string): string => path.join(path.dirname(path.resolve(raiz)), "bandeja");
 /** `<dirname(VIDEO_ROOT)>/video/musica`: la biblioteca de pistas (`m-<16hex>.m4a` y su `.json`). */
 export const carpetaMusica = (raiz: string): string => path.join(path.dirname(path.resolve(raiz)), "video", "musica");
 const carpetaRecursos = (raiz: string, id: string): string => path.join(carpetaVideo(raiz, id), "recursos");

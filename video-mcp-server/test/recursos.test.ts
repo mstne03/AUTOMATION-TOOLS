@@ -151,6 +151,13 @@ beforeAll(async () => {
 
 // ---------- Identificación por bytes ----------
 
+describe("carpetaBandeja (contrato con Rust y el backend, R2-1)", () => {
+  it("con VIDEO_ROOT = <estado>/video/proyectos es <estado>/video/bandeja, la que escribe lib.rs", () => {
+    const estado = path.join(os.tmpdir(), "estado");
+    expect(carpetaBandeja(path.join(estado, "video", "proyectos"))).toBe(path.join(estado, "video", "bandeja"));
+  });
+});
+
 describe("identificarMedio (bytes iniciales, nunca la extensión)", () => {
   const b = (...x: (number | string)[]) => Buffer.concat(x.map((v) => (typeof v === "string" ? Buffer.from(v, "latin1") : Buffer.from([v]))));
   it("reconoce cada formato admitido", () => {
