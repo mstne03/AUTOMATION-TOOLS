@@ -82,7 +82,7 @@ export interface Client {
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
-  /** Sin coste: comprueba la clave con `GET /v1/user` de ElevenLabs. Nunca devuelve la clave. */
+  /** Sin coste: comprueba la clave con `GET /v1/voices` de ElevenLabs. Nunca devuelve la clave. */
   validateElevenlabsKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
   /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
   importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;

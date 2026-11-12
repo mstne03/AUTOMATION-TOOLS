@@ -707,15 +707,29 @@ def create_app(
 
     @app.post("/settings/validate-elevenlabs-key", dependencies=protegido)
     async def validate_elevenlabs_key(body: ValidarClaveIn):
-        """Comprueba la clave de ElevenLabs con GET /v1/user (sin coste). La clave nunca sale en la respuesta."""
+        """Comprueba la clave de ElevenLabs con GET /v1/voices (sin coste). La clave nunca sale en la respuesta.
+
+        /v1/voices y no /v1/user: es lo que usa el motor, y una clave con permisos restringidos sin «User: Read»
+        (la app no lo necesita) daba 401 en /v1/user y se mostraba como «no reconoce esta clave».
+        """
         clave = body.api_key or config.elevenlabs_api_key(yt_auth.store)
         if not clave:
             raise HTTPException(status_code=400, detail="No hay ninguna clave que validar.")
         try:
             async with httpx.AsyncClient(transport=elevenlabs_transport, timeout=15) as http:
-                r = await http.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": clave})
+                r = await http.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": clave})
         except httpx.HTTPError:
             raise HTTPException(status_code=502, detail="No se pudo conectar con ElevenLabs: comprueba tu conexión.") from None
+        try:
+            detalle = r.json().get("detail")
+            estado = detalle.get("status") if isinstance(detalle, dict) else None
+        except (ValueError, AttributeError):
+            estado = None
+        # Solo se mira `status`; el texto de ElevenLabs no se reenvía (puede citar la clave).
+        if estado == "invalid_api_key_length":
+            return {"valida": False, "detalle": "Esa no es una clave de ElevenLabs completa: cópiala entera desde ElevenLabs › Developers › API keys (empieza por «sk_»)."}
+        if estado == "missing_permissions":
+            return {"valida": False, "detalle": "La clave no tiene los permisos que necesita la app: actívale «Text to Speech» y «Voices: Read» en ElevenLabs › API keys."}
         if r.status_code in (401, 403):
             return {"valida": False, "detalle": "ElevenLabs no reconoce esta clave."}
         if r.status_code != 200:
