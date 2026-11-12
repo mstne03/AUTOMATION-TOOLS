@@ -52,7 +52,8 @@ comprobar_carga_dll() { # <árbol de ffmpeg> <árbol de nv-codec-headers>
   grep -q 'compat/w32dlfcn.h' "$s/compat/cuda/dynlink_loader.h" \
     && grep -qE 'define FFNV_LOAD_FUNC\(path\) *dlopen\(' "$s/compat/cuda/dynlink_loader.h" \
     || error "compat/cuda/dynlink_loader.h no carga NVENC por win32_dlopen"
-  cat "$s/libavcodec/nvenc.h" "$s/libavcodec/nvenc.c" 2>/dev/null | grep -qE '#include +"compat/cuda/dynlink_loader.h"' \
+  # Sin `cat | grep -q`: con pipefail, el SIGPIPE de cat al cortar grep daría un fallo aleatorio.
+  grep -qsE '#include +"compat/cuda/dynlink_loader.h"' "$s/libavcodec/nvenc.h" "$s/libavcodec/nvenc.c" \
     || error "nvenc no incluye compat/cuda/dynlink_loader.h"
   # La cabecera de NVIDIA solo puede definir FFNV_LOAD_FUNC dentro de un #ifndef/#if !defined de
   # FFNV_LOAD_FUNC: así manda la definición de ffmpeg (win32_dlopen).

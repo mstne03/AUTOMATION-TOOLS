@@ -226,6 +226,23 @@ leída con `apt-cache policy` dentro de esa base. `docker build --no-cache` term
   saltos de https a http).
 - `-oAcquire::Retries=5` en los `apt-get install`: snapshot corta conexiones con 100 MB seguidos.
 
+### Construcción local de testigo (2026-11-12, máquina de Marc, RTX 4060)
+
+`construir.sh` dos veces desde cero → `comparar-builds.sh`: idénticas bit a bit. `verificar-binario.sh`:
+todo verificado (sin `SIN_MF`). `h264_nvenc` y `h264_mf` codifican 30/30 fotogramas a 1080x1920.
+
+```
+f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85  ffmpeg.exe
+d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01  ffprobe.exe
+```
+
+Lo que destapó el primer build real (corregido, con test donde cabía): `gcc` nativo en la imagen
+(host cc de configure); `fd` en los protocolos (la CLI 7.x traduce `-` a `fd:`); `wrapped_avframe`
+como decoder (`-f lavfi`, el sondeo del motor) y como encoder (`-f null -`); comillas en las listas
+de `-buildconf`; `-L` con CRLF; `cat | grep -q` con pipefail en `compilar.sh`; la prueba `[gpu]`
+ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 3 cumplido; faltan 1 (`musica.ts`) y
+2 (el SHA-256 de CI debe coincidir con este).
+
 ### Descargas que pedirá la Tarea 10
 
 | # | Qué | Origen | Tamaño aprox. | Permiso |
