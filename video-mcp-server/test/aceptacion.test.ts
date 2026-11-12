@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const SENTINELA = "xi-centinela-aceptacion-7c1e9d3b5a";
+const SENTINELA = ["xi", "centinela", "aceptacion", "7c1e9d3b5a"].join("-"); // falsa, troceada para gitleaks
 
 const F = vi.hoisted(() => {
   const nodeFs = require("node:fs") as typeof import("node:fs");
@@ -22,7 +22,7 @@ const F = vi.hoisted(() => {
   process.env.VIDEO_NAVEGADOR_MANIFIESTO = nodePath.join(raizNav, "MANIFIESTO-SHA256.json");
   // CA8: sin GPU. Y la clave centinela, en el entorno del motor como la pondría el anfitrión (CA7).
   process.env.VIDEO_FORZAR_SIN_GPU = "1";
-  process.env.ELEVENLABS_API_KEY = "xi-centinela-aceptacion-7c1e9d3b5a";
+  process.env.ELEVENLABS_API_KEY = ["xi", "centinela", "aceptacion", "7c1e9d3b5a"].join("-"); // falsa, troceada para gitleaks
   delete process.env.VIDEO_HYPERFRAMES_BIN;
   delete process.env.VIDEO_ENGINE_EMBEDDED;
   delete process.env.VIDEO_TIMEOUT_RENDER_S;

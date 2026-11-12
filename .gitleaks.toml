@@ -18,3 +18,12 @@ description = "Fixture de texto con URL en composicion-n.test.ts"
 condition = "AND"
 targetRules = ["generic-api-key"]
 paths = ['''^video-mcp-server/test/composicion-n\.test\.ts$''']
+
+# Falso positivo: la clave centinela FALSA de CA7 en aceptacion.test.ts, como literal, en el commit
+# 920c1a6 (ya subido). Desde el commit siguiente va troceada. Acotado a una regla, un fichero y un commit.
+[[allowlists]]
+description = "Clave centinela falsa de CA7 en aceptacion.test.ts (commit 920c1a6)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^video-mcp-server/test/aceptacion\.test\.ts$''']
+commits = ["920c1a6e6b32cfec529dc079497a43946b8e2dea"]
