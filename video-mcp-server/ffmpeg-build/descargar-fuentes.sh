@@ -117,6 +117,7 @@ obtener() { # <url> <destino>
   op=$(operador_url "$u") || error "la URL no está en la tabla de operadores: $u"
   for _ in 1 2 3 4; do
     r=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-redirs 0 \
+      --retry 4 --retry-all-errors --retry-delay 5 \
       --max-filesize 209715200 -o "$2" -w '%{http_code} %{redirect_url}' "$u") || error "descarga fallida: $u"
     codigo=${r%% *}; siguiente=${r#* }
     case "$codigo" in

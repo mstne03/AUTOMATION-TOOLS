@@ -3,6 +3,7 @@
 #   - apt solo del snapshot de Debian con marca de tiempo fija; su InRelease se ancla por SHA-256
 #     en fuentes.lock (comprobar-inrelease.sh), lo que fija también cada dependencia transitiva.
 #     La firma de apt sigue activa con el keyring de la base.
+#   - gcc nativo solo como host cc de configure (herramientas de construcción); no va al .exe.
 #   - Cada paquete con versión exacta. Sin pip, npm ni instaladores por tubería.
 # ca-certificates no viene en la imagen slim: es lo único que se instala por http (la integridad
 # la dan la firma de apt y el InRelease anclado); después la fuente pasa a https y se vuelve a
@@ -39,6 +40,8 @@ RUN apt-get update --error-on=any \
       ninja-build=1.12.1-1 \
       pkgconf=1.8.1-4 \
       make=4.4.1-2 \
+      gcc=4:14.2.0-1 \
+      libc6-dev=2.41-12+deb13u4 \
       gpg=2.4.7-21+deb13u1+b5 \
       curl=8.14.1-2+deb13u5 \
       git=1:2.47.3-0+deb13u1 \

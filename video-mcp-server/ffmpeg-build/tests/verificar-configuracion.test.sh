@@ -15,6 +15,12 @@ printf ' V....D h264_mf  H264 via MediaFoundation\n A....D aac  AAC\n' >"$TMP_TE
 ejecutar bash "$V" "$TMP_TEST/bueno.txt" "$TMP_TEST/encoders-bueno.txt"
 if [ "$CODIGO" -eq 0 ]; then ok "configuración de compilar.sh → 0"; else mal "configuración buena rechazada: $SALIDA"; fi
 
+# Como lo imprime ffmpeg de verdad: las listas entre comillas simples.
+sed -E "s/=(.*)$/='\1'/" "$TMP_TEST/bueno.txt" >"$TMP_TEST/comillas.txt"
+afirmar "el fixture con comillas las lleva" grep -q "='" "$TMP_TEST/comillas.txt"
+ejecutar bash "$V" "$TMP_TEST/comillas.txt" "$TMP_TEST/encoders-bueno.txt"
+if [ "$CODIGO" -eq 0 ]; then ok "listas entre comillas (formato real de -buildconf) → 0"; else mal "comillas rechazadas: $SALIDA"; fi
+
 # Variante = bueno + una línea; debe salir ≠ 0 y nombrar lo que la rompe.
 variante() { # variante <nombre> <línea añadida> <texto esperado en el error>
   { cat "$TMP_TEST/bueno.txt"; echo "    $2"; } >"$TMP_TEST/$1.txt"
