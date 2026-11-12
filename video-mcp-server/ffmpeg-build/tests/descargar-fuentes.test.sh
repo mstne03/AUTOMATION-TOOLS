@@ -139,6 +139,11 @@ lock "$(fila cab v2 git "$GURL" "$GSHA" "$C1" inc - - - "$ESPEJO")"; correr k1 o
 lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://code.videolan.org/x/espejo-falso.git)"; correr k1 origen; debe_fallar "espejo con otra etiqueta → ≠ 0" commit
 lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://code.videolan.org/x/pagina.html)"; correr k1 origen; debe_fallar "canal2 que no es un repo .git → ≠ 0" canal2
 lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - https://github.com/otro/espejo.git)"; correr k1 origen; debe_fallar "canal2 del mismo operador (github) → ≠ 0" operador
+# git sin espejo (AMF): canal2 = PKGBUILD oficial de Arch que fija el commit en _tag=, no en un comentario.
+cp -r "$T/origen" "$T/o-git"; printf '_tag=%s\nsource=(git+x#tag=${_tag})\n' "$C2" >"$T/o-git/PKGBUILD"
+lock "$(fila cab v2 git "$GURL" "$GSHA" "$C2" inc - - - "$ARCH")"; correr k1 o-git; debe_ir "git con PKGBUILD que fija el commit → 0"
+printf '# %s\n_tag=%s\n' "$C2" "$C1" >"$T/o-git/PKGBUILD"
+correr k1 o-git; debe_fallar "git con el commit solo en un comentario del PKGBUILD → ≠ 0" commit
 
 # (h) y anclaje (R0 H1, R1 LOW-2/LOW-3).
 lock "$(tarfila "$K2" "$(anc "$K1")")"; correr k2 o-k2 deb-k2; debe_fallar "(h) huella que el anclaje no confirma → ≠ 0" anclaje
@@ -165,6 +170,13 @@ lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://gitlab.archlinux.org/
 correr k1 o-sf; debe_fallar "canal2 de Arch sin commit fijado → ≠ 0" commit
 lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://raw.githubusercontent.com/x/y/PKGBUILD)"
 correr k1 o-sf; debe_fallar "canal2 del mismo operador que el asset (github) → ≠ 0" operador
+# Revisión de la PR #28 (M1): un fork del dominio de Arch no es el canal, y el hash tiene que estar
+# en sha256sums/sha512sums, no en un comentario.
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - https://gitlab.archlinux.org/otro/paq/-/raw/0123456789abcdef0123456789abcdef01234567/PKGBUILD)"
+correr k1 o-sf; debe_fallar "canal2 en un fork de gitlab.archlinux.org → ≠ 0" oficial
+printf "# %s\nsha256sums=('%064d')\n" "$SHA" 0 >"$T/o-sf/PKGBUILD"
+lock "$(fila paq 1.0 tar "$GHURL" "$SHA" - - - - - "$ARCH")"
+correr k1 o-sf; debe_fallar "PKGBUILD con el SHA solo en un comentario → ≠ 0" canal2
 
 # Redirecciones (solo en descargas reales): un curl falso registra cada petición. Los assets de
 # GitHub saltan a githubusercontent; a otro operador no se llega a conectar.

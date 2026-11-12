@@ -934,7 +934,20 @@ let cache: Herramientas | null | undefined;
  * Devuelve el motivo del rechazo, o undefined. Fuera de esa carpeta (desarrollo, E2E) no aplica.
  */
 export function revisarCarpetaFfmpeg(dir: string, raiz = SERVER_ROOT): string | undefined {
-  if (!mismaRuta(dir, path.resolve(raiz, "..", "ffmpeg"))) return undefined;
+  // realpath en los dos lados: un 8.3, un `\\?\` o una junction no desactivan la revisión (PR #28, B1).
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  if (!mismaRuta(real(dir), real(path.resolve(raiz, "..", "ffmpeg")))) {
+    if (esIntegrado()) log.warn(`ffmpeg fuera de la carpeta del bundle (${dir}): sin revisión de carpeta.`);
+    return undefined;
+  }
+  // Frontera: la cuenta del usuario. Quien puede escribir aquí puede cambiar node.exe o el propio
+  // motor; esto cierra la DLL plantada y el enlace, no un binario sustituido (PR #28, M2).
   try {
     const encontrados = recorrer(dir).map(claveRel).sort();
     const esperados = [`ffmpeg${EXE}`, `ffprobe${EXE}`].map(claveRel).sort();

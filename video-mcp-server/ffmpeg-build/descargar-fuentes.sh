@@ -52,6 +52,14 @@ operador() { # <host> → operador, o falla si no está en la tabla
 }
 operador_url() { local h; h=$(host "$1") || return 1; operador "$h"; }
 
+# Segundos canales: solo la ruta OFICIAL de cada distribución y fijada a commit (no vale un fork ni
+# otra cuenta del mismo dominio: revisión de la PR #28, M1).
+ARCH_PKGBUILD='^https://gitlab\.archlinux\.org/archlinux/packaging/packages/[a-z0-9._+-]+/-/raw/[0-9a-f]{40}/PKGBUILD$'
+FEDORA_SOURCES='^https://src\.fedoraproject\.org/rpms/[A-Za-z0-9._+-]+/raw/[0-9a-f]{40}/f/sources$'
+# Contenido de los arrays sha256sums=(…) y sha512sums=(…) de un PKGBUILD: el hash debe estar ahí, no
+# en un comentario ni en otra variable.
+sumas_pkgbuild() { awk '/^(sha256|sha512)sums=\(/ {f = 1} f {print} f && /\)/ {f = 0}' "$1"; }
+
 validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
   local e canal fpr op vistos=" " n=0 op_url op_firma
   op_url=$(operador_url "$2") || error "$1: la URL de descarga no está en la tabla de operadores"
@@ -64,8 +72,8 @@ validar_anclaje() { # <nombre> <url> <firma_url> <huella> <anclaje>
       debian:?*) op=debian ;;
       https://?*)
         op=$(operador_url "$canal") || error "$1: anclaje: '$canal' no es de un operador conocido (ni keyserver ni host suelto)"
-        [ "$op" != arch ] || [[ "$canal" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$1: anclaje: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)"
-        [ "$op" != fedora ] || [[ "$canal" =~ /raw/[0-9a-f]{40}/ ]] || error "$1: anclaje: el dist-git de Fedora va fijado a un commit (/raw/<40 hex>/)" ;;
+        [ "$op" != arch ] || [[ "$canal" =~ $ARCH_PKGBUILD ]] || error "$1: anclaje: el PKGBUILD de Arch debe ser el oficial (archlinux/packaging/packages) y fijado a un commit (/-/raw/<40 hex>/)"
+        [ "$op" != fedora ] || [[ "$canal" =~ $FEDORA_SOURCES ]] || error "$1: anclaje: el dist-git de Fedora debe ser rpms/<paquete> fijado a un commit (/raw/<40 hex>/f/sources)" ;;
       *) error "$1: anclaje: canal no válido '$canal' (debian:<paquete> o https://…)" ;;
     esac
     [ "$op" != "$op_url" ] && [ "$op" != "$op_firma" ] || error "$1: anclaje en el operador de la descarga ($op)"
@@ -85,7 +93,7 @@ validar_fila() { # campos de la fila
   case "$tipo" in
     tar) [ "$firma" != - ] || [ "$canal2" != - ] || error "$nombre: tarball sin firma necesita canal2 (un fichero de otro operador con su SHA-256)" ;;
     git) hex "$commit" 40 || error "$nombre: commit de 40 hex obligatorio"
-         [[ "$canal2" == https://*.git || "$canal2" == https://gitlab.archlinux.org/*/PKGBUILD ]]            || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable o un PKGBUILD de Arch que fije el commit" ;;
+         [[ "$canal2" == https://*.git || "$canal2" =~ $ARCH_PKGBUILD ]]            || error "$nombre: canal2 de una fuente git debe ser otro repositorio .git comparable o un PKGBUILD de Arch que fije el commit" ;;
     *) error "$nombre: tipo '$tipo' desconocido" ;;
   esac
   if [ "$canal2" != - ]; then
@@ -93,7 +101,7 @@ validar_fila() { # campos de la fila
     op2=$(operador_url "$canal2") || error "$nombre: canal2 no es de un operador conocido ($canal2)"
     op=$(operador_url "$url") || error "$nombre: la URL no está en la tabla de operadores"
     [ "$op2" != "$op" ] || error "$nombre: canal2 es del mismo operador que la descarga ($op)"
-    [ "$op2" != arch ] || [[ "$canal2" =~ /-/raw/[0-9a-f]{40}/ ]] || error "$nombre: canal2: el PKGBUILD de Arch va fijado a un commit (/-/raw/<40 hex>/)"
+    [ "$op2" != arch ] || [[ "$canal2" =~ $ARCH_PKGBUILD ]] || error "$nombre: canal2: el PKGBUILD de Arch debe ser el oficial (archlinux/packaging/packages) y fijado a un commit (/-/raw/<40 hex>/)"
   fi
   if [ "$firma" != - ]; then
     [[ "$huella" =~ ^[0-9A-F]{40}$ ]] || error "$nombre: huella de 40 hex en mayúsculas obligatoria"
@@ -266,7 +274,9 @@ for linea in "${filas[@]}"; do
       # mismos bytes (los PKGBUILD de Arch traen sha512sums). Las firmas DSA/SHA-1 de dav1d y zlib
       # no se aceptan: van por aquí (decisión de la Tarea 10).
       obtener "$canal2" "$TRABAJO/canal2"
-      grep -qw -e "$sha" -e "$(sha512sum "$f" | cut -d' ' -f1)" "$TRABAJO/canal2" || error "$nombre: canal2 no confirma el SHA-256 ni el SHA-512"
+      if [[ "$canal2" =~ $ARCH_PKGBUILD ]]; then sumas_pkgbuild "$TRABAJO/canal2" >"$TRABAJO/canal2.sumas"
+      else cp "$TRABAJO/canal2" "$TRABAJO/canal2.sumas"; fi
+      grep -qw -e "$sha" -e "$(sha512sum "$f" | cut -d' ' -f1)" "$TRABAJO/canal2.sumas" || error "$nombre: canal2 no confirma el SHA-256 ni el SHA-512"
     fi
     mv "$f" "$TRABAJO/ok/"; [ "$firma" = - ] || mv "$f.asc" "$TRABAJO/ok/"
   else
@@ -284,7 +294,8 @@ for linea in "${filas[@]}"; do
       rm -f "$f.2"
     else
       obtener "$canal2" "$TRABAJO/canal2"
-      grep -qw "$commit" "$TRABAJO/canal2" || error "$nombre: canal2 no fija el commit $commit"
+      # El commit como valor de _tag/_commit o en el #tag=/#commit= de source, no en cualquier sitio.
+      grep -qE "^_(tag|commit)=['\"]?$commit['\"]?[[:space:]]*$|^source=.*#(tag|commit)=$commit" "$TRABAJO/canal2"         || error "$nombre: canal2 no fija el commit $commit"
     fi
     mv "$f" "$TRABAJO/ok/"
   fi
