@@ -22,13 +22,14 @@ export interface ResultadoRender {
 
 const texto = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
-/** Un código (o un texto suelto) a su frase; si no está en la tabla, un aviso genérico que lo cita. */
-function aFrase(v: unknown): string | null {
+/** Un código (o un texto suelto) a su frase; si no está en la tabla, un aviso genérico que lo cita.
+ *  También la usa la preview: el backend solo le pasa `{ codigo }`, nunca texto (R2-2). */
+export function aFrase(v: unknown): string | null {
   const c = texto(v) ?? (esObjeto(v) ? texto(v.codigo) : null);
   if (!c) return null;
   const t = c.trim();
   if (Object.hasOwn(TEXTOS, t)) return TEXTOS[t];
-  return `Aviso del render no reconocido (${t.slice(0, 60)}).`;
+  return `Aviso no reconocido (${t.slice(0, 60)}).`;
 }
 
 const lista = (v: unknown): string[] => {

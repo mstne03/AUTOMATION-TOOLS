@@ -256,10 +256,16 @@ export interface AvisoVideo {
   ruta?: string; // ruta dentro del documento (p. ej. «escenas.0»), no del sistema de ficheros
 }
 
+/** Aviso de `POST …/preview`: el backend solo deja pasar el código (y los puertos ajenos), nunca texto (R2-2). */
+export interface AvisoPreview {
+  codigo: string;
+  puertos?: number[];
+}
+
 export interface PreviewVideo {
   url: string;
   duracion: number;
-  avisos: AvisoVideo[];
+  avisos: AvisoPreview[];
   fondo: string;
 }
 

@@ -11,9 +11,10 @@
 import { Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sinRutas } from "../screens/MotorVideo";
+import { aFrase } from "./render/resultado";
 import { fijarTiempo, useEditor } from "../state/editor";
 import { IconButton } from "../ui";
-import type { AvisoVideo } from "../api/types";
+import type { AvisoPreview } from "../api/types";
 import { sesionPreview } from "./EditorPreview";
 import { aPreviewUrl } from "./modelo";
 import s from "./Preview.module.css";
@@ -48,7 +49,7 @@ export function Preview() {
 
   const [estado, setEstado] = useState<Estado>({ tipo: "abriendo" });
   const [src, setSrc] = useState<{ url: string; n: number } | null>(null);
-  const [avisos, setAvisos] = useState<AvisoVideo[]>([]);
+  const [avisos, setAvisos] = useState<AvisoPreview[]>([]);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [tActual, setTActual] = useState(0);
   const [duracion, setDuracion] = useState(0);
@@ -254,7 +255,7 @@ export function Preview() {
       </div>
       {avisos.length > 0 && (
         <p className={s.aviso} data-testid="preview-aviso-fondo">
-          {avisos.map((a) => sinRutas(String(a.mensaje))).join(" ")}
+          {avisos.map((a) => sinRutas(aFrase(a) ?? "")).join(" ")}
         </p>
       )}
       <div className={s.controles}>

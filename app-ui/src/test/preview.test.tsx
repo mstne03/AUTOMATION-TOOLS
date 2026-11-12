@@ -104,10 +104,17 @@ describe("Preview", () => {
     expect(e.querySelector("img")).toBeNull();
     expect(e.textContent).not.toContain("marc");
   });
-  it("avisos del backend como texto", async () => {
-    await montar(resp(URL1, { avisos: [{ codigo: "fondo_css", mensaje: "<b>Fondo</b> sustituido" }] }));
+  it("avisos del backend: solo llega el código y se traduce con la tabla cerrada (R2-2)", async () => {
+    // Forma real de `POST …/preview` (`video_rest.py`): `{ codigo, puertos }`, sin `mensaje`.
+    await montar(resp(URL1, { avisos: [{ codigo: "puertos_preview_ajenos", puertos: [47811] }, { codigo: "otro_codigo" }] }));
     const a = await screen.findByTestId("preview-aviso-fondo");
-    expect(a.textContent).toContain("<b>Fondo</b>");
+    expect(a.textContent).toContain("Algunos puertos de la vista previa estaban ocupados por otro programa.");
+    expect(a.textContent).toContain("Aviso no reconocido (otro_codigo).");
+    expect(a.textContent).not.toContain("undefined");
+  });
+  it("un aviso con texto hostil se pinta como texto", async () => {
+    await montar(resp(URL1, { avisos: [{ codigo: "<b>x</b>" }] }));
+    const a = await screen.findByTestId("preview-aviso-fondo");
     expect(a.querySelector("b")).toBeNull();
   });
   it("cargando hasta recibir listo", async () => {
