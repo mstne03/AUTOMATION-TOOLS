@@ -17,6 +17,9 @@ const REGIONES = [
   { value: "europa", label: "Europa" },
   { value: "mundo", label: "Mundo" },
 ];
+/** Salida de una capa nueva: toda la escena. El motor la recorta a lo que dura (`composicion.ts`) y el
+ *  timeline también; la duración real no se conoce hasta tener la voz. Es `LIMITES.duracionS`. */
+const SALIDA_TODA_LA_ESCENA = 180;
 /** Mismas escenas que admiten una capa «detrás» en el motor (`ESCENAS_SOBRE_FONDO`). */
 const SOBRE_FONDO: readonly string[] = ["mapa", "barras", "cifra", "cartel"];
 
@@ -152,6 +155,7 @@ export function PanelEscena() {
     return p.escenas.find((x) => x.id === e.seleccion) ?? p.escenas.find((x) => x.fraseIds.includes(e.seleccion!));
   });
   const frases = useEditor((e) => e.proyecto?.frases);
+  const recursos = useEditor((e) => e.proyecto?.recursos);
 
   if (!escena || !seleccion) {
     return (
@@ -183,6 +187,21 @@ export function PanelEscena() {
       const e = p.escenas.find((x) => x.id === id);
       if (e?.capa) Object.assign(e.capa, cambio);
     });
+  /** Elegir un recurso crea la capa (o cambia su recurso) y da por cubierto el que pedía el guion. */
+  const ponerRecurso = (rid: string) =>
+    editar((p) => {
+      const e = p.escenas.find((x) => x.id === id);
+      if (!e) return;
+      if (!rid) {
+        delete e.capa;
+        return;
+      }
+      if (!p.recursos.some((r) => r.id === rid && (r.clase === "foto" || r.clase === "clip"))) return;
+      if (e.capa) e.capa.recursoId = rid;
+      else e.capa = { recursoId: rid, modo: "encima", encuadre: "marco", entrada: 0, salida: SALIDA_TODA_LA_ESCENA };
+      delete e.recursoPendiente;
+    });
+  const visuales = (recursos ?? []).filter((r) => r.clase === "foto" || r.clase === "clip");
   const modos = SOBRE_FONDO.includes(escena.base.tipo) ? (["encima", "detras"] as const) : (["encima"] as const);
 
   return (
@@ -215,9 +234,25 @@ export function PanelEscena() {
           );
         })}
       </div>
+      <h3 className={s.titulo}>Foto o clip</h3>
+      {visuales.length > 0 || escena.capa ? (
+        <Field label="Recurso de la escena">
+          <Select value={escena.capa?.recursoId ?? ""} onChange={(e) => ponerRecurso(e.target.value)} data-testid="escena-capa-recurso">
+            <option value="">Ninguno</option>
+            {visuales.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.clase === "foto" ? "Foto" : "Clip"}: {r.nombreOriginal}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : (
+        <p className={s.meta} data-testid="escena-capa-sin-recursos">
+          Añade fotos o clips en la pestaña «Recursos» y elígelos aquí.
+        </p>
+      )}
       {escena.capa && (
         <>
-          <h3 className={s.titulo}>Capa del recurso</h3>
           <div className={s.campos}>
             <Field label="Modo">
               <Select value={escena.capa.modo} onChange={(e) => ponerCapa({ modo: e.target.value === "detras" ? "detras" : "encima" })} data-testid="escena-capa-modo">

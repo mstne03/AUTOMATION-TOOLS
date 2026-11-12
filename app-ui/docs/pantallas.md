@@ -519,6 +519,7 @@ Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.
   `preview-tiempo`, `preview-cargando`, `preview-error`, `preview-aviso-fondo`.
 - **Panel:** `panel-pestanas`, `panel-escena`, `panel-recursos`, `panel-perfil`.
   - Escena: `escena-vacia`, `escena-tipo`, `escena-campo-<campo>`, `escena-frase-<fraseId>`,
+    `escena-capa-recurso` (elegir la foto o el clip crea la capa), `escena-capa-sin-recursos`,
     `escena-capa-modo`, `escena-capa-encuadre`, `escena-capa-quitar`.
   - Recursos: `recursos-aviso`, `recursos-anadir-foto`, `recursos-anadir-clip`, `recursos-lista`,
     `recurso-<id>`, `recurso-aviso-<id>`, `recurso-borrar-<id>`, `recursos-pendientes`,

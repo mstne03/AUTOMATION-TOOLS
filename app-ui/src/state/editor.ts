@@ -197,10 +197,67 @@ export function descartarBorrador() {
   if (sinGuardar) programar();
 }
 
+/** Espera (con tope) a que el autoguardado en curso termine. */
+function esperarGuardado(): Promise<void> {
+  return new Promise((resolve) => {
+    const fin = () => {
+      clearTimeout(t);
+      desuscribir();
+      resolve();
+    };
+    const desuscribir = useEditor.subscribe((e) => {
+      if (e.guardado !== "guardando") fin();
+    });
+    const t = setTimeout(fin, 5000);
+  });
+}
+
+/** Deja el servidor con lo que hay en pantalla. `false` si hay conflicto o no se pudo guardar. */
+export async function asegurarGuardado(): Promise<boolean> {
+  for (let i = 0; i < 3; i++) {
+    const st = useEditor.getState();
+    if (st.conflicto) return false;
+    if (st.guardado === "guardado") return true;
+    if (st.guardado === "guardando") await esperarGuardado();
+    else await guardar();
+  }
+  const st = useEditor.getState();
+  return !st.conflicto && st.guardado === "guardado";
+}
+
+/** Autoguardado en pausa mientras el servidor cambia `proyecto.json` por su cuenta (recursos): un PUT
+ *  con la revisión de antes daría un 409 que no es de otra sesión. Lo editado mientras tanto queda
+ *  «pendiente» y se guarda al reanudar. */
+let pausas = 0;
+
+/** Guarda lo pendiente, pausa el autoguardado, ejecuta `op` (que cambia el proyecto en el servidor y
+ *  sube su revisión) y adopta lo que cambió: la revisión nueva y la lista de recursos del servidor,
+ *  sin tocar el resto de la edición local. Lanza si no se pudo guardar antes o hay un conflicto. */
+export async function cambioEnServidor<T>(c: Client, id: string, op: () => Promise<T>): Promise<T> {
+  if (!(await asegurarGuardado())) throw new Error("Hay cambios sin guardar o un conflicto abierto: resuélvelo y vuelve a intentarlo.");
+  const mia = epoca;
+  pausas++;
+  try {
+    const r = await op();
+    const remoto = await c.videoProyecto(id);
+    const st = useEditor.getState();
+    // Con un conflicto abierto no se toca nada: «Recuperar mi edición» llevaría la lista de recursos vieja.
+    if (st.conflicto) throw new Error("Hay un conflicto abierto: resuélvelo y vuelve a cargar los recursos.");
+    if (mia === epoca && st.proyecto?.id === id && remoto?.id === id) {
+      // Deshacer no puede revertir el disco del servidor: se vacía el historial (el panel lo avisa).
+      useEditor.setState({ revision: remoto.revision, proyecto: { ...st.proyecto, revision: remoto.revision, recursos: remoto.recursos }, historial: [], futuro: [] });
+    }
+    return r;
+  } finally {
+    pausas--;
+    if (!pausas && mia === epoca && useEditor.getState().guardado === "pendiente") programar();
+  }
+}
+
 export async function guardar() {
   cancelarTimer();
   const st = useEditor.getState();
-  if (!st.proyecto || guardando || st.conflicto) return;
+  if (!st.proyecto || guardando || st.conflicto || pausas) return;
   if (!cliente) {
     useEditor.setState({ guardado: "error" });
     return;

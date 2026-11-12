@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Client } from "../api/client";
+import { ApiError, type Client } from "../api/client";
 import { ClientContext } from "../api/context";
-import { cargar, deshacer, desvincularCliente, reiniciarEditor, seleccionar, useEditor, vincularCliente } from "../state/editor";
+import { cargar, deshacer, desvincularCliente, editar as editarYa, guardar, reiniciarEditor, seleccionar, useEditor, vincularCliente } from "../state/editor";
 import type { Proyecto, Recurso } from "../video/modelo";
 import { Panel } from "../video/panel/Panel";
 import { usePreviewRecarga } from "../video/previewRecarga";
@@ -54,15 +54,40 @@ const PERFIL = {
 };
 
 function montar(client: Partial<Client> = {}, p: Proyecto = proyecto()) {
+  // Servidor mínimo: añadir o borrar un recurso cambia su proyecto.json y sube la revisión, como el motor.
+  const srv = structuredClone(p);
+  const anadir = client.videoRecursoAnadir;
+  const borrar = client.videoRecursoBorrar;
   const c = {
-    videoProyectoGuardar: vi.fn(async () => ({ revision: 4, avisos: [] })),
+    videoProyectoGuardar: vi.fn(async (_id: string, cuerpo: { revision: number; proyecto: Proyecto }) => {
+      if (cuerpo.revision !== srv.revision) throw new ApiError(409, "conflicto");
+      Object.assign(srv, structuredClone(cuerpo.proyecto), { revision: srv.revision + 1 });
+      return { revision: srv.revision, avisos: [] };
+    }),
+    videoProyecto: vi.fn(async () => structuredClone(srv)),
+    ...(anadir && {
+      videoRecursoAnadir: vi.fn(async (...a: Parameters<Client["videoRecursoAnadir"]>) => {
+        const r = await anadir(...a);
+        srv.recursos.push(r.recurso as Recurso);
+        srv.revision++;
+        return r;
+      }),
+    }),
+    ...(borrar && {
+      videoRecursoBorrar: vi.fn(async (...a: Parameters<Client["videoRecursoBorrar"]>) => {
+        const r = await borrar(...a);
+        srv.recursos = srv.recursos.filter((x) => x.id !== a[1]);
+        srv.revision++;
+        return r;
+      }),
+    }),
     videoPerfiles: vi.fn(async () => [PERFIL, { ...PERFIL, id: "p-0123456789abcdef", nombre: "Mi canal" }]),
     videoVoces: vi.fn(async () => [
       { id: "VozUno12345", nombre: "Lucía" },
       { id: "VozDos67890", nombre: "Mateo" },
     ]),
-    ...client,
   } as unknown as Client;
+  for (const [k, v] of Object.entries(client)) if (k !== "videoRecursoAnadir" && k !== "videoRecursoBorrar") (c as unknown as Record<string, unknown>)[k] = v;
   vincularCliente(c);
   cargar(p);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -180,6 +205,42 @@ describe("escena", () => {
   });
 });
 
+describe("recurso de la escena", () => {
+  const clip = recurso({ id: "r-00000000000000aa", clase: "clip", ext: "mp4", nombreOriginal: "gol.mp4", duracion: 8 });
+
+  it("elegir un recurso crea la capa de toda la escena y da por cubierto el pendiente", () => {
+    const p = proyecto({ recursos: [recurso(), clip] });
+    p.escenas[0].recursoPendiente = { tipo: "foto", que_debe_salir: "Un plato", resolucion_minima: { ancho: 1080, alto: 1920 } };
+    montar({}, p);
+    act(() => seleccionar("e1"));
+    const sel = g("escena-capa-recurso") as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Ninguno", "Foto: playa.jpg", "Clip: gol.mp4"]);
+    fireEvent.change(sel, { target: { value: "r-0123456789abcdef" } });
+    const e = proy().escenas[0];
+    expect(e.capa).toEqual({ recursoId: "r-0123456789abcdef", modo: "encima", encuadre: "marco", entrada: 0, salida: 180 });
+    expect(e.recursoPendiente).toBeUndefined();
+    expect(t("escena-capa-modo")).not.toBeNull();
+  });
+
+  it("cambiar de recurso conserva modo, encuadre y tiempos; «Ninguno» quita la capa", () => {
+    const p = proyecto({ recursos: [recurso(), clip] });
+    p.escenas[0].capa = { recursoId: "r-0123456789abcdef", modo: "detras", encuadre: "zoom", entrada: 1, salida: 3 };
+    montar({}, p);
+    act(() => seleccionar("e1"));
+    fireEvent.change(g("escena-capa-recurso"), { target: { value: clip.id } });
+    expect(proy().escenas[0].capa).toEqual({ recursoId: clip.id, modo: "detras", encuadre: "zoom", entrada: 1, salida: 3 });
+    fireEvent.change(g("escena-capa-recurso"), { target: { value: "" } });
+    expect(proy().escenas[0].capa).toBeUndefined();
+  });
+
+  it("un id que no es un recurso visual del proyecto no crea capa", () => {
+    montar({}, proyecto({ recursos: [recurso({ id: "r-00000000000000bb", clase: "musica", ext: "wav" })] }));
+    act(() => seleccionar("e1"));
+    expect(t("escena-capa-recurso")).toBeNull();
+    expect(t("escena-capa-sin-recursos")).not.toBeNull();
+  });
+});
+
 describe("recursos", () => {
   it("recursos-aviso (D9) siempre visible", () => {
     montar();
@@ -191,7 +252,7 @@ describe("recursos", () => {
   it("añadir foto: diálogo nativo, solo bandeja_id y recurso en el proyecto", async () => {
     vi.mocked(invoke).mockResolvedValue(BANDEJA);
     const c = montar({
-      videoRecursoAnadir: vi.fn(async () => ({ recurso: recurso(), avisos: [{ codigo: "baja", mensaje: "Resolución justa" }] })),
+      videoRecursoAnadir: vi.fn(async () => ({ recurso: recurso(), avisos: [{ codigo: "clip_horizontal" }, { codigo: "otro", mensaje: "C:/Users/x" }] })),
     });
     pestana("Recursos");
     fireEvent.click(g("recursos-anadir-foto"));
@@ -199,8 +260,52 @@ describe("recursos", () => {
     expect(invoke).toHaveBeenCalledWith("importar_recurso", { clase: "foto" });
     expect(c.videoRecursoAnadir).toHaveBeenCalledWith("video001", BANDEJA, "foto");
     expect(proy().recursos.map((r) => r.id)).toEqual(["r-0123456789abcdef"]);
-    expect(g("recurso-aviso-r-0123456789abcdef").textContent).toContain("Resolución justa");
+    // Texto fijo por código (el backend no reenvía el `mensaje` del motor); un código desconocido no se pinta.
+    expect(g("recurso-aviso-r-0123456789abcdef").textContent).toBe("El clip es horizontal: se verá sobre un fondo desenfocado.");
     expect(t("recursos-aviso")).not.toBeNull();
+  });
+
+  it("añadir un recurso no abre un conflicto falso: adopta la revisión del servidor y lo siguiente se guarda", async () => {
+    vi.mocked(invoke).mockResolvedValue(BANDEJA);
+    const c = montar({ videoRecursoAnadir: vi.fn(async () => ({ recurso: recurso(), avisos: [] })) });
+    pestana("Recursos");
+    fireEvent.click(g("recursos-anadir-foto"));
+    await waitFor(() => expect(proy().recursos).toHaveLength(1));
+    expect(useEditor.getState().revision).toBe(4);
+    act(() => editarYa((p) => void (p.titulo = "Otro")));
+    await act(async () => { await guardar(); });
+    expect(useEditor.getState().conflicto).toBe(false);
+    expect(c.videoProyectoGuardar).toHaveBeenLastCalledWith("video001", expect.objectContaining({ revision: 4 }));
+    expect(useEditor.getState().guardado).toBe("guardado");
+  });
+
+  it("lo editado durante la importación se conserva y se guarda después, sin conflicto", async () => {
+    vi.mocked(invoke).mockResolvedValue(BANDEJA);
+    let soltar!: (v: Record<string, unknown>) => void;
+    const c = montar({ videoRecursoAnadir: vi.fn(() => new Promise<Record<string, unknown>>((r) => (soltar = r))) });
+    pestana("Recursos");
+    fireEvent.click(g("recursos-anadir-clip"));
+    await waitFor(() => expect(c.videoRecursoAnadir).toHaveBeenCalled());
+    act(() => editarYa((p) => void (p.titulo = "Durante")));
+    await act(async () => { await guardar(); }); // en pausa: no envía nada con la revisión vieja
+    expect(c.videoProyectoGuardar).not.toHaveBeenCalled();
+    await act(async () => { soltar({ recurso: recurso({ clase: "clip", ext: "mp4" }), avisos: [] }); });
+    await waitFor(() => expect(proy().recursos).toHaveLength(1));
+    expect(proy().titulo).toBe("Durante");
+    await act(async () => { await guardar(); });
+    expect(useEditor.getState().conflicto).toBe(false);
+    expect(c.videoProyectoGuardar).toHaveBeenCalledWith("video001", expect.objectContaining({ revision: 4, proyecto: expect.objectContaining({ titulo: "Durante", recursos: [expect.objectContaining({ id: "r-0123456789abcdef" })] }) }));
+  });
+
+  it("«Ver escena» lleva a la pestaña Escena con esa escena", () => {
+    const p = proyecto();
+    p.escenas[0].recursoPendiente = { tipo: "foto", que_debe_salir: "Un plato", resolucion_minima: { ancho: 1080, alto: 1920 } };
+    montar({}, p);
+    pestana("Recursos");
+    fireEvent.click(within(g("recurso-pendiente-e1")).getByRole("button", { name: "Ver escena 1" }));
+    expect(t("panel-escena")).not.toBeNull();
+    expect(t("escena-capa-recurso")).toBeNull(); // sin recursos todavía: se explica dónde añadirlos
+    expect(g("escena-capa-sin-recursos").textContent).toMatch(/Recursos/);
   });
 
   it("cancelar el diálogo no llama al servidor", async () => {
@@ -282,6 +387,7 @@ describe("recursos", () => {
     montar({ videoRecursoBorrar: borrar }, proyecto({ recursos: [recurso()] }));
     pestana("Recursos");
     fireEvent.click(g("recurso-borrar-r-0123456789abcdef"));
+    await waitFor(() => expect(borrar).toHaveBeenCalled()); // el borrado ya está en vuelo
     act(() => useEditor.setState({ conflicto: true, historial: [JSON.stringify(proy())] }));
     await act(async () => { soltar({}); });
     expect((await screen.findByTestId("recursos-error")).textContent).toContain("conflicto");

@@ -7,7 +7,7 @@ import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useClient } from "../../api/context";
 import { sinRutas } from "../../screens/MotorVideo";
-import { editar, seleccionar, useEditor } from "../../state/editor";
+import { cambioEnServidor, seleccionar, useEditor } from "../../state/editor";
 import { Button, Chip, IconButton } from "../../ui";
 import { esObjeto } from "../../json";
 import type { Recurso } from "../modelo";
@@ -32,22 +32,21 @@ function leerRecurso(v: unknown): Recurso | null {
   return { id, clase, ext, nombreOriginal, ancho, alto, duracion };
 }
 
-/** Añadir o borrar un recurso cambia el disco del servidor, que deshacer no puede revertir: una
- *  instantánea anterior reintroduciría un recurso borrado (inexistente) o dejaría huérfano uno
- *  añadido. Opción robusta: tras la operación se vacía el historial de deshacer/rehacer, y el
- *  panel lo avisa. Las ediciones anteriores siguen en el proyecto; solo dejan de poder deshacerse. */
-// Con un conflicto abierto, `editar()` no programa el guardado y vaciar el historial borraría la señal
-// que usa «Descartar la mía»: el recurso quedaría en disco y no en proyecto.json. Se avisa y no se toca
-// el proyecto; al resolver el conflicto se recarga el estado del servidor.
-const AVISO_CONFLICTO = "Hay un conflicto abierto: resuélvelo y vuelve a cargar los recursos.";
+/** Añadir o borrar un recurso cambia `proyecto.json` en el servidor (sube la revisión). `cambioEnServidor`
+ *  guarda antes lo pendiente, pausa el autoguardado durante la operación y adopta la revisión y la lista de
+ *  recursos del servidor; así el siguiente guardado no da un 409 falso de «otra sesión». También vacía el
+ *  historial: deshacer no puede revertir el disco del servidor, y el panel lo avisa. */
 
-function vaciarHistorial() {
-  useEditor.setState({ historial: [], futuro: [] });
-}
+/** Avisos del motor por código, con texto fijo (el backend no reenvía el `mensaje` del motor). La foto
+ *  pequeña ya se avisa abajo con su resolución. */
+const AVISOS_RECURSO: Record<string, string> = {
+  clip_horizontal: "El clip es horizontal: se verá sobre un fondo desenfocado.",
+  codificador_reserva: "El clip se codificó con el codificador de reserva: puede tardar más en renderizar.",
+};
 
 const mensaje = (e: unknown, defecto: string) => sinRutas(e instanceof Error ? e.message : typeof e === "string" ? e : defecto);
 
-export function PanelRecursos() {
+export function PanelRecursos({ verEscena }: { verEscena?: () => void }) {
   const client = useClient();
   const proyectoId = useEditor((e) => e.proyecto?.id);
   const recursos = useEditor((e) => e.proyecto?.recursos);
@@ -65,16 +64,10 @@ export function PanelRecursos() {
       const bandeja = await invoke<string | null>("importar_recurso", { clase });
       if (bandeja == null) return; // diálogo cancelado
       if (typeof bandeja !== "string" || !BANDEJA_RE.test(bandeja)) throw new Error("El diálogo de ficheros devolvió un identificador no válido.");
-      const r = await client.videoRecursoAnadir(proyectoId, bandeja, clase);
+      const r = await cambioEnServidor(client, proyectoId, () => client.videoRecursoAnadir(proyectoId, bandeja, clase));
       const nuevo = leerRecurso(r.recurso);
       if (!nuevo) throw new Error("El servidor no devolvió el recurso añadido.");
-      if (useEditor.getState().proyecto?.id !== proyectoId) return; // se cambió de proyecto mientras tanto
-      if (useEditor.getState().conflicto) throw new Error(AVISO_CONFLICTO);
-      editar((p) => {
-        if (!p.recursos.some((x) => x.id === nuevo.id)) p.recursos.push(nuevo);
-      });
-      vaciarHistorial();
-      const textos = Array.isArray(r.avisos) ? r.avisos.flatMap((a) => (esObjeto(a) && typeof a.mensaje === "string" ? [sinRutas(a.mensaje)] : [])) : [];
+      const textos = Array.isArray(r.avisos) ? r.avisos.flatMap((a) => (esObjeto(a) && typeof a.codigo === "string" && AVISOS_RECURSO[a.codigo] ? [AVISOS_RECURSO[a.codigo]] : [])) : [];
       setAvisos((a) => ({ ...a, [nuevo.id]: textos }));
     } catch (e) {
       setError(mensaje(e, "No se pudo añadir el recurso."));
@@ -89,13 +82,7 @@ export function PanelRecursos() {
     setError(null);
     setBorrando((b) => new Set(b).add(rid));
     try {
-      await client.videoRecursoBorrar(proyectoId, rid);
-      if (useEditor.getState().proyecto?.id !== proyectoId) return;
-      if (useEditor.getState().conflicto) throw new Error(AVISO_CONFLICTO);
-      editar((p) => {
-        p.recursos = p.recursos.filter((x) => x.id !== rid);
-      });
-      vaciarHistorial();
+      await cambioEnServidor(client, proyectoId, () => client.videoRecursoBorrar(proyectoId, rid));
     } catch (e) {
       setError(mensaje(e, "No se pudo borrar el recurso."));
     } finally {
@@ -138,7 +125,10 @@ export function PanelRecursos() {
               <li key={escena.id} className={s.item} data-testid={`recurso-pendiente-${escena.id}`}>
                 <div className={s.itemFila}>
                   <Chip tone="write">Falta {pedido.tipo === "clip" ? "un clip" : "una foto"}</Chip>
-                  <Button size="sm" variant="ghost" onClick={() => seleccionar(escena.id)}>
+                  <Button size="sm" variant="ghost" onClick={() => {
+                      seleccionar(escena.id);
+                      verEscena?.();
+                    }}>
                     Ver escena {n}
                   </Button>
                 </div>

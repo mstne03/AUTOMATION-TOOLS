@@ -7,7 +7,7 @@ import { useCallback, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import { useClient } from "../../api/context";
 import type { CosteVoz } from "../../api/types";
-import { cargar, fijarTiempo, guardar, seleccionar, useEditor } from "../../state/editor";
+import { asegurarGuardado, cargar, fijarTiempo, guardar, seleccionar, useEditor } from "../../state/editor";
 import { toast } from "../../ui";
 
 export function useFormaVoz(id: string | undefined) {
@@ -68,34 +68,6 @@ function costeValido(c: CosteVoz): boolean {
     typeof c.voz.id === "string" &&
     typeof c.voz.nombre === "string"
   );
-}
-
-/** Espera (con tope) a que el autoguardado en curso termine. */
-function esperarGuardado(): Promise<void> {
-  return new Promise((resolve) => {
-    const fin = () => {
-      clearTimeout(t);
-      desuscribir();
-      resolve();
-    };
-    const desuscribir = useEditor.subscribe((e) => {
-      if (e.guardado !== "guardando") fin();
-    });
-    const t = setTimeout(fin, 5000);
-  });
-}
-
-/** Deja el servidor con lo que hay en pantalla. `false` si hay conflicto o no se pudo guardar. */
-async function asegurarGuardado(): Promise<boolean> {
-  for (let i = 0; i < 3; i++) {
-    const st = useEditor.getState();
-    if (st.conflicto) return false;
-    if (st.guardado === "guardado") return true;
-    if (st.guardado === "guardando") await esperarGuardado();
-    else await guardar();
-  }
-  const st = useEditor.getState();
-  return !st.conflicto && st.guardado === "guardado";
 }
 
 export function useGastoVoz() {

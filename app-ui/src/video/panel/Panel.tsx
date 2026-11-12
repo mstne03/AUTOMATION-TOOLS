@@ -22,7 +22,7 @@ export function Panel() {
     <div className={s.panel}>
       <SegmentedControl options={PESTANAS} value={pestana} onChange={setPestana} aria-label="Panel del editor" data-testid="panel-pestanas" />
       {pestana === "escena" && <PanelEscena />}
-      {pestana === "recursos" && <PanelRecursos />}
+      {pestana === "recursos" && <PanelRecursos verEscena={() => setPestana("escena")} />}
       {pestana === "perfil" && <PanelPerfil />}
     </div>
   );

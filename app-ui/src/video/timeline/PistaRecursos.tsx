@@ -25,7 +25,7 @@ function ajustar(escenaId: string, campo: "entrada" | "salida", delta: number, d
   editar((p) => {
     const c = p.escenas.find((e) => e.id === escenaId)?.capa;
     if (!c) return;
-    const fin = c.salida > c.entrada ? c.salida : duracion;
+    const fin = c.salida > c.entrada ? Math.min(c.salida, duracion) : duracion;
     if (campo === "entrada") c.entrada = Math.min(Math.max(0, c.entrada + delta), fin - PASO);
     else c.salida = Math.min(Math.max(c.entrada + PASO, fin + delta), duracion);
   });

@@ -1,5 +1,9 @@
 /** Lista de proyectos y marco del editor (docs/pantallas.md → Vídeo; T16). Sidecar y motor reales;
  *  solo `lista_estados` simula la lista, porque con el motor real todos los proyectos son borrador. */
+import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, renameSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { simularRutas } from "./sidecar-falso";
 import {
@@ -173,4 +177,42 @@ test("editor-conflicto: un 409 recarga lo del servidor y la edición local se re
   await expect(page.getByTestId("editor-titulo")).toHaveText("Local");
   await expect(page.getByTestId("editor-guardado")).toHaveText("Guardado");
   expect((await leerProyecto(id)).titulo).toBe("Local");
+});
+
+test("recursos: añadir una foto no abre un conflicto falso y se asigna a la escena", async ({ page }) => {
+  const id = await proyectoDeCocina();
+  // Lo que haría el diálogo nativo (T13): copia el fichero a la bandeja y devuelve solo su id.
+  const bandeja = randomBytes(16).toString("hex");
+  const dir = join(process.env.E2E_STATE_DIR!, "video", "bandeja");
+  mkdirSync(dir, { recursive: true });
+  const png = join(dir, `${bandeja}.png`);
+  execFileSync(join(process.env.E2E_FFMPEG!, "ffmpeg"), ["-v", "error", "-f", "lavfi", "-i", "color=c=0x336699:s=1080x1920", "-frames:v", "1", png]);
+  renameSync(png, join(dir, `${bandeja}.bin`));
+  await page.addInitScript(
+    ({ port, token, bandeja }) => {
+      (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+        invoke: async (cmd: string) => (cmd === "sidecar_info" ? { port, token } : cmd === "importar_recurso" ? bandeja : null),
+        transformCallback: () => 0,
+      };
+    },
+    { port: Number(new URL(process.env.E2E_SIDECAR!).port), token: process.env.E2E_TOKEN!, bandeja },
+  );
+  await irAlEditor(page, id);
+  await expect(page.getByTestId("editor")).toBeVisible();
+  await page.getByRole("radio", { name: "Recursos" }).click();
+  await page.getByTestId("recursos-anadir-foto").click();
+  await expect(page.getByTestId("recursos-lista").locator("li")).toHaveCount(1);
+  await expect(page.getByTestId("recursos-error")).toHaveCount(0);
+  const rid = (await leerProyecto(id)).recursos[0].id;
+
+  // Asignarla: «Ver escena» lleva a la pestaña Escena; el selector crea la capa y el guardado no choca.
+  const escena = (await leerProyecto(id)).escenas[0].id;
+  await page.getByTestId(`clip-escena-${escena}`).click();
+  await page.getByRole("radio", { name: "Escena" }).click();
+  await page.getByTestId("escena-capa-recurso").selectOption(rid);
+  await expect(page.getByTestId("editor-guardado")).toHaveText("Guardado");
+  await expect(page.getByTestId("editor-conflicto")).toHaveCount(0);
+  await expect(page.getByTestId(`clip-recurso-${escena}`)).toBeVisible();
+  const capa = (await leerProyecto(id)).escenas[0].capa;
+  expect(capa).toMatchObject({ recursoId: rid, modo: "encima", encuadre: "marco", entrada: 0 });
 });
