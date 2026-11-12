@@ -28,6 +28,16 @@ describe("planificarComposicion", () => {
     expect(p.avisos.join(" ")).toMatch(/debajo del gancho/);
   });
 
+  it.each(["cartel\n    texto: Nobody comes close", "cifra\n    valor: 17"])(
+    "con una escena en el bloque 1 (%s) su contenido entra cuando el gancho ya se ha ido (content_overlap)",
+    (escena) => {
+      const { p } = plan(`escenas:\n  1:\n    tipo: ${escena}`, 0.12);
+      const g = host(p.archivos["index.html"], "gancho")!;
+      const datos = JSON.parse(/id="esc1-datos" type="application\/json">([^<]+)</.exec(p.archivos["compositions/esc1.html"])![1]);
+      expect(datos.empieza).toBeGreaterThan(g.inicio + g.duracion);
+    },
+  );
+
   it("sin escenas pronto, gancho de 2,3 s y etiqueta arriba justo después", () => {
     const { p } = plan("etiqueta: World Cup winners", 0.12);
     expect(host(p.archivos["index.html"], "gancho")!.duracion).toBe(2.3);

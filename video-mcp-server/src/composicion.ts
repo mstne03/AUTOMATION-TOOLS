@@ -420,13 +420,33 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
   // Primero las de detrás (y las de modo no válido, que `capaDe` rechaza): quedan en el DOM justo tras el fondo.
   escenas.forEach((_, k) => escenas[k].capa && escenas[k].capa!.modo !== "encima" && capaDe(k));
 
+  // ---- Fin del gancho ----
+  // El gancho y la etiqueta ocupan la mitad superior, igual que el texto de las escenas: no pueden pisarse.
+  // Si una escena (bloque 2 en adelante) empieza antes de que acabe el gancho, el gancho termina en su corte.
+  let finGancho = Math.min(GANCHO_DURACION, D);
+  for (const v of ventanas.slice(1)) {
+    if (escenas[v.n - 1].base && v.corte < finGancho) {
+      finGancho = r3(Math.max(0.9, v.corte));
+      break;
+    }
+  }
+  // Si el bloque 1 es una escena, su contenido entra cuando el gancho ya se ha ido (antes, `content_overlap` en
+  // `hyperframes check`). Le deja al menos 1 s visible; si el bloque es más corto, el gancho se acorta (≥ 0,9 s).
+  // ponytail: con un bloque 1 de menos de ~2 s el gancho y la escena aún se rozan; el `check` lo frena con su error.
+  let entradaEscena1 = 0.1;
+  // Un tiempo no finito no se toca aquí: lo rechaza `anadirPieza` con su mensaje (SEO-111).
+  if (escenas[0]?.base && Number.isFinite(ventanas[0].duracion)) {
+    entradaEscena1 = r3(Math.max(0.1, Math.min(finGancho + 0.15, ventanas[0].duracion - 1)));
+    if (entradaEscena1 - 0.15 < finGancho) finGancho = r3(Math.max(0.9, entradaEscena1 - 0.15));
+  }
+
   // ---- Bloques ----
   let usa3d = false;
   let usaTunel = false;
   for (const v of ventanas) {
     const id = `esc${v.n}`;
     const k = v.n - 1;
-    const empieza = k === 0 ? 0.1 : SOLAPE;
+    const empieza = k === 0 ? entradaEscena1 : SOLAPE;
     const esc: Escena | undefined = escenas[k].base;
     // Golpe en una cifra: el número aterriza en esa palabra; si la palabra abre el bloque no da tiempo a contar,
     // así que aterriza 0,55 s después de la entrada y el temblor y el destello se mueven con él.
@@ -539,15 +559,7 @@ export function planificarComposicion(e: EntradaPlan): PlanComposicion {
   );
 
   // ---- Gancho y etiqueta ----
-  // El gancho y la etiqueta ocupan la mitad superior, igual que el texto de las escenas: no pueden pisarse.
-  // Si una escena (bloque 2 en adelante) empieza antes de que acabe el gancho, el gancho termina en su corte.
-  let finGancho = Math.min(GANCHO_DURACION, D);
-  for (const v of ventanas.slice(1)) {
-    if (escenas[v.n - 1].base && v.corte < finGancho) {
-      finGancho = r3(Math.max(0.9, v.corte));
-      break;
-    }
-  }
+  // (`finGancho` y la entrada de la escena del bloque 1 se calculan antes de los bloques.)
   const bloqueEn = (t: number) => {
     let k = 0;
     for (let i = 0; i < ventanas.length; i++) if (ventanas[i].corte <= t) k = i;

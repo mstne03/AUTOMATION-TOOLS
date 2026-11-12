@@ -22,12 +22,9 @@
           "Nació en la cocina de una casa de campo."
         ],
         "base": {
-          "tipo": "mapa",
-          "region": "espana",
-          "destacar": [
-            "Madrid"
-          ],
-          "etiqueta": "Cuna de la receta"
+          "tipo": "cartel",
+          "texto": "Tortilla de patatas",
+          "subtexto": "Receta clásica"
         }
       },
       {
@@ -35,9 +32,12 @@
           "Esta receta divide a media España."
         ],
         "base": {
-          "tipo": "cartel",
-          "texto": "Tortilla de patatas",
-          "subtexto": "Receta clásica"
+          "tipo": "mapa",
+          "region": "espana",
+          "destacar": [
+            "Madrid"
+          ],
+          "etiqueta": "Cuna de la receta"
         }
       },
       {
