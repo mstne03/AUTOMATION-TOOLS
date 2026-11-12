@@ -9,13 +9,13 @@
 #                                             no ejecuta el postinstall, así que se aplica a mano.
 #   (el navegador del render, Chrome for Testing, no va en el instalador: lo descarga el backend
 #    en el primer uso, SEO-108)
-#   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         build LGPL de la tarea 2 (SHA-256 fijado)
+#   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         ffmpeg LGPL propio (W1.5, SHA-256 fijado), solo esos dos
 #   video-engine/LICENSES/                    avisos de cada pieza
 #
 # Las descargas se cachean en %LOCALAPPDATA%\seo-studio-dev\descargas\<pieza>-<versión>\ (en CI,
 # en un directorio temporal). Los archivos descargados son datos no confiables: se comprueba su
 # SHA-256 antes de abrirlos y cada uno se extrae en su propia carpeta vacía. Aborta si un hash no
-# coincide o si el ffmpeg trae libx264 (o cualquier parte GPL / nonfree).
+# coincide o si el ffmpeg trae libx264, libopenh264 (o cualquier parte GPL / nonfree).
 #
 #   bash scripts/prepare-video-engine.sh        # desde app-ui/, en Git Bash
 set -euo pipefail
@@ -26,10 +26,15 @@ NODE_ZIP=node-v$NODE_VERSION-win-x64.zip
 NODE_URL=https://nodejs.org/dist/v$NODE_VERSION/$NODE_ZIP
 NODE_SHA256=cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20
 
-FFMPEG_PIEZA=ffmpeg-lgpl-7.1.5-12
-FFMPEG_ZIP=ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1.zip
-FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/$FFMPEG_ZIP
-FFMPEG_SHA256=b7c1c846dacca68ee4ebf5c390742c973b3d5d14a6d44b061f500d8e4ac74fc0
+# ffmpeg LGPL propio (W1.5, video-mcp-server/ffmpeg-build), reproducible: el SHA-256 es el control,
+# venga de donde venga el fichero. FFMPEG_LGPL_DIR = carpeta con ffmpeg.exe, ffprobe.exe, LICENSES/ y
+# LEEME-FFMPEG.txt (construir.sh + recopilar-avisos.sh, el mismo contenido que la release).
+# ponytail: solo carpeta local hasta que exista la release de CI (W3.2 punto 2); entonces, descarga
+# por URL con estos mismos hashes. Un bundle hecho así NO se distribuye: la oferta de código fuente
+# de LEEME-FFMPEG.txt apunta a esa release.
+FFMPEG_VERSION=7.1.5
+FFMPEG_SHA256=f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85
+FFPROBE_SHA256=d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01
 
 HYPERFRAMES_VERSION=0.8.206
 
@@ -132,14 +137,21 @@ cp "$x/node-v$NODE_VERSION-win-x64/node.exe" "$DEST/node/node.exe"
 cp "$x/node-v$NODE_VERSION-win-x64/LICENSE" "$DEST/LICENSES/node-LICENSE.txt"
 [ "$("$DEST/node/node.exe" --version | tr -d '\r')" = "v$NODE_VERSION" ] || falla "node.exe no es v$NODE_VERSION"
 
-echo "== ffmpeg LGPL"
-zip=$(descargar "$FFMPEG_PIEZA" "$FFMPEG_URL" "$FFMPEG_ZIP" "$FFMPEG_SHA256")
-x=$(extraer "$zip")
-bin="$x/${FFMPEG_ZIP%.zip}/bin"
-cp "$bin/ffmpeg.exe" "$bin/ffprobe.exe" "$DEST/ffmpeg/"
-cp "$x/${FFMPEG_ZIP%.zip}/LICENSE.txt" "$DEST/LICENSES/ffmpeg-LICENSE.txt"
+echo "== ffmpeg LGPL propio $FFMPEG_VERSION"
+[ -n "${FFMPEG_LGPL_DIR:-}" ] || falla "falta FFMPEG_LGPL_DIR (carpeta con el ffmpeg de video-mcp-server/ffmpeg-build, ver su LEEME): hasta la release de CI no hay descarga"
+origen=$(cygpath -u "$FFMPEG_LGPL_DIR")
+# Se comprueban las copias, no el origen: lo que se empaqueta es lo que se verificó.
+cp "$origen/ffmpeg.exe" "$origen/ffprobe.exe" "$DEST/ffmpeg/"
+comprobar_sha "$DEST/ffmpeg/ffmpeg.exe" "$FFMPEG_SHA256"
+comprobar_sha "$DEST/ffmpeg/ffprobe.exe" "$FFPROBE_SHA256"
+# La carpeta lleva exactamente esos dos ficheros: el motor rechaza cualquier otro (DLL plantada, I4).
+[ "$(ls -A "$DEST/ffmpeg" | sort | paste -sd' ' -)" = "ffmpeg.exe ffprobe.exe" ] || falla "la carpeta ffmpeg del bundle tiene ficheros de más"
 codificadores=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -encoders)
-! grep -q libx264 <<<"$codificadores" || falla "el ffmpeg del bundle lista libx264 (debe ser LGPL)"
+for prohibido in libx264 libx264rgb libx265 libopenh264; do
+  ! grep -qE "^\s*\S+\s+$prohibido\s" <<<"$codificadores" || falla "el ffmpeg del bundle lista $prohibido (debe ser el LGPL propio)"
+done
+for f in "$origen"/LICENSES/*.txt; do cp "$f" "$DEST/LICENSES/ffmpeg-$(basename "$f")"; done
+cp "$origen/LEEME-FFMPEG.txt" "$DEST/LICENSES/ffmpeg-LEEME.txt"
 version=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -version)
 ! grep -q -e '--enable-gpl' -e '--enable-nonfree' <<<"$version" || falla "el ffmpeg del bundle es GPL o nonfree"
 grep -e '^ffmpeg version' -e '^configuration:' <<<"$version" > "$DEST/LICENSES/ffmpeg-version.txt"
@@ -165,8 +177,10 @@ cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/sh
   echo
   echo "Node.js v$NODE_VERSION win-x64   $NODE_URL"
   echo "  SHA-256 $NODE_SHA256"
-  echo "ffmpeg $FFMPEG_ZIP (LGPL, sin libx264)   $FFMPEG_URL"
-  echo "  SHA-256 $FFMPEG_SHA256"
+  echo "ffmpeg $FFMPEG_VERSION LGPL-2.1-o-posterior, build propio y reproducible (sin libx264 ni libopenh264):"
+  echo "  ver ffmpeg-LEEME.txt (código fuente correspondiente y cómo sustituirlo)"
+  echo "  SHA-256 ffmpeg.exe $FFMPEG_SHA256"
+  echo "  SHA-256 ffprobe.exe $FFPROBE_SHA256"
   echo "hyperframes $HYPERFRAMES_VERSION (Apache-2.0) y el resto de dependencias de npm: cada"
   echo "  paquete conserva su licencia en app/node_modules/<paquete>/."
   echo

@@ -927,12 +927,38 @@ export interface Herramientas {
 
 let cache: Herramientas | null | undefined;
 
+/**
+ * La carpeta del ffmpeg del bundle (`<app>/../ffmpeg`) solo puede tener ffmpeg.exe y ffprobe.exe,
+ * ficheros normales con un solo enlace. ffmpeg carga NVENC y AMF con LoadLibraryExW buscando primero
+ * en su propia carpeta: una DLL plantada ahí se cargaría en lugar de la del driver (W3.2, I4).
+ * Devuelve el motivo del rechazo, o undefined. Fuera de esa carpeta (desarrollo, E2E) no aplica.
+ */
+export function revisarCarpetaFfmpeg(dir: string, raiz = SERVER_ROOT): string | undefined {
+  if (!mismaRuta(dir, path.resolve(raiz, "..", "ffmpeg"))) return undefined;
+  try {
+    const encontrados = recorrer(dir).map(claveRel).sort();
+    const esperados = [`ffmpeg${EXE}`, `ffprobe${EXE}`].map(claveRel).sort();
+    if (encontrados.join("|") !== esperados.join("|")) return `la carpeta del ffmpeg tiene otros ficheros: ${encontrados.join(", ")}`;
+    for (const f of esperados) if (fs.lstatSync(path.join(dir, f)).nlink !== 1) return `${f} tiene otro enlace duro`;
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return undefined;
+}
+
 export function herramientasFfmpeg(ffmpegDir?: string): Herramientas | null {
-  if (cache !== undefined) return cache;
-  const dir = localizarFfmpegDir(ffmpegDir);
-  cache = dir ? { dir, ffmpeg: path.join(dir, `ffmpeg${EXE}`), ffprobe: path.join(dir, `ffprobe${EXE}`) } : null;
-  if (cache) log.info(`ffmpeg encontrado en ${dir}`);
-  else log.warn("No encuentro ffmpeg/ffprobe (ni en FFMPEG_DIR, ni en el PATH, ni en winget). El render y video_fotograma no funcionarán.");
+  if (cache === undefined) {
+    const dir = localizarFfmpegDir(ffmpegDir);
+    cache = dir ? { dir, ffmpeg: path.join(dir, `ffmpeg${EXE}`), ffprobe: path.join(dir, `ffprobe${EXE}`) } : null;
+    if (cache) log.info(`ffmpeg encontrado en ${dir}`);
+    else log.warn("No encuentro ffmpeg/ffprobe (ni en FFMPEG_DIR, ni en el PATH, ni en winget). El render y video_fotograma no funcionarán.");
+  }
+  // En cada uso, no solo al arrancar: una DLL se puede plantar con el motor en marcha.
+  const fallo = cache && esIntegrado() ? revisarCarpetaFfmpeg(cache.dir) : undefined;
+  if (fallo) {
+    log.error(`ffmpeg del bundle rechazado: ${fallo}`);
+    return null;
+  }
   return cache;
 }
 

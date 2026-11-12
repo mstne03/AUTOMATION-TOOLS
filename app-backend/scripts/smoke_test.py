@@ -62,7 +62,7 @@ from typing import Self
 
 TOKEN ="smoke-test-token"
 HYPERFRAMES = "0.8.206"
-FFMPEG = "n7.1.5"  # el LGPL de la tarea 2; el de winget (8.1) delataría que no se usa el bundle
+FFMPEG = "7.1.5-seo-studio"  # el LGPL propio (W1.5, --extra-version); cualquier otro delata que no se usa el bundle
 CFT_VERSION = "156.0.8078.73"  # la de config.NAVEGADOR_VERSION
 CFT_FICHEROS = 288
 APP_BACKEND = Path(__file__).resolve().parents[1]

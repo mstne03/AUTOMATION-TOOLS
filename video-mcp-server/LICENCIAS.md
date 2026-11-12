@@ -14,7 +14,7 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 |---|---|---|
 | GSAP | **Resuelto (SEO-112, SEO-113).** Fuera de `plantilla/`, `catalogo/`, `src/` y de las dependencias; las piezas usan WAAPI con `hf-tiempo.js`. | — |
 | **chrome-headless-shell 152 (Chrome for Testing, Google)** | **BLOQUEANTE (dudosa / redistribución no concedida)** — binario de Google con marca «Google Chrome», «All rights reserved» y sujeto a los términos de Google, que prohíben distribuir su software; ninguna fuente concede redistribución. | Spike con un **snapshot de Chromium** (código abierto, BSD, precompilado; versión y SHA-256 fijados) vía `HYPERFRAMES_BROWSER_PATH`; si pasa, va en el instalador. Si no, **descarga del CfT en el primer uso** con el SHA-256 ya fijado. |
-| ffmpeg LGPL 7.1 (BtbN) | Sí, **con condiciones pendientes** antes de publicar (código fuente correspondiente y avisos de las bibliotecas estáticas). Riesgo de patentes a decidir. | Build LGPL propia y mínima (también reduce tamaño). |
+| ffmpeg LGPL 7.1.5 (build propio, W1.5) | Sí, con **una condición pendiente**: publicar la release con el código fuente correspondiente antes de distribuir (W3.2 punto 2). Avisos reunidos. Sin openh264 ni x264. | — |
 | Resto (HyperFrames, Node, three, d3, topojson, atlas, fuentes, shaders, dependencias de npm) | Sí, con aviso (ya incluido) o atribución. | — |
 
 ## Tabla por pieza
@@ -33,7 +33,7 @@ jurídica: donde hay duda se marca y se lleva a Marc.
 | Recursive | — | OFL-1.1 | Sí | Igual. El catálogo que la usaba ya no viaja (SEO-113); su licencia sigue en `LICENSES/` (`fuente-recursive-OFL.txt`). | `catalogo/compositions/assets/fonts/OFL.txt` |
 | Shaders vendorizados (`shaders` 4.0.0, typegpu 0.12.3, tinyest 0.3.4, typed-binary 4.3.3, tsover-runtime 0.0.7) | ver col. | MIT (los cuatro primeros), Apache-2.0 (tsover-runtime) | Sí | Avisos (hecho: `shaders-THIRD-PARTY-LICENSES.txt`). **Modificado respecto al upstream** (SEO-114): se sustituye una sentencia del glue de `renderSyntheticFrame` por una variante «el último gana»; el diff está en `plantilla/vendor/shaders.iife.patch` y el hash upstream sigue en `catalogo/hyperframes.lock.json`. Las licencias MIT/Apache permiten modificar; se conservan los avisos. | `plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt` y cabecera de `shaders.iife.js` |
 | Node.js | v22.23.4 win-x64 | MIT + licencias de sus dependencias (OpenSSL Apache-2.0, ICU, etc.) | Sí | Aviso (hecho: `node-LICENSE.txt`, 148 KB, incluye las de terceros) | `LICENSE` del zip oficial |
-| **ffmpeg / ffprobe** | `ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1` (BtbN, autobuild-2026-07-31-14-10) | **LGPL-3.0** (`--enable-version3`, sin `--enable-gpl` ni `--enable-nonfree`, `--disable-libx264/x265`) | Sí, invocado como proceso aparte (nuestro código no enlaza con él) | Ver sección ffmpeg: **pendiente** el código fuente correspondiente y los avisos de las bibliotecas enlazadas estáticamente. | `LICENSE.txt` del zip; `configuration:` en `LICENSES/ffmpeg-version.txt` |
+| **ffmpeg / ffprobe** | 7.1.5 propio y reproducible (`video-mcp-server/ffmpeg-build`; SHA-256 en `prepare-video-engine.sh`) | **LGPL-2.1-o-posterior** (sin `--enable-gpl`, `--enable-nonfree` ni `--enable-version3`) | Sí, invocado como proceso aparte | Enlaza estáticamente dav1d (BSD-2), zlib, cabeceras de NVIDIA y AMD (MIT) y el runtime de MinGW-w64/GCC: sus avisos van en `LICENSES/ffmpeg-*`. Pendiente la release con la fuente (ver sección ffmpeg). | `LICENSES/ffmpeg-LEEME.txt` y `ffmpeg-*.txt`, de `recopilar-avisos.sh` |
 | **chrome-headless-shell** | 152.0.7977.30 win64 (Chrome for Testing) | Binario de Google bajo los términos de Google; contiene código Chromium (BSD-3) y terceros | **Dudoso → BLOQUEANTE** | Ver sección Chrome. | `ABOUT` y `LICENSE.headless_shell` del zip; https://policies.google.com/terms; https://www.google.com/chrome/terms/ |
 | Dependencias de producción de npm (`npm ci --omit=dev`, 178 paquetes) | lockfile | 138 MIT, 19 ISC, 8 Apache-2.0, 4 BSD-3, 2 BSD-2, 3 OFL, 1 CC0, 1 0BSD, 1 Apache-2.0 AND LGPL-3.0-or-later (`@img/sharp-win32-x64`, libvips en DLL) | Sí | Cada paquete lleva su licencia en `app/node_modules/<paquete>/`. `puppeteer-core` (Apache-2.0) no trae fichero `LICENSE` en el paquete: añadir el texto Apache a `LICENSES/` (menor). libvips (LGPL, enlazada dinámicamente): misma condición de código fuente que ffmpeg. Ninguna GPL. | `package.json` de cada paquete del árbol de producción del bundle local |
 
@@ -107,21 +107,14 @@ instead of the pinned chrome-headless-shell», según su propio mensaje de ayuda
    redistribuir; sacrifica determinismo (versión no fijada, se actualiza sola) y robustez (Edge se puede
    desinstalar en el EEE; políticas de empresa). Solo como reserva.
 
-## ffmpeg LGPL: condiciones pendientes
+## ffmpeg LGPL: estado (W3.2, 2026-11-12)
 
-- **Licencia:** LGPL v3 (por `--enable-version3`). Lo invocamos como ejecutable aparte, así que SEO Studio
-  no es «Combined Work» y puede seguir cerrado. Al distribuir el binario hay que cumplir la GPLv3 §6
-  incorporada: acompañar el **código fuente correspondiente** (ffmpeg n7.1.5-12 y cada biblioteca LGPL
-  enlazada estáticamente: gmp, libssh, libbluray, lame, twolame, soxr, openal, libaribb24…) o una oferta
-  / punto de descarga que **mantengamos** nosotros. Hoy **no se hace**. Recomendación: espejo propio del
-  tarball de ffmpeg y del commit de BtbN/FFmpeg-Builds usado (sus scripts fijan las versiones de cada
-  biblioteca) y un enlace en `LICENSES/LEEME.txt`.
-- **Avisos de bibliotecas BSD/MIT estáticas** (libvpx, libwebp, dav1d, libass, harfbuzz, zimg…): sus
-  licencias exigen reproducir el aviso en la distribución binaria; el zip de BtbN solo trae el texto de
-  la LGPL. **Pendiente** reunirlos.
-- **Patentes (no es copyright, no bloquea esta puerta, decide Marc):** el build incluye `libopenh264`
-  compilado desde fuente (la cobertura de patentes de Cisco solo vale para los binarios que Cisco
-  distribuye) y codificadores que no usamos (VVC, AV1…); el codificador AAC nativo sí se usa. D11 asume H.264 con
-  `h264_mf` (patentes cubiertas por la licencia de Windows) o con la GPU. Recomendación: **build LGPL
-  propia y mínima** (solo `prores`/`vp9` de lectura, `h264_mf`/`h264_nvenc`/`qsv`/`amf`, `aac`, filtros
-  necesarios), que además recorta buena parte de los 209 MB y facilita las dos condiciones anteriores.
+- **Licencia:** LGPL-2.1-o-posterior. Lo invocamos como ejecutable aparte: SEO Studio no es «work that
+  uses the Library» enlazado y puede seguir cerrado.
+- **Código fuente correspondiente:** lo produce `empaquetar-fuente.sh` (tarballs verificados, scripts e
+  imagen fijada) y lo publica el workflow `ffmpeg-lgpl.yml` como release; `LEEME-FFMPEG.txt` lleva la
+  oferta y cómo sustituir el binario. **Pendiente:** esa release aún no existe. Hasta entonces el
+  bundle se arma con `FFMPEG_LGPL_DIR` (construcción local, idéntica bit a bit) y **no se distribuye**.
+- **Avisos BSD/MIT estáticos:** reunidos por `recopilar-avisos.sh` (dav1d, zlib, NVIDIA, AMD, MinGW-w64, GCC).
+- **Patentes:** sin `libopenh264` ni codificadores que no usamos; H.264 sale por `h264_mf` (licencia de
+  Windows) o por la GPU (`h264_nvenc`, `h264_amf`). AAC nativo.
