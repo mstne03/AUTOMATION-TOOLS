@@ -1,4 +1,4 @@
-"""Clave de ElevenLabs (BYOK): guardado en el almacén y validación contra /v1/user (MockTransport)."""
+"""Clave de ElevenLabs (BYOK): guardado en el almacén y validación contra /v1/voices (MockTransport)."""
 
 import httpx
 import pytest
@@ -10,9 +10,13 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _handler(request: httpx.Request) -> httpx.Response:
-    assert request.url == "https://api.elevenlabs.io/v1/user"
+    assert request.url == "https://api.elevenlabs.io/v1/voices"
     if request.headers.get("xi-api-key") == "xi-buena":
-        return httpx.Response(200, json={"subscription": {}})
+        return httpx.Response(200, json={"voices": []})
+    if request.headers.get("xi-api-key") == "xi-restringida":
+        return httpx.Response(401, json={"detail": {"status": "missing_permissions", "message": "falta voices_read para xi-restringida"}})
+    if request.headers.get("xi-api-key") == "xi-corta":
+        return httpx.Response(400, json={"detail": {"status": "invalid_api_key_length", "message": "API key must be exactly 51 characters"}})
     return httpx.Response(401, json={"detail": {"status": "invalid_api_key"}})
 
 
@@ -73,9 +77,11 @@ async def test_validar_clave_elevenlabs_buena(client):
 
 async def test_validar_clave_elevenlabs_guardada(client):
     await client.put("/settings", json={"elevenlabs_api_key": "xi-buena"}, headers=AUTH)
-    r = await client.post("/settings/validate-elevenlabs-key", json={}, headers=AUTH)
-    assert r.json() == {"valida": True, "detalle": None}
-    await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
+    try:
+        r = await client.post("/settings/validate-elevenlabs-key", json={}, headers=AUTH)
+        assert r.json() == {"valida": True, "detalle": None}
+    finally:
+        await client.put("/settings", json={"elevenlabs_api_key": ""}, headers=AUTH)
 
 
 async def test_clave_pegada_con_espacios_se_recorta(client):
@@ -113,3 +119,15 @@ async def test_otro_estado_502(make_client):
         r = await c.post("/settings/validate-elevenlabs-key", json={"api_key": "xi"}, headers=AUTH)
         assert r.status_code == 502
         assert r.json()["detail"] == "ElevenLabs respondió con un error (500)."
+
+
+@pytest.mark.parametrize(
+    ("clave", "pista"),
+    [("xi-restringida", "permisos"), ("xi-corta", "completa")],
+)
+async def test_clave_restringida_o_incompleta_dice_por_que(client, clave, pista):
+    """Prueba con la app instalada (T21): una clave real salía como «no reconoce» o como un 502 con «(400)»."""
+    r = await client.post("/settings/validate-elevenlabs-key", json={"api_key": clave}, headers=AUTH)
+    assert r.status_code == 200
+    assert r.json()["valida"] is False and pista in r.json()["detalle"]
+    assert clave not in r.text

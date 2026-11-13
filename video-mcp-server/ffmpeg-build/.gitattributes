@@ -1,0 +1,5 @@
+# Todo con LF también en checkouts de Windows: el contenedor de Linux lee estos scripts, el
+# Dockerfile y fuentes.lock (TSV) tal cual, y un \r rompería bash y el parseo.
+* text=auto eol=lf
+tests/muestras/** binary
+claves/*.gpg binary

@@ -15,13 +15,13 @@
       <script>
         (function () {
           var d = JSON.parse(document.getElementById("flash-datos").textContent);
-          var tl = gsap.timeline({ paused: true });
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
           d.destellos.forEach(function (e) {
-            tl.fromTo("#flash-luz", { opacity: 0 }, { opacity: e.opacidad, duration: e.sube, ease: "none", immediateRender: false }, e.t);
-            tl.fromTo("#flash-luz", { opacity: e.opacidad }, { opacity: 0, duration: e.baja, ease: "power2.out", immediateRender: false }, e.t + e.sube);
+            // hf-tiempo solo comprueba los números; una opacidad que no lo sea se descartaría en silencio (I11).
+            hf.numero(e.opacidad, "flash: opacidad");
+            hf.tween("#flash-luz", { opacity: 0 }, { opacity: e.opacidad }, e.t, e.sube, "none", { antes: false });
+            hf.tween("#flash-luz", { opacity: e.opacidad }, { opacity: 0 }, e.t + e.sube, e.baja, "power2.out", { antes: false });
           });
-          window.__timelines = window.__timelines || {};
-          window.__timelines["flash"] = tl;
         })();
       </script>
     </div>

@@ -1,0 +1,8 @@
+# Excepciones de Trivy (job `trivy` de .github/workflows/ci.yml).
+#
+# Cada entrada lleva encima un comentario con: qué es, por qué no aplica o no se puede corregir
+# todavía, y cuándo revisarla. Mismo criterio que las excepciones de pip-audit del job
+# `dependencias`. Una entrada sin comentario no se acepta en revisión.
+#
+# Formato: un ID por línea (CVE-…, GHSA-…, o el ID de la regla de misconfig, p. ej. DS-0002).
+# Para caducar una excepción sola: `CVE-XXXX-YYYY exp:AAAA-MM-DD`.

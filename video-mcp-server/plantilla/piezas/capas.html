@@ -56,50 +56,43 @@
       <script id="capas-datos" type="application/json">{{DATOS}}</script>
       <script>
         (function () {
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
           var d = JSON.parse(document.getElementById("capas-datos").textContent);
-          var tl = gsap.timeline({ paused: true });
+          var acota = function (v, a, b) { return v < a ? a : v > b ? b : v; };
+          hf.numero(d.duracion, "capas: duración");
 
           // Destellos: sube en el 24 %, baja a 0,4 a mitad y se apaga en el 28 % final.
           d.destellos.forEach(function (e) {
-            var s = "#" + e.id, t0 = e.t, D = e.duracion;
-            tl.fromTo(s, { opacity: 0 }, { opacity: 0.62, duration: D * 0.24, ease: "sine.out" }, t0 + D * 0.06);
-            tl.fromTo(s, { opacity: 0.62 }, { opacity: 0.4, duration: D * 0.2, ease: "sine.inOut", immediateRender: false }, t0 + D * 0.42);
-            tl.fromTo(s, { opacity: 0.4 }, { opacity: 0, duration: D * 0.28, ease: "sine.in", immediateRender: false }, t0 + D * 0.68);
-            tl.fromTo(s + " .ambar", { xPercent: -20, scale: 0.92, rotation: -4 }, { xPercent: 18, scale: 1.1, rotation: 2, duration: D, ease: "sine.inOut" }, t0);
-            tl.fromTo(s + " .rojo", { xPercent: 20, yPercent: -8, scale: 1.08 }, { xPercent: -16, yPercent: 8, scale: 0.94, duration: D, ease: "sine.inOut" }, t0);
-            tl.fromTo(s + " .oro", { xPercent: -28, rotation: -6 }, { xPercent: 24, rotation: 4, duration: D, ease: "sine.inOut" }, t0);
+            var s = "#" + hf.id(e.id), t0 = e.t, D = e.duracion;
+            hf.tween(s, { opacity: 0 }, { opacity: 0.62 }, t0 + D * 0.06, D * 0.24, "sine.out");
+            hf.tween(s, { opacity: 0.62 }, { opacity: 0.4 }, t0 + D * 0.42, D * 0.2, "sine.inOut", { antes: false });
+            hf.tween(s, { opacity: 0.4 }, { opacity: 0 }, t0 + D * 0.68, D * 0.28, "sine.in", { antes: false });
+            hf.tween(s + " .ambar", { xPercent: -20, scale: 0.92, rotation: -4 }, { xPercent: 18, scale: 1.1, rotation: 2 }, t0, D, "sine.inOut");
+            hf.tween(s + " .rojo", { xPercent: 20, yPercent: -8, scale: 1.08 }, { xPercent: -16, yPercent: 8, scale: 0.94 }, t0, D, "sine.inOut");
+            hf.tween(s + " .oro", { xPercent: -28, rotation: -6 }, { xPercent: 24, rotation: 4 }, t0, D, "sine.inOut");
           });
 
-          // HUD: contador y punto de REC como función del tiempo (setter: seek no dispara onUpdate).
+          // HUD: contador y punto de REC como función del tiempo, acotado a la duración de la capa.
           var contador = document.getElementById("capas-contador");
           var punto = document.getElementById("capas-punto");
-          if (contador && punto) {
-            var reloj = { _t: 0 };
-            var pinta = function (t) {
-              var s = Math.max(0, Math.floor(t));
+          var grano = document.querySelector("#capas-grano .textura");
+          // Grano: saltos discretos cada 0,1 s. El 1e-6 absorbe 0,3 / 0,1 = 2,9999999999999996 en los bordes.
+          var pos = [[0, 0], [-5, -5], [-10, 5], [5, -10], [-5, 15], [-10, 5], [15, 0], [0, 10], [-15, 0], [10, 5]];
+          hf.reloj(function (t) {
+            var u = acota(t, 0, d.duracion);
+            if (contador && punto) {
+              var s = Math.floor(u);
               var hh = String(Math.floor(s / 3600)).padStart(2, "0");
               var mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
               var ss = String(s % 60).padStart(2, "0");
               contador.textContent = hh + ":" + mm + ":" + ss;
-              punto.style.opacity = Math.floor(t / 0.55) % 2 === 0 ? "1" : "0.25";
-            };
-            Object.defineProperty(reloj, "t", { get: function () { return this._t; }, set: function (v) { this._t = v; pinta(v); } });
-            tl.fromTo(reloj, { t: 0 }, { t: d.duracion, duration: d.duracion, ease: "none" }, 0);
-            pinta(0);
-          }
-
-          // Grano: saltos discretos cada 0,1 s, en número finito.
-          var grano = document.querySelector("#capas-grano .textura");
-          if (grano) {
-            var pos = [[0, 0], [-5, -5], [-10, 5], [5, -10], [-5, 15], [-10, 5], [15, 0], [0, 10], [-15, 0], [10, 5]];
-            var n = Math.ceil(d.duracion / 0.1);
-            for (var i = 0; i < n; i++) {
-              var p = pos[i % pos.length], q = pos[(i + 1) % pos.length];
-              tl.fromTo(grano, { xPercent: p[0], yPercent: p[1] }, { xPercent: q[0], yPercent: q[1], duration: 0.001, ease: "none", immediateRender: i === 0 }, i * 0.1 + 0.099);
+              punto.style.opacity = Math.floor(u / 0.55) % 2 === 0 ? "1" : "0.25";
             }
-          }
-          window.__timelines = window.__timelines || {};
-          window.__timelines["capas"] = tl;
+            if (grano) {
+              var p = pos[Math.floor(u / 0.1 + 1e-6) % pos.length];
+              grano.style.transform = "translate(" + p[0] + "%, " + p[1] + "%)";
+            }
+          });
         })();
       </script>
     </div>

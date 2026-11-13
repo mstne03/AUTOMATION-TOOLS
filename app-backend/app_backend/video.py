@@ -15,6 +15,8 @@ Ciclo de vida:
   del sidecar: muere con la app aunque el backend no llegue a llamar a `cerrar()`.
 - El hijo hereda solo el entorno mínimo de `get_default_environment()` más `entorno_motor()`:
   ningún secreto del backend llega al motor salvo la clave de ElevenLabs, y solo si existe.
+- Navegador del render: siempre la ruta fija de `navegador` (el CfT que el backend descarga en el
+  primer uso) y su manifiesto, exista o no; nunca uno del bundle, del entorno ni de una caché.
 - `stderr` del hijo → logger `app_backend.video`, con la clave de ElevenLabs ocultada.
 """
 
@@ -23,6 +25,7 @@ import contextvars
 import json
 import logging
 import os
+import sys
 import threading
 from collections.abc import Callable
 from contextlib import AsyncExitStack
@@ -34,7 +37,7 @@ import mcp.client.stdio as _stdio
 from mcp import ClientSession, MCPError, StdioServerParameters, stdio_client
 from mcp_types import CONNECTION_CLOSED, ImageContent, TextContent
 
-from app_backend import config
+from app_backend import config, navegador
 
 log = logging.getLogger("app_backend.video")
 
@@ -47,6 +50,10 @@ TIMEOUT_CIERRE = 15.0  # el SDK acota su apagado a ~5 s (stdin cerrado, espera, 
 # guardar la prueba y la ruta fallaría siempre en máquinas lentas.
 TIMEOUT_CAPACIDADES = 420.0
 OCULTO = "***"
+# Por el segundo proceso del motor: un render largo no tapa la vista previa ni la voz, y su timeout no
+# los tumba. Los jobs de render viven en la memoria del proceso que los lanzó, así que lanzar y sondear
+# van por el mismo canal. (`video_estado` ya no existe en el motor integrado.)
+TOOLS_CANAL_RENDER = frozenset({"video_renderizar", "video_estado_render"})
 MENSAJE_NO_INSTALADO = (
     "El módulo de vídeo no está instalado en esta versión de SEO Studio "
     "(llegará con una actualización)."
@@ -54,11 +61,34 @@ MENSAJE_NO_INSTALADO = (
 
 
 class MotorError(Exception):
-    """Error legible para la UI. Nunca lleva la clave de ElevenLabs."""
+    """Error legible para la UI. Nunca lleva la clave de ElevenLabs.
+
+    `codigo` y `problemas` salen del bloque JSON de los errores tipados del motor (T4):
+    `esquema`, `conflicto`, `no_encontrado`, `coste_cambiado`. `problemas` solo lleva
+    `{ruta, codigo}`, nunca valores. Un error sin tipar tiene `codigo=None`.
+    """
+
+    def __init__(
+        self, mensaje: str = "", codigo: str | None = None, problemas: list | None = None
+    ) -> None:
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.problemas = list(problemas or [])
 
 
 class MotorNoDisponible(MotorError):
     """El motor no arranca o ha muerto."""
+
+
+class MotorTimeout(MotorError):
+    """Una llamada venció su timeout; el motor se ha reiniciado."""
+
+
+class MotorOcupado(MotorTimeout):
+    """Una llamada ajena venció su timeout mientras el motor tenía una generación o un render en curso.
+
+    No se reinicia el proceso (cortaría la voz o el render de otro proyecto): solo falla esa llamada.
+    """
 
 
 @dataclass(frozen=True)
@@ -89,7 +119,26 @@ if _spawn_original is not None:
 
     _stdio._create_platform_compatible_process = _spawn_anotado
 else:  # pragma: no cover - depende de la versión del SDK
-    log.warning("mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None.")
+    log.warning(
+        "mcp.client.stdio sin _create_platform_compatible_process: MotorVideo.pid será None."
+    )
+
+
+def _error_tipado(textos: list[str], clave: str | None) -> tuple[str | None, list]:
+    """`(codigo, problemas)` del bloque JSON `{codigo, problemas}` de un error tipado, si lo hay."""
+    for t in reversed(textos):
+        try:
+            v = json.loads(_ocultar(t, clave))
+        except ValueError:
+            continue
+        if isinstance(v, dict) and isinstance(v.get("codigo"), str):
+            problemas = [
+                {"ruta": str(p.get("ruta", ""))[:80], "codigo": str(p.get("codigo", ""))[:60]}
+                for p in (v.get("problemas") or [])[:50]
+                if isinstance(p, dict)
+            ]
+            return v["codigo"], problemas
+    return None, []
 
 
 def _ocultar(texto: str, clave: str | None) -> str:
@@ -126,6 +175,31 @@ class _Sesion:
         return self.proceso is None or self.proceso.returncode is None
 
 
+async def _esperar_parada_o_muerte(s: _Sesion) -> None:
+    """Espera `parar` o la muerte del motor, lo que llegue antes.
+
+    Sin esto el Job Object (la salida del `async with`) no se cerraba hasta la siguiente llamada, aunque el
+    motor ya hubiera muerto. Si murió solo (nadie pidió parar), se avisa una sola vez y se marca la sesión como
+    parada: la siguiente llamada relanza. Un cierre normal (`parar` ya puesto) no avisa.
+    """
+    esperas = {asyncio.ensure_future(s.parar.wait())}
+    if s.proceso is not None:
+        esperas.add(asyncio.ensure_future(s.proceso.wait()))
+    try:
+        await asyncio.wait(esperas, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for e in esperas:
+            e.cancel()
+        await asyncio.gather(*esperas, return_exceptions=True)
+    if not s.parar.is_set():
+        codigo = s.proceso.returncode if s.proceso is not None else None
+        log.warning(
+            "El motor de vídeo terminó por su cuenta (código %s); se relanzará en la siguiente llamada.",
+            codigo,
+        )
+        s.parar.set()
+
+
 class MotorVideo:
     def __init__(
         self,
@@ -133,6 +207,7 @@ class MotorVideo:
         cwd: Path,
         env: Callable[[], dict[str, str]],
         timeout_llamada: float = 120.0,
+        actividad: Callable[[], bool] | None = None,
     ) -> None:
         if not comando:
             raise ValueError("comando vacío")
@@ -140,6 +215,12 @@ class MotorVideo:
         self._cwd = Path(cwd)
         self._env = env
         self._timeout = timeout_llamada
+        # `actividad()`: ¿hay trabajo largo en curso fuera de este objeto (voz o render de algún proyecto)? Mientras lo haya,
+        # el timeout de una llamada ajena no reinicia el proceso (revisión T11, Medium 1).
+        self._actividad = actividad
+        self._protegidas = (
+            0  # llamadas largas en vuelo (`protegida=True`); solo se toca desde el bucle de eventos
+        )
         self._lock = asyncio.Lock()
         self._sesion: _Sesion | None = None
 
@@ -150,11 +231,36 @@ class MotorVideo:
             return None
         return s.proceso.pid
 
+    def pids_conocidos(self) -> list[int]:
+        """PID del proceso del motor y de sus descendientes (Chrome, ffmpeg) en este instante; vacío si no hay motor."""
+        s = self._sesion
+        if s is None or s.proceso is None:
+            return []
+        return [s.proceso.pid, *_descendientes(s.proceso.pid)]
+
+    def en_actividad(self) -> bool:
+        """¿Hay una llamada larga en vuelo o trabajo en curso que un reinicio cortaría?"""
+        return self._protegidas > 0 or bool(self._actividad is not None and self._actividad())
+
     # ----------------------------------------------------------- llamadas
 
-    async def llamar(self, tool: str, args: dict | None = None, timeout: float | None = None) -> RespuestaMotor:
+    async def llamar(
+        self,
+        tool: str,
+        args: dict | None = None,
+        timeout: float | None = None,
+        protegida: bool = False,
+    ) -> RespuestaMotor:
+        """`protegida=True`: llamada larga que un reinicio cortaría (generar voz, muestra). Mientras esté en vuelo,
+        el timeout de cualquier otra llamada falla esa llamada (`MotorOcupado`) pero no reinicia el proceso."""
         s, sesion = await self._sesion_lista()
-        r = await self._esperar(s, sesion.call_tool(tool, args or {}), timeout)
+        if protegida:
+            self._protegidas += 1
+        try:
+            r = await self._esperar(s, sesion.call_tool(tool, args or {}), timeout, protegida)
+        finally:
+            if protegida:
+                self._protegidas -= 1
         return self._respuesta(r, s.clave)
 
     async def herramientas(self) -> list[str]:
@@ -163,21 +269,38 @@ class MotorVideo:
         r = await self._esperar(s, sesion.list_tools(), None)
         return [t.name for t in r.tools]
 
-    async def _esperar(self, s: _Sesion, peticion, timeout: float | None):
+    async def _esperar(self, s: _Sesion, peticion, timeout: float | None, propia: bool = False):
         """Espera una petición MCP de la sesión `s` y traduce sus fallos a MotorError."""
         limite = self._timeout if timeout is None else timeout
         try:
             return await asyncio.wait_for(peticion, limite)
         except TimeoutError:
-            # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero.
+            # Una llamada colgada puede dejar la sesión a medias: se reinicia el proceso entero... salvo que ese reinicio
+            # corte el trabajo de otro. Una llamada ajena no reinicia con trabajo en curso; una protegida que vence sí
+            # (está colgada de verdad), pero solo si no hay otra protegida distinta en vuelo.
+            otras = self._protegidas - (1 if propia else 0)
+            if otras > 0 or (not propia and self.en_actividad()):
+                log.warning(
+                    "Motor de vídeo: la llamada no respondió en %g s; no se reinicia porque hay trabajo en curso.",
+                    limite,
+                )
+                raise MotorOcupado(
+                    f"El motor de vídeo no respondió en {limite:g} s (ocupado con otra tarea)."
+                ) from None
             await self._descartar(s)
-            raise MotorError(f"El motor de vídeo no respondió en {limite:g} s.") from None
+            raise MotorTimeout(f"El motor de vídeo no respondió en {limite:g} s.") from None
         except MCPError as e:
             if e.error.code == CONNECTION_CLOSED or not s.viva():
                 await self._descartar(s)
                 raise MotorNoDisponible(MENSAJE_DETENIDO) from None
             raise MotorError(_ocultar(e.error.message, s.clave)) from None
-        except (anyio.ClosedResourceError, anyio.BrokenResourceError, anyio.EndOfStream, EOFError, ConnectionError):
+        except (
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+            anyio.EndOfStream,
+            EOFError,
+            ConnectionError,
+        ):
             await self._descartar(s)
             raise MotorNoDisponible(MENSAJE_DETENIDO) from None
 
@@ -186,7 +309,10 @@ class MotorVideo:
         textos = [c.text for c in r.content if isinstance(c, TextContent)]
         texto = _ocultar(textos[0], clave) if textos else ""
         if r.is_error:
-            raise MotorError(texto or "El motor de vídeo devolvió un error sin detalle.")
+            codigo, problemas = _error_tipado(textos, clave)
+            raise MotorError(
+                texto or "El motor de vídeo devolvió un error sin detalle.", codigo, problemas
+            )
         datos = None
         if len(textos) > 1:
             try:
@@ -196,7 +322,9 @@ class MotorVideo:
                 valor = None
             if isinstance(valor, dict | list):
                 datos = valor
-        imagen = next(((c.mime_type, c.data) for c in r.content if isinstance(c, ImageContent)), None)
+        imagen = next(
+            ((c.mime_type, c.data) for c in r.content if isinstance(c, ImageContent)), None
+        )
         return RespuestaMotor(texto=texto, datos=datos, imagen=imagen)
 
     # ------------------------------------------------------ ciclo de vida
@@ -209,7 +337,9 @@ class MotorVideo:
                 if s is None or not s.viva():
                     if s is not None:
                         await self._descartar(s)
-                    s = self._lanzar()
+                    # El entorno verifica el navegador (hashea ~295 MB): fuera del bucle de eventos.
+                    env = await asyncio.to_thread(self._env)
+                    s = self._lanzar(env)
                     self._sesion = s
                 # Escudo: si la petición que arranca se cancela, el arranque sigue en la tarea
                 # propietaria y queda registrado para la siguiente llamada o para cerrar().
@@ -224,9 +354,8 @@ class MotorVideo:
                     ) from None
         return s, s.listo.result()
 
-    def _lanzar(self) -> _Sesion:
+    def _lanzar(self, env: dict[str, str]) -> _Sesion:
         s = _Sesion()
-        env = self._env()
         s.clave = env.get("ELEVENLABS_API_KEY") or None
         params = StdioServerParameters(
             command=self._comando[0], args=self._comando[1:], env=env, cwd=self._cwd
@@ -240,14 +369,19 @@ class MotorVideo:
             async with AsyncExitStack() as pila:
                 leer_fd, escribir_fd = os.pipe()
                 threading.Thread(
-                    target=_lector_stderr, args=(leer_fd, s.clave), name="motor-video-stderr", daemon=True
+                    target=_lector_stderr,
+                    args=(leer_fd, s.clave),
+                    name="motor-video-stderr",
+                    daemon=True,
                 ).start()
                 # Solo envuelve el descriptor de la tubería (no bloquea); se cierra tras el spawn.
                 errlog = open(escribir_fd, "w", encoding="utf-8")  # noqa: SIM115, ASYNC230
                 caja: list = []
                 token = _proceso_lanzado.set(caja)
                 try:
-                    lectura, escritura = await pila.enter_async_context(stdio_client(params, errlog=errlog))
+                    lectura, escritura = await pila.enter_async_context(
+                        stdio_client(params, errlog=errlog)
+                    )
                 finally:
                     _proceso_lanzado.reset(token)
                     # El hijo tiene su copia del extremo de escritura; cerrar la nuestra deja que
@@ -259,10 +393,12 @@ class MotorVideo:
                     await sesion.initialize()
                 log.info("Motor de vídeo arrancado (pid %s).", s.proceso.pid if s.proceso else "?")
                 s.listo.set_result(sesion)
-                await s.parar.wait()
+                await _esperar_parada_o_muerte(s)
         except BaseException as e:
             if not s.listo.done():
-                s.listo.set_exception(e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO))
+                s.listo.set_exception(
+                    e if isinstance(e, Exception) else MotorNoDisponible(MENSAJE_DETENIDO)
+                )
             elif not s.parar.is_set():
                 log.warning("El motor de vídeo terminó: %s", _ocultar(_describir(e), s.clave))
             if not isinstance(e, Exception):
@@ -294,6 +430,43 @@ class MotorVideo:
                 await self._descartar(s)
 
 
+def _descendientes(raiz: int) -> list[int]:
+    r"""PID de los descendientes de `raiz`: con psutil si está; si no, por /proc (solo Linux). Sin ninguno: vacío.
+
+    En Windows no se lee `/proc` nunca: no existe, y en alguna máquina hay un `C:\proc` ajeno que Python resolvería. Allí el
+    rastro de huérfanos es el barrido del motor (`video_barrer_procesos`), que busca por ruta de imagen.
+    """
+    try:
+        import psutil
+
+        return [p.pid for p in psutil.Process(raiz).children(recursive=True)]
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - el proceso pudo morir entre medias
+        return []
+    if sys.platform == "win32":
+        return []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return []
+    hijos: dict[int, list[int]] = {}
+    for d in proc.iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            stat = (d / "stat").read_text(encoding="utf-8", errors="replace")
+            ppid = int(stat.rpartition(")")[2].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        hijos.setdefault(ppid, []).append(int(d.name))
+    salida, pila = [], [raiz]
+    while pila:
+        for h in hijos.get(pila.pop(), []):
+            salida.append(h)
+            pila.append(h)
+    return salida
+
+
 def _describir(e: BaseException) -> str:
     """Mensaje corto de una excepción, desenvolviendo los ExceptionGroup de anyio."""
     while isinstance(e, BaseExceptionGroup) and e.exceptions:
@@ -322,56 +495,60 @@ def comando_motor() -> tuple[list[str], Path]:
     return ["node", str(d / "dist" / "index.js")], d
 
 
-def _navegador_bundle(d: Path) -> Path | None:
-    carpeta = d / "browser"
-    if not carpeta.is_dir():
-        return None
-    for nombre in ("chrome-headless-shell.exe", "chrome.exe"):
-        encontrados = sorted(carpeta.rglob(nombre))
-        if encontrados:
-            return encontrados[0]
-    return None
+def motor_de(estado, tool: str) -> MotorVideo:
+    """Canal de `tool`: los jobs viven en la memoria del proceso del canal de render."""
+    return estado.motor_render if tool in TOOLS_CANAL_RENDER else estado.motor
 
 
-def entorno_motor(store) -> dict[str, str]:
-    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado)."""
+def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
+    """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado).
+
+    `con_clave=False`: el canal de render no usa ElevenLabs. Así la clave no llega a ese proceso
+    (I5) y cambiarla no lo reinicia ni mata un render en curso.
+    """
     estado = config.STATE_DIR / "video"
     env = {
         "VIDEO_ENGINE_EMBEDDED": "1",
-        "VIDEO_ROOT": str(estado / "proyectos"),
+        "VIDEO_ROOT": str(config.VIDEO_ROOT),
         "VIDEO_STATE_DIR": str(estado / "estado"),
         "HYPERFRAMES_NO_TELEMETRY": "1",
         "DO_NOT_TRACK": "1",
     }
     d = config.VIDEO_ENGINE_DIR
     ffmpeg = d / "ffmpeg"
-    navegador = _navegador_bundle(d)
     if config.FROZEN:
         # Instalado: solo las piezas del bundle, siempre. Sin ellas el motor caería en un ffmpeg del
-        # PATH (quizá GPL, con libx264) o en un Chrome de ~/.cache (escribible, no verificado).
+        # PATH (quizá GPL, con libx264).
         if not (d / "node" / "node.exe").is_file():
             raise MotorNoDisponible(MENSAJE_NO_INSTALADO)
-        faltan = [
-            nombre
-            for nombre, ok in (
-                ("ffmpeg", (ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()),
-                ("navegador", navegador is not None),
-            )
-            if not ok
-        ]
-        if faltan:
+        if not ((ffmpeg / "ffmpeg.exe").is_file() and (ffmpeg / "ffprobe.exe").is_file()):
             raise MotorNoDisponible(
-                f"A la instalación del motor de vídeo le falta {' y '.join(faltan)}: reinstala SEO Studio."
+                "A la instalación del motor de vídeo le falta ffmpeg: reinstala SEO Studio."
             )
         env["FFMPEG_DIR"] = str(ffmpeg)
-        env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
-    else:
-        if (ffmpeg / "ffmpeg.exe").exists():
-            env["FFMPEG_DIR"] = str(ffmpeg)
-        if navegador is not None:
-            env["HYPERFRAMES_BROWSER_PATH"] = str(navegador)
-    clave = config.elevenlabs_api_key(store)
+    elif (ffmpeg / "ffmpeg.exe").exists():
+        env["FFMPEG_DIR"] = str(ffmpeg)
+    # Navegador: siempre la ruta fija y su manifiesto, nunca otro Chrome (I11/I13/I14). Si la carpeta
+    # existe, tiene que verificar entera (manifiesto anclado, sin enlaces ni ficheros de más).
+    carpeta = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION
+    env["HYPERFRAMES_BROWSER_PATH"] = str(carpeta / config.NAVEGADOR_EXE)
+    env["VIDEO_NAVEGADOR_MANIFIESTO"] = str(carpeta / config.NAVEGADOR_MANIFIESTO)
+    try:
+        navegador.comprobar_ancestros()
+        if os.path.lexists(carpeta):
+            navegador.verificar(carpeta)
+    except navegador.NavegadorError as e:
+        raise MotorNoDisponible(str(e)) from None
+    if not config.FROZEN:
+        # Solo desarrollo y E2E: nunca en el producto instalado (el motor, además, lo ignora fuera de VIDEO_E2E).
+        # VIDEO_E2E: sin ella el motor integrado ignora la URL de pruebas. FFMPEG_DIR: el motor integrado
+        # no mira el PATH; en desarrollo, si no hay ffmpeg en la carpeta del motor, vale el del entorno.
+        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID", "VIDEO_E2E"):
+            if os.environ.get(nombre):
+                env[nombre] = os.environ[nombre]
+        if "FFMPEG_DIR" not in env and os.environ.get("FFMPEG_DIR"):
+            env["FFMPEG_DIR"] = os.environ["FFMPEG_DIR"]
+    clave = config.elevenlabs_api_key(store) if con_clave else None
     if clave:  # nunca una variable vacía: el motor la trataría como clave mala
         env["ELEVENLABS_API_KEY"] = clave
     return env
-

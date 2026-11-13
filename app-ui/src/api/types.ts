@@ -13,7 +13,7 @@ export interface Approval {
   requires_confirm_id: boolean;
 }
 
-export type JobKind = "upload" | "transcribe";
+export type JobKind = "upload" | "transcribe" | "video_render";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 
 export interface Job {
@@ -58,6 +58,8 @@ export interface Settings {
   allowed_dirs: AllowedDir[];
   profile: string;
   has_anthropic_key: boolean;
+  /** Solo si hay clave o no: la clave de ElevenLabs nunca vuelve a la UI. */
+  has_elevenlabs_key?: boolean;
   has_client_secret: boolean;
   /** Proyecto de Google Cloud (client_secret.json) de toda la app; null si no hay ninguno. */
   google_project?: GoogleProject | null;
@@ -89,6 +91,8 @@ export interface SettingsPatch {
   profile?: string;
   /** Solo escritura: se envía una vez y nunca vuelve. Cadena vacía = borrar. */
   anthropic_api_key?: string;
+  /** Solo escritura, como la de Anthropic. Cadena vacía = borrar. */
+  elevenlabs_api_key?: string;
 }
 
 export interface YouTubeStatus {
@@ -205,4 +209,118 @@ export interface ToolInfo {
 
 export interface Texto {
   texto: string;
+}
+
+/** Navegador del render (Chrome for Testing): descarga a petición del usuario (`/video/navegador`). */
+export type FaseNavegador = "ausente" | "descargando" | "verificando" | "extrayendo" | "listo" | "error";
+export interface NavegadorEstado {
+  version: string;
+  tamano: number;
+  estado: FaseNavegador;
+  descargado: number;
+  error: string | null;
+}
+export const FASES_ACTIVAS: readonly FaseNavegador[] = ["descargando", "verificando", "extrayendo"];
+
+/** Solo lo que lee la UI de `GET /video/capacidades`. */
+export interface CapacidadesVideo {
+  chrome?: string;
+  gpu?: { webgpu: boolean; detalle: string };
+  codificadores?: { codificador: string; adaptador: string }[];
+  [k: string]: unknown;
+}
+
+// --- Contrato REST de vídeo (tabla de la Task 9). Ningún tipo ni método lleva rutas (I6): solo ids de servidor. ---
+
+export type EstadoProyectoVideo = "borrador" | "renderizando" | "listo" | "error";
+
+export interface GuionVideoResumen {
+  id: string;
+  titulo: string;
+  creado?: string;
+  [k: string]: unknown;
+}
+
+export interface ProyectoVideoResumen {
+  id: string;
+  titulo: string;
+  perfil: string;
+  duracion: number;
+  actualizado: string;
+  estado: EstadoProyectoVideo;
+}
+
+export interface AvisoVideo {
+  codigo: string;
+  mensaje: string;
+  ruta?: string; // ruta dentro del documento (p. ej. «escenas.0»), no del sistema de ficheros
+}
+
+/** Aviso de `POST …/preview`: el backend solo deja pasar el código (y los puertos ajenos), nunca texto (R2-2). */
+export interface AvisoPreview {
+  codigo: string;
+  puertos?: number[];
+}
+
+export interface PreviewVideo {
+  url: string;
+  duracion: number;
+  avisos: AvisoPreview[];
+  fondo: string;
+}
+
+export type ModoRender = "auto" | "rapido" | "compatible";
+
+/** `POST /video/proyectos/{id}/voz/coste` (contrato: `docs/video-fase1/contrato-voz.md`). La UI no calcula
+ *  nada: cifra, refacturado y `plan` salen de aquí. */
+export interface CosteVoz {
+  pendientes: string[];
+  caracteres: number;
+  /** Caracteres de frases ya cobradas y no usables que se cobrarían otra vez. */
+  caracteresRefacturados: number;
+  fallidasFacturadas: string[];
+  /** Opaco: huella del contenido que da el motor; se devuelve tal cual en `plan_confirmado`. */
+  plan: string;
+  voz: { id: string; nombre: string };
+}
+/** `GET /video/proyectos/{id}/voz/forma` (T5). */
+export interface FormaVoz {
+  picos: number[];
+  segundos: number;
+}
+/** Cuerpo de `POST .../voz`: el motor compara plan y cifra con su propio cálculo; el backend no recalcula. */
+export interface CuerpoVoz {
+  plan_confirmado: string;
+  caracteres_confirmados: number;
+  frases?: string[];
+  /** `true` solo si la persona marcó de forma explícita volver a pagar frases ya cobradas. */
+  reintentar_facturadas: boolean;
+}
+/** Cuerpo de `POST .../voz/quitar-silencios`: no gasta, no lleva plan. */
+export interface CuerpoQuitarSilencios {
+  frase_id: string;
+}
+/** Cuerpo de `POST /video/voces/muestra` (además de `voiceId`). */
+export interface CuerpoMuestra {
+  plan_confirmado: string;
+  caracteres_confirmados: number;
+  reintentar_facturada: boolean;
+}
+
+export interface PerfilVideo {
+  id: string;
+  nombre?: string;
+  [k: string]: unknown;
+}
+export interface VozVideo {
+  id: string;
+  nombre: string;
+  /** Plan de la muestra (lo da el motor en `/video/voces`); se devuelve en `plan_confirmado`. */
+  planMuestra?: string;
+  [k: string]: unknown;
+}
+export interface PistaMusica {
+  id: string;
+  nombre?: string;
+  [k: string]: unknown;
 }

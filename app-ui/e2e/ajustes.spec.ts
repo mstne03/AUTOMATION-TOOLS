@@ -1,5 +1,7 @@
 /** Ajustes rediseñados (artboard "Ajustes (claro)"): secciones con guardado automático. Sidecar
  *  real salvo en el test de perfiles nuevos (el OAuth no existe en el entorno de pruebas). */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { settings, youtube } from "./api";
 import { simularRutas } from "./sidecar-falso";
@@ -17,13 +19,36 @@ test.describe("Ajustes", () => {
     await expect(page.getByRole("button", { name: /^Guardar$/ })).toHaveCount(0);
     await expect(page.getByTestId("ajustes-guardar")).toHaveCount(0);
     const nav = page.getByTestId("ajustes-subnav");
-    await expect(nav.getByRole("button")).toHaveText(["General", "Canales de YouTube", "Carpetas permitidas", "Clave de Anthropic", "Avanzado"]);
+    await expect(nav.getByRole("button")).toHaveText(["General", "Canales de YouTube", "Carpetas permitidas", "Clave de Anthropic", "Motor de vídeo", "Avanzado"]);
     await expect(page.getByTestId("ajustes-nav-general")).toHaveAttribute("aria-current", "true");
     await page.getByTestId("ajustes-nav-carpetas").click();
     await expect(page.getByTestId("ajustes-nav-carpetas")).toHaveAttribute("aria-current", "true");
     await expect(page.getByTestId("ajustes-nav-general")).not.toHaveAttribute("aria-current", "true");
     await expect(page.getByRole("heading", { name: "Carpetas permitidas" })).toBeInViewport();
   });
+
+  for (const [ancho, alto] of [[900, 600], [1060, 600], [1101, 600], [1120, 600], [1200, 800]]) {
+    test(`subnavegación a ${ancho}x${alto}: el encabezado de cada sección queda visible y sin tapar`, async ({ page }) => {
+      await page.setViewportSize({ width: ancho, height: alto });
+      for (const id of ["general", "canales", "carpetas", "clave", "video", "avanzado"]) {
+        await page.getByTestId(`ajustes-nav-${id}`).click();
+        const h2 = page.locator(`#ajustes-${id} h2`).first();
+        // El scroll es suave: se espera a que el encabezado esté asentado y entonces se comprueba, con el
+        // hit-test del navegador, que el elemento en su punto central es él (o un hijo), no la subnav.
+        await expect
+          .poll(
+            () =>
+              h2.evaluate((el) => {
+                const r = el.getBoundingClientRect();
+                const arriba = document.elementFromPoint(r.left + Math.min(r.width / 2, 40), r.top + r.height / 2);
+                return { visible: r.top >= 0 && r.bottom <= innerHeight, tapado: !arriba || !(el === arriba || el.contains(arriba)) };
+              }),
+            { message: `encabezado de ${id}` },
+          )
+          .toEqual({ visible: true, tapado: false });
+      }
+    });
+  }
 
   test("modelo: tarjetas con precio, el cambio se guarda solo y avisa", async ({ page }) => {
     const s = await settings();
@@ -87,6 +112,8 @@ test.describe("Ajustes", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Borrar clave" }).click();
     await expect(page.getByTestId("ajustes-key-estado")).toHaveText("Sin clave");
     expect((await settings()).has_anthropic_key).toBe(false);
+    // Y fuera del disco: el almacén `file` guarda cada secreto en un fichero del directorio de estado.
+    expect(existsSync(join(process.env.E2E_STATE_DIR!, "anthropic_api_key.json"))).toBe(false);
     await campo.fill("sk-ant-final-e2e");
     await page.getByTestId("ajustes-key-guardar").click();
     await expect(page.getByTestId("ajustes-key-estado")).toContainText("Guardada en");

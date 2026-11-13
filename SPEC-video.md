@@ -22,7 +22,8 @@ Este documento describe cómo se generaliza y se integra como módulo del produc
    timeline de cinco pistas; render a MP4 como job.
 5. **Perfil visual:** identidad del canal (paleta, fuentes, voz, música, subtítulos…) como datos;
    mínimo en la fase 1, importación desde YouTube y asistente IA en la fase 3.
-6. **Empaquetado:** Node, Chrome headless y ffmpeg (build LGPL) van dentro del instalador.
+6. **Empaquetado:** Node y ffmpeg (build LGPL) van dentro del instalador; Chrome for Testing se
+   descarga en el primer uso con versión y SHA-256 fijados (decisión del 2026-10-29).
 
 ## Por qué
 
@@ -167,6 +168,10 @@ En fase 1, `foto_viva` (solo zoom/paneo y marco, sin paralaje) y `clip` existen 
 de recurso** en la pista de recursos del editor, porque el editor necesita admitir material
 propio desde el principio. El paralaje (recorte del sujeto) llega en fase 2.
 
+La escena `tunel` (exige tres fotos) queda **fuera del esquema del modelo en la fase 1**: el
+modelo no puede pedirla. La pieza (`escena-tunel.html`) sigue probada por el adaptador de tests
+y entra en la fase 2 sin coste.
+
 ### D5. Guion en modo vídeo (pantalla Guiones)
 
 - Nuevo formato en el modo Escribir: «Vídeo». El agente consulta `buscar_kb`, la KB privada y,
@@ -239,6 +244,10 @@ propio desde el principio. El paralaje (recorte del sujeto) llega en fase 2.
   usuario quiere llevar los cambios, «Crear vídeo» de nuevo crea otro proyecto. Sin
   sincronización bidireccional (evita conflictos con ediciones a mano en la timeline).
 - Borrar un proyecto pide confirmación y borra su carpeta (recursos copiados incluidos).
+- El borrado lo hace un solo componente (el backend), a partir del id validado por regex: la
+  ruta debe ser hija directa de `<estado>/video/proyectos/`, la carpeta no puede ser un punto de
+  reanálisis, y el borrado recursivo **no sigue** enlaces, junctions ni puntos de reanálisis (los
+  desenlaza). No es una acción del modelo (I10).
 
 ### D7. Voz con ElevenLabs
 
@@ -246,10 +255,18 @@ propio desde el principio. El paralaje (recorte del sujeto) llega en fase 2.
   Anthropic (`elevenlabs_api_key`), con `has_elevenlabs_key` en ajustes y validación de la
   clave. Se entrega al proceso hijo por variable de entorno al arrancarlo; nunca por argumento
   de tool ni en logs. *(Decisión mía, coherente con el BYOK de Claude.)*
-- Voz elegida del catálogo de voces de la cuenta del usuario, con botón de escuchar.
+- Voz elegida del catálogo de voces de la cuenta del usuario, con botón de escuchar. El botón
+  genera una muestra de 60 caracteres con coste visible y caché por voz; nunca se descarga
+  `preview_url` (I14).
 - La narración se trocea por frases/segmentos: regenerar una frase solo factura esa frase y
   reajusta la alineación del resto. Para vídeos largos, la voz se genera por partes y se une.
 - Antes de generar, la app muestra el nº de caracteres que se van a facturar.
+- La respuesta de ElevenLabs se valida por esquema antes de usarla: cuerpo ≤ 20 MB;
+  `characters`, `character_start_times_seconds` y `character_end_times_seconds` con la misma
+  longitud, ≤ 2 × los caracteres enviados, números finitos, ≥ 0, no decrecientes, `fin ≥ inicio`
+  y ≤ duración del audio + 1 s. El audio (≤ 10 MB por frase) se trata como fichero no confiable
+  (I15: se sondea con el ffmpeg del bundle, con lista blanca `mp3`). Si algo falla, error visible
+  y no se guarda nada.
 
 ### D8. Perfil visual
 
@@ -258,21 +275,26 @@ borrador.
 
 - **Contenido:** paleta, tipografías (de las empaquetadas), voz, idioma, música por defecto,
   estilo de subtítulos, fondo animado, look, tono del texto.
-- **Fase 1 (mínimo):** perfil editable a mano con voz, paleta y fuente; un perfil por defecto.
+- **Fase 1 (mínimo):** lista simple de perfiles, cada uno en `perfiles/<id>.json`, editables a
+  mano (voz, paleta y fuente) y con «Duplicar»; hay un perfil por defecto y el proyecto
+  referencia uno por `perfilId`. Sin importar de canal ni IA.
 - **Fase 3:**
   - *Importar de un canal:* paleta calculada en local a partir del banner y ~8 miniaturas
     (cuantización de color, sin IA); tono deducido por Claude de títulos y descripciones;
     estilo tipográfico clasificado por Claude viendo las miniaturas y mapeado a la fuente
     empaquetada más parecida. La voz no se importa.
   - *Definir con IA:* el usuario describe el canal y Claude propone un perfil completo.
-  - Varios perfiles por usuario; cada proyecto referencia uno *(decisión mía)*.
+  - Varios perfiles por usuario con su proyecto referenciándolos *(decisión mía)* ya existen
+    desde la fase 1; aquí solo se suman el borrador importado y el generado por IA.
 
 ### D9. Recursos del usuario y derechos
 
 - Fotos: vertical, mínimo 1080×1920 (ideal ≥ 1440×2560 por el zoom). La app avisa si un
   recurso queda por debajo de la resolución mínima de su escena.
 - Clips: MP4 H.264, preferible 1080×1920 a 30 fps, 2–6 s; el audio del clip se descarta por
-  defecto. Los horizontales se reencuadran sobre fondo desenfocado.
+  defecto. Los horizontales se reencuadran sobre fondo desenfocado: el fondo es un fotograma fijo del clip
+  con CSS `filter: blur()` (`boxblur` es GPL y el build LGPL propio, `ffmpeg-build/componentes.conf`, no incluye `gblur`), así que
+  no se mueve.
 - Aviso visible al añadir recursos: no usar retransmisiones ni material sin licencia (Content
   ID). La app no puede verificar el origen; solo informa.
 - Los recursos se copian a la carpeta del proyecto (no se referencian en su ruta original).
@@ -311,6 +333,25 @@ borrador.
     avisos de sus bibliotecas estáticas antes de la primera versión pública.
   - HyperFrames, Node, three, d3, topojson, atlas (atribución al IGN para el mapa de España),
     fuentes OFL y shaders vendorizados: redistribuibles con el aviso que ya se incluye.
+- **Decisiones del 2026-10-29 (spikes `INFORME-waapi.md` e `INFORME-chromium.md`):**
+  - **GSAP se sustituye** por WAAPI más un motor de tiempo propio (`hf-tiempo.js`).
+  - **Chrome for Testing se descarga en el primer uso**, no va en el instalador. La versión y el
+    SHA-256 los fijamos nosotros (CfT 156.0.8078.73), no HyperFrames. Se guarda en una ruta fija
+    dentro del estado de la app, sin override por entorno, y se verifica antes de extraerlo y
+    antes de cada lanzamiento (I4). Si falla, error visible y reintento; nunca otro navegador
+    (I11). HyperFrames no puede elegir otro navegador por su cuenta (I13). Sacrifica el primer
+    render sin conexión. El snapshot de Chromium queda como plan B.
+  - **Descarga del CfT:** URL fijada en código
+    (`https://storage.googleapis.com/chrome-for-testing-public/<versión>/win64/chrome-headless-shell-win64.zip`),
+    solo HTTPS con verificación TLS, sin seguir redirecciones a otro host, con tamaño máximo
+    fijado (el esperado + 10 %) y el SHA-256 calculado mientras llega. La inicia el usuario (botón
+    con el tamaño), nunca la UI sola ni el modelo. La extracción rechaza entradas con `..`, rutas
+    absolutas, letra de unidad, `:` (flujos alternativos de NTFS) o enlaces, y limita el tamaño
+    total y el nº de ficheros. Ruta: `<estado>/video/navegador/<versión>/`, fuera de las carpetas
+    de proyectos y de cualquier ruta que sirva la preview. Al fijar una versión nueva se borran las
+    anteriores.
+  - **Sandbox:** el renderer de Chrome corre en Untrusted (parche local a HyperFrames, que lanza
+    con `--no-sandbox`), con el sandbox de la GPU desactivado (I3 y riesgo residual en «Seguridad»).
 
 ### D11. Codificación H.264: dos modos
 
@@ -328,7 +369,8 @@ con un codificador de GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`); sin ninguno la
   disco temporal (el intermedio se borra al terminar) y algo menos de calidad que `libx264` a
   igual bitrate; se compensa con bitrate alto.
 - **Selección:** ajuste del usuario «Modo de render» con tres valores: *Automático* (por
-  defecto: Rápido si hay GPU, si no Compatible), *Rápido* (deshabilitado con explicación si no
+  defecto; en la fase 1 equivale a Compatible hasta medir el bitrate con fotos reales, M-D6;
+  después, Rápido si hay GPU y si no Compatible), *Rápido* (deshabilitado con explicación si no
   hay GPU) y *Compatible*. El job registra qué modo y codificador usó. Si Rápido falla por el
   codificador, el job reintenta en Compatible una vez y lo indica. *(Selector a petición de
   Marc; valores y reintento, decisión mía.)*
@@ -355,23 +397,168 @@ con un codificador de GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`); sin ninguno la
 
 ## Seguridad
 
-- **Entrada no confiable:** KB, transcripciones, datos del canal, guion pegado y la propia
-  salida del modelo. El modelo solo rellena datos validados por esquema; todo texto se escapa
-  antes de entrar al HTML (`escaparHtml`, `jsonParaScript` de footy); colores y fuentes
-  validados; plantillas sustituidas en una pasada.
-- **Ejecución de procesos:** solo `spawn` sin shell y argumentos en array (como footy).
-  Corregir el hueco conocido: argumentos que empiecen por `--` en `catalog` (usar `--` como
-  separador o validar).
-- **Rutas:** id de proyecto validado por regex; todo resuelto con realpath dentro de la carpeta
-  del proyecto; corregir el hueco de footy (imágenes encontradas sin realpath → un symlink
-  podía apuntar fuera). Los ficheros que elige el usuario entran por diálogo Rust y se copian.
-- **Secretos:** ver D7. La clave se oculta en errores.
-- **Proceso hijo:** stdio, sin puertos. Muere con la app. Timeout de render.
-- **Preview en el WebView:** la composición se carga aislada del resto de la app (iframe
-  sandbox con origen propio, sin acceso a `window.__TAURI__` ni al token del backend), porque
-  contiene texto derivado del modelo aunque esté escapado.
-- **Coste:** confirmación con caracteres a facturar antes de llamar a ElevenLabs; aviso de
-  cuota de YouTube antes del guion en modo vídeo.
+*(Reescrita el 2026-10-29 para la fase 1. Las invariantes I1–I12 son criterio de aceptación de
+todo cambio del módulo: cada una se cubre con un test o con una comprobación del smoke test.)*
+
+### Atacantes considerados
+
+- **A1 · Contenido remoto:** quien influye en la salida del modelo (KB, transcripciones, datos
+  del canal, guion pegado; YouTube en la fase 3).
+- **A2 · Ficheros maliciosos** que el usuario importa (fotos, clips, música).
+- **A3 · Cadena de suministro:** npm, el CfT descargado, ElevenLabs comprometido o con un fallo.
+- **A4 · Webs en el navegador del usuario y otros usuarios de Windows del mismo equipo:**
+  loopback compartido, DNS rebinding.
+- **Fuera de alcance:** malware que ya se ejecuta como el usuario. Puede modificar cualquier
+  fichero de la instalación (`installMode: currentUser`) y del estado. Las comprobaciones de hash
+  en tiempo de ejecución sirven para la **integridad y la robustez** (descarga corrupta,
+  extracción a medias, antivirus, otra herramienta), no para frenar a ese atacante.
+
+### Qué protegemos
+
+- La cuenta de Windows del usuario: sus archivos, su registro y su sesión.
+- Las claves BYOK (Anthropic, ElevenLabs) y los tokens OAuth de YouTube.
+- Los vídeos y recursos del usuario.
+- La integridad de los binarios que ejecutamos (Node, ffmpeg, Chrome).
+
+### Entradas no confiables
+
+- La **salida del modelo** (guion de escenas, datos de escena, textos) y lo que la alimenta:
+  KB, transcripciones, datos del canal y guion pegado.
+- Los **ficheros del usuario** (imágenes, audio, clips), que decodifican ffmpeg y Chrome.
+- Las **respuestas de ElevenLabs** (audio y JSON de alineación).
+- El **binario de Chrome for Testing descargado** en el primer uso.
+- Las **dependencias npm y los parches** locales (`patch-package`).
+- Los **mensajes `postMessage`** del iframe de la preview.
+- En la fase 3, el **banner, las miniaturas, los títulos y las descripciones de YouTube**: las
+  imágenes se decodifican con los límites de I15; los textos van a Claude y lo que proponga es
+  salida del modelo (I1).
+
+### Fronteras de confianza
+
+```
+UI (WebView2) ──HTTP loopback + bearer──▶ sidecar (FastAPI)
+UI (WebView2) ──iframe sandbox, frame-src = puertos fijos 47810–47813──▶ servidor de preview (puerto propio, solo la composición, sin acceso a la API del sidecar)
+sidecar ──HTTPS, URL y hash fijados──▶ storage.googleapis.com (CfT, solo a petición del usuario)
+sidecar / motor ──HTTPS──▶ api.elevenlabs.io
+sidecar ──stdio MCP, entorno por lista blanca──▶ motor (Node) ──args en array, entorno por lista blanca──▶ CLI de HyperFrames (modo cerrado, I13)
+HyperFrames ──puppeteer──▶ Chrome: renderer (Untrusted, sin red) ─▶ proceso de GPU (sin sandbox, residual)
+HyperFrames ──pipe──▶ ffmpeg ;  HyperFrames ──servidor de ficheros en 127.0.0.1──▶ Chrome
+composición ──✗ red (CSP + proxy nulo) ;  preview = iframe sandbox sin allow-same-origin
+composición ──✗ API del sidecar (otro puerto; ni siquiera sin bearer)
+estado en %LOCALAPPDATA% (escribible por cualquier proceso del usuario: ver «Atacantes»)
+```
+
+**Riesgos residuales aceptados:**
+
+- **Proceso de GPU de Chrome sin sandbox** (`--disable-gpu-sandbox`): con el sandbox completo,
+  el render se cuelga en 5 de 6 ejecuciones (`video-mcp-server/spikes/INFORME-chromium.md`). El
+  renderer, que es quien interpreta el HTML, sí va en Untrusted. Para acotarlo: el render usa
+  `--disable-accelerated-video-decode` (ningún medio del usuario se decodifica en el proceso de
+  GPU); los shaders WebGPU son solo los vendorizados, nunca datos del usuario o del modelo. Se
+  revisa con cada subida de HyperFrames o del CfT fijado. El parche (Windows) no admite
+  `--single-process` ni `--in-process-gpu`, que sacarían el renderer del sandbox.
+- **Sandbox del renderer y cierre de red (W1.3):** (a) con WebRTC en la página, el servicio de red
+  abre sockets UDP efímeros en `0.0.0.0` aunque ningún paquete salga (medido); el respondedor mDNS
+  (5353) queda cerrado con `WebRtcHideLocalIpsWithMdns`. (b) Los accesos a red del código de
+  HyperFrames que corre en Node (telemetría, instalación de opcionales, comprobación de versión,
+  descarga del navegador) no se cortan con el parche, sino con las variables de entorno de I13:
+  dependen de que el motor las fije siempre. (c) Un renderer visto un instante en integridad Low
+  antes de pasar a Untrusted solo se admite si sale y vive menos de 2 s en el test de I3. Es el
+  nivel inicial antes de `LowerToken()` (nivel de integridad diferido), previo a cargar
+  contenido; el test de I3 además debe exigir (hoy no lo hace: pendiente, R0-12) que, en el instante de la primera captura de
+  fotograma, todos los renderers vivos estén en Untrusted.
+- **Integridad del motor y del render (W1.6):** la comprobación de los ficheros parcheados de
+  HyperFrames contra sus SHA-256 es de integridad, no de autenticidad (el JSON vive junto al
+  `dist` y lo puede escribir cualquier proceso del usuario); el resto de `dist/` y `node_modules`
+  queda sin hash, y entre comprobar y lanzar hay una ventana aceptada, como en I4. El barrido de
+  I7 depende de que el sistema dé la ruta de la imagen: un proceso con nombre del motor y sin ruta
+  que no se pueda descartar como ajeno (por su línea de comandos o su padre) no se mata a ciegas:
+  se trata como no verificable, falla cerrado y reinicia el motor.
+- **ffmpeg sin sandbox:** la normalización y el render corren con los permisos del usuario; un
+  fallo de memoria en un decodificador permitiría ejecutar código como el usuario. Se acota con la
+  lista blanca de formatos y la normalización de I15. Se estudiará ejecutarlo con integridad Low o
+  en un AppContainer.
+- **Servidor de ficheros de HyperFrames (A4):** durante el render sirve `_render/` en
+  `127.0.0.1:<efímero>` sin autenticación; otros procesos del equipo, incluido otro usuario de
+  Windows (A4), y el DNS rebinding podrían leer la composición (fotos, voz y textos) mientras
+  dura. Se acepta en la fase 1 porque solo sirve `_render/` (nunca la carpeta del proyecto ni
+  `recursos/` originales) y vive lo que dura el render; se estudiará un prefijo de ruta
+  aleatorio en el parche.
+
+### Invariantes
+
+| ID | Invariante |
+|---|---|
+| **I1** | **Todo dato que llega a una plantilla es dato validado por esquema al cargarlo**, no solo al escribirlo: salida del modelo, guion de escenas, perfil visual, JSON del proyecto en disco y alineación. Nunca llega como HTML, JS, CSS, ruta o argumento de CLI sin escapar; cada valor se escapa para **su contexto exacto** (texto HTML, atributo, JSON dentro de `<script>`, JSON dentro de un atributo), sustituido en una pasada; colores por regex y fuentes de una lista cerrada (también las que proponga la IA en la fase 3). El esquema del modelo **no tiene campos de ruta ni de URL**: los recursos y la música se referencian por un id que genera el backend. Los recursos copiados se renombran a `<id>.<ext>`; el nombre original solo se guarda como texto para la UI. Topes del esquema: ≤ 180 s, ≤ 90 escenas, ≤ 3000 caracteres de narración, ≤ 30 recursos. El modelo nunca escribe HTML de composición. Los tiempos los calcula el motor como números finitos. |
+| **I2** | **La composición no usa la red, y lo impone el navegador, no un escáner.** (a) `index.html` lleva una CSP en `<meta>` con `default-src 'none'` y solo los orígenes locales imprescindibles (`'self'`, `data:`, `blob:`; `'unsafe-inline'`/`'unsafe-eval'` solo si el runtime lo exige, justificado en el código); la preview envía la misma política como cabecera, con el origen explícito `http://127.0.0.1:<puerto>` en lugar de `'self'`, junto a `sandbox allow-scripts`. (b) En Windows, el Chrome del render arranca con `--proxy-server=0.0.0.0:1` y `--host-resolver-rules="MAP localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"` (parche local de HyperFrames), de modo que ninguna petición sale de loopback aunque la CSP falle. El `--proxy-bypass-list` se limita al **puerto exacto del servidor local** de esa invocación (`<-loopback>;<host>:<puerto>`, solo `localhost` o `127.0.0.1`), no a todo loopback: `<-loopback>` quita la excepción implícita de Chrome y, sin URL con puerto, no se exceptúa nada. El parche descarta los flags de proxy, resolución y WebRTC que pida HyperFrames y añade `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` y `--disable-quic`. El proxy es `0.0.0.0:1` y no `127.0.0.1:1` porque en Windows conectar a `0.0.0.0` falla siempre; con `127.0.0.1:1`, cualquier proceso que escuchase en el puerto 1, incluido el de otro usuario (A4), recibiría todo el tráfico como proxy. (c) `urlsDeRed` se mantiene como aviso temprano y legible: recorre todos los ficheros de texto (`.html .css .js .mjs .json .svg`), incluido `vendor/`, y detecta `//host`, `http(s):`, `ws(s):` y `file:`. |
+| **I3** | El renderer de Chromium corre con **integridad Untrusted** durante el render real, también en la app instalada. Un test lo mide y falla si no se cumple. |
+| **I4** | Node, ffmpeg y Chrome se ejecutan **solo desde rutas fijas** calculadas por el backend, sin alternativas por entorno o argumento en el binario congelado (Ruling 6 de la fase 0). Node y ffmpeg se verifican con SHA-256 al construir el bundle. El CfT descargado: (1) el zip se verifica antes de extraerlo; (2) se extrae en una carpeta nueva y vacía y se genera un **manifiesto con el SHA-256 de cada fichero**; (3) solo se publica en su ruta final por renombrado atómico, y nunca se usa una extracción a medias; (4) **antes de cada invocación de la CLI de HyperFrames**, el motor comprueba contra el manifiesto `chrome-headless-shell.exe` y todas las `.dll`, y rechaza ficheros que no estén en él. La única excepción es `chrome-headless-shell-win64/debug.log`: Chrome lo escribe junto a su exe en cada ejecución (ningún flag de log lo evita en el CfT fijado), y se tolera **solo en esa ruta exacta** y solo como fichero normal (sin enlaces ni hardlinks); el manifiesto no puede listarlo, y el backend y el motor aplican la misma regla. No es código: nadie lo carga. La ventana entre esa comprobación y el lanzamiento se acepta (atacante fuera de alcance). **El ffmpeg del bundle es sustituible sin tocar esta invariante:** hoy es un build LGPL de BtbN con el SHA-256 del **zip** fijado en `prepare-video-engine.sh` (el exe extraído no lleva hash propio); el build propio de `video-mcp-server/ffmpeg-build/` lo sustituirá en W3.2 al cumplir su puerta (fuentes con hash y firma verificada, descarga y compilación en contenedores separados, la compilación sin red, solo protocolos `file` y `pipe`), y su SHA-256, fijado en `prepare-video-engine.sh`, es el control final. Que el motor rechace una `.dll` extra en la carpeta del ffmpeg, como hace con el navegador, es requisito de W3.2 y todavía no está implementado. |
+| **I5** | **Secretos:** la clave de ElevenLabs solo va al entorno del motor; nunca a Chrome, ffmpeg o HyperFrames, ni a logs (con redacción), ni a ficheros de la composición, URLs, argumentos de tools o mensajes de error. Los hijos del motor (HyperFrames, ffmpeg, Chrome) reciben un entorno por **lista blanca** (`PATH` con el ffmpeg del bundle delante, `SYSTEMROOT`, `TEMP`/`TMP`, `HOME`/`USERPROFILE` redirigidos de I13, las variables de I13 y `HYPERFRAMES_BROWSER_PATH`), nunca una copia del entorno del motor; así queda cubierta cualquier clave futura. |
+| **I6** | **Rutas.** La UI nunca envía rutas de sistema al backend: los diálogos de abrir y guardar son comandos Rust que copian el fichero elegido a una bandeja de entrada dentro del estado (o el MP4 al destino elegido) y devuelven un id opaco de un solo uso. El backend y el motor solo trabajan dentro de `<estado>/video/`. Cada fichero se abre **una vez**: las comprobaciones (tipo, tamaño, que no sea symlink, hardlink, junction ni punto de reanálisis) se hacen sobre el handle abierto, y se copia desde ese handle, sin reabrir la ruta. Ids de proyecto y de recurso por regex; nada de `..`, rutas absolutas ni `:` en nombres. |
+| **I7** | **Procesos:** `spawn` sin shell y argumentos en array, `--` o `--opción=` delante de valores del usuario, y timeouts que matan **el árbol** de procesos. El hijo muere con la app (Job Object). Tras un timeout, una cancelación, o si la CLI de HyperFrames termina con error, **y al arrancar el motor** (para recoger lo que dejó un motor muerto; la cancelación y el arranque, hoy no: pendientes de T6, test `barrido_al_arrancar`), el motor **barre por ruta de imagen** (no por árbol): lista los procesos y mata los que tengan por imagen el `ffmpeg`/`ffprobe` exactos del bundle o cualquier ejecutable bajo la carpeta del CfT con manifiesto (en desarrollo, solo el exe del navegador, y ffmpeg solo si `FFMPEG_DIR` está fijado; nunca el Chrome del usuario), y repite la comprobación. No toca lo que cuelga de un hijo en vuelo ni el trabajo de otro motor vivo. Si no puede listar, verificar o matar —incluido un proceso con nombre del motor y sin ruta legible que no se pueda descartar como ajeno—, falla cerrado y reinicia el motor. Ningún servidor que abran HyperFrames o Chrome escucha fuera de `127.0.0.1`. Chrome se controla solo por pipe (`pipe: true` en todas las vías de lanzamiento de HyperFrames 0.8.206); ningún proceso del motor abre un puerto CDP. El parche **debe** rechazar `--remote-debugging-port` y `--remote-debugging-address` con un error (hoy no lo hace: pendiente de T6, con el test `render_sin_puerto_cdp`). El único servidor sin autenticar que queda es el de ficheros de HyperFrames (ver «Riesgos residuales aceptados»). |
+| **I8** | **Escucha y preview.** Todo solo en loopback. Rutas de la API con bearer; la de la preview, con una clave de capacidad de 32 bytes **atada a un proyecto** (sirve solo su `_composicion/`, nunca la carpeta del proyecto ni otra), que se crea al abrir el editor y se invalida al cerrarlo, al borrar el proyecto y al reiniciar el backend. La clave no aparece en ningún log (logs de acceso sin la ruta, o con la clave tapada). La preview se sirve desde un **puerto propio** de la lista fija `47810–47813`, distinto del de la API del sidecar: `frame-src` lista exactamente los puertos de preview fijados en `tauri.conf.json`; nunca `127.0.0.1:*`. Si los cuatro puertos están ocupados, no hay preview y la UI lo dice. El backend reserva los cuatro puertos con uso exclusivo mientras vive; un puerto de la lista ocupado por otro proceso se avisa, porque la composición podría navegar a él. La regla «nunca `127.0.0.1:*`» se aplica también a `devCsp`, que hoy aún lo tiene (`tauri.conf.json`): lo cierra T12 del plan. Ese servidor solo sirve la composición. La composición no alcanza la API del sidecar porque `frame-src` no incluye el puerto de la API (el marco no puede navegar a ella), el `connect-src` de la preview solo admite su propio origen y la API exige bearer. El iframe siempre lleva `sandbox="allow-scripts"`, sin `allow-same-origin`, `allow-popups` ni `allow-top-navigation`, y su `src` solo sale de la ruta que devuelve el backend. Mensajes del iframe al padre: se aceptan solo si `e.source === iframe.contentWindow` y `e.origin === "null"`; se validan por esquema (tipo de una lista cerrada, `id` correlacionado, números finitos y acotados); nunca se pintan como HTML ni se usan como URL o ruta; se descartan los tipos desconocidos. La respuesta de la preview lleva `X-Content-Type-Options: nosniff` y la CSP de I2. |
+| **I9** | **Cadena de suministro:** versiones exactas y lockfiles. Los parches se revisan línea a línea. Ninguna dependencia nueva sin justificar. Descargas por HTTPS y con hash. Nada de `@latest` ni `npx` sin versión. Telemetría desactivada. |
+| **I10** | El modelo **no dispara renders ni gasta ElevenLabs** (D2). Lo que escribe o borra pasa por el gate de aprobación. Coste visible antes de gastar (caracteres de ElevenLabs, cuota de YouTube). |
+| **I11** | **Si algo falla, el fallo se ve.** Nunca se cae en silencio a un componente menos seguro: Chrome del sistema, Edge, ffmpeg GPL, render sin sandbox o caché de HyperFrames. Las reservas legítimas (modo Compatible, codificador por software) son explícitas y quedan registradas en el job. |
+| **I12** | **Licencias:** nada de GSAP. No se redistribuye CfT. Se cumplen las obligaciones LGPL de ffmpeg antes de publicar. |
+| **I13** | **HyperFrames en modo cerrado.** Toda invocación de la CLI de HyperFrames (`check`, `render`, `snapshot`, prueba de GPU, `catalog`) se hace con `CI=1`, `HYPERFRAMES_NO_UPDATE_CHECK=1`, `HYPERFRAMES_NO_AUTO_INSTALL=1`, `HYPERFRAMES_NO_OPTIONAL_INSTALL=1`, `HYPERFRAMES_NO_TELEMETRY=1`, `DO_NOT_TRACK=1` y `HYPERFRAMES_SKIP_SKILLS=1`, y con `HOME`/`USERPROFILE` apuntando a `<estado>/video/hf-home` (vacía al crearse), de modo que no lee ni escribe en `~/.cache/hyperframes`, `~/.hyperframes` ni en la caché de puppeteer del usuario. El parche local de HyperFrames hace que `findBrowser()` **lance un error** si `HYPERFRAMES_BROWSER_PATH` está definida y no es un fichero, en vez de buscar en cachés o en el sistema, o descargar. Ninguna dependencia opcional se instala en tiempo de ejecución: si falta, el job falla con un mensaje legible. |
+| **I14** | **Salidas de red permitidas del módulo**, y ninguna más: el backend → `storage.googleapis.com` (solo la descarga del CfT, iniciada por el usuario) y `api.elevenlabs.io` (validar la clave); el motor → `api.elevenlabs.io`. HyperFrames, Chrome y ffmpeg: ninguna. La tool `video_catalogo` (usa la red de HyperFrames) no se registra en el modo integrado. |
+| **I15** | **Recursos del usuario normalizados y acotados.** Al importarlos (fotos, clips, música): (1) el tipo se identifica por sus primeros bytes y solo se aceptan JPEG, PNG y WebP (fotos); MP4, MOV o WebM con H.264, HEVC, VP9 o AV1 (clips); MP3, WAV, FLAC, OGG y M4A (música); (2) se rechaza lo que supere los límites: foto ≤ 50 MB, ≤ 8192 px por lado y ≤ 40 Mpx; clip ≤ 500 MB, ≤ 60 s, ≤ 4096 px por lado y ≤ 60 fps; música ≤ 100 MB y ≤ 15 min; (3) se **recodifica una vez** con el ffmpeg del bundle a un formato canónico, invocándolo con `-protocol_whitelist file`, `-format_whitelist` con la lista del punto 1, un demuxer explícito (`-f`) y timeout. HyperFrames, la preview y el análisis de música solo ven los ficheros normalizados, nunca el original. (4) Antes de renderizar, el motor comprueba que hay espacio libre para el intermedio (ProRes, ~16 MB/s) más un margen. |
+
+### Pruebas negativas mínimas
+
+| Prueba | Resultado esperado |
+|---|---|
+| Plantilla de prueba con `fetch("http://203.0.113.1/")`, `<img src="//ejemplo.test/x.png">` y `new WebSocket("ws://…")`, en el render y en la preview | Ninguna petición llega a un sumidero local que hace de proxy (el test lo levanta y comprueba cero conexiones); la CSP registra la violación |
+| JS en `vendor/` con una URL externa | `urlsDeRed` lo detecta |
+| `HYPERFRAMES_BROWSER_PATH` apunta a un fichero inexistente y hay un `chrome.exe` en Program Files | El render falla con un error legible; no se lanza ningún Chrome ni hay descarga |
+| Render completo con `HOME` redirigido | `~/.cache/hyperframes`, `~/.hyperframes` y la caché de puppeteer del usuario real no se crean ni se modifican; ninguna conexión a `registry.npmjs.org` |
+| Cada invocación de la CLI de HyperFrames (espía en el test) | Lleva todas las variables de I13 |
+| El entorno de cada hijo del motor | Solo contiene las variables de la lista blanca de I5 (el test enumera las claves) |
+| Una `.dll` extra en la carpeta del CfT | Detectada antes del render; error visible |
+| Zip con hash correcto (fixture) y una entrada `..\..\x.dll` | Rechazado; nada escrito fuera de la carpeta temporal |
+| Un `.mp4` que en realidad es una lista HLS o `concat` que referencia `file:///…` | Rechazado al importar; nada del fichero referenciado aparece en el MP4 |
+| PNG de 20 000 × 20 000 px, o clip de 2 h | Rechazado al importar con un mensaje legible |
+| Perfil o proyecto en disco con `"color": "red;background:url(//x)"` o una fuente fuera de la lista | Rechazado al cargar |
+| Alineación de ElevenLabs (simulado) con `NaN`, tiempos que retroceden o 10⁶ caracteres | Error legible; el motor sigue vivo; no se guarda nada |
+| Proyecto con una junction interna que apunta a una carpeta centinela con ficheros | Al borrar el proyecto, la carpeta centinela queda intacta |
+| Sockets en escucha de los descendientes del motor durante el render | Todos en `127.0.0.1` |
+| Guion con `<script>` o con `{{…}}` en un texto | Aparece escapado en el HTML |
+| Recurso del usuario que es un symlink, hardlink o junction | Rechazado |
+| Zip de CfT con un byte cambiado | Error visible y no se extrae |
+| Binario de CfT cambiado tras verificarlo | Detectado antes del lanzamiento |
+| Clave de ElevenLabs | No aparece en `video.log`, ni en los entornos de los hijos de HyperFrames, ni en la composición |
+| Render con timeout | Ningún proceso con imagen bajo la carpeta del CfT o del ffmpeg del bundle (se comprueba por ruta de imagen, no por árbol) |
+| Renderer durante el render | Integridad Untrusted |
+
+### Enmiendas de la fase 1 (2026-11-07)
+
+Aprobadas por Marc (M-D1, M-D2, M-D3, M-D5, M-D6, M-D7 y M-D8; M-D4 aplazada) para alinear esta spec con el código y con
+las decisiones de la fase 1:
+
+| ID | Sección tocada |
+|---|---|
+| M-1 | I2 (b): bypass de proxy limitado al puerto exacto del servidor local |
+| M-2 | I4: `debug.log` de Chrome tolerado solo junto a su exe |
+| M-3 | I7: barrido de procesos huérfanos por ruta de imagen (también tras una cancelación y al arrancar el motor, R0-6) |
+| W1.3 | Riesgos residuales (sandbox del renderer y cierre de red); I2 (b) |
+| W1.5 | I4: ffmpeg sustituible y frontera de construcción del build LGPL |
+| W1.6 | Riesgos residuales (integridad del motor y del render) |
+| M-D1 | I8 y diagrama de fronteras de confianza: preview en puertos fijos `47810–47813`. Estado objetivo: el `frame-src` exacto y el cierre de `devCsp` los cumple T12, no el código actual |
+| M-D2 | D8 (fase 1), Fases (fase 1 y 3) |
+| M-D3 | D7: botón de escuchar con muestra generada, nunca `preview_url` (I14) |
+| M-D4 | Aplazada: sin enmienda; el respaldo de mutex va en T12 y M-4 sigue abierta hasta entonces |
+| M-D6 | D11: Automático = Compatible en la fase 1 |
+| M-D7 | D9: fondo desenfocado con CSS `filter: blur()` |
+| M-D8 | D4: `tunel` fuera del esquema del modelo en la fase 1 |
+| R0 | I2 (b), I7, I8, riesgos residuales y W1.3 (c): hallazgos R0-1, R0-2, R0-6, R0-7 y R0-13 |
+
+### Revisión de seguridad
+
+Cada paquete de trabajo pasa una revisión de seguridad bloqueante sobre su plan (antes de
+escribir código) y sobre su diff (antes de integrar); Critical y High bloquean el merge. Al cerrar
+cada oleada se repite una revisión transversal sobre la rama integrada. Protocolo completo en
+`HANDOFF-video-fase1.md` §3.
 
 ## Fases
 
@@ -381,9 +568,9 @@ con un codificador de GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`); sin ninguno la
   pasadas (D11). Cierra con la puerta de licencias (D10). Si un spike falla, esa parte se
   replantea antes de la fase 1.
 - **Fase 1 · Guion en modo vídeo + editor + base del motor.** D3, escenas base de D4 y capa de
-  recursos, D5, D6, D7 y perfil mínimo de D8.
+  recursos, D5, D6, D7 y lista simple de perfiles de D8.
 - **Fase 2 · Escenas nuevas.** Resto de D4, incluido paralaje.
-- **Fase 3 · Perfil visual completo.** Importación, asistente IA, varios perfiles.
+- **Fase 3 · Perfil visual completo.** Importación y asistente IA.
 
 ## Criterios de aceptación (fase 1)
 

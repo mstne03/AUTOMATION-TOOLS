@@ -4,16 +4,18 @@
 #
 #   video-engine/node/node.exe                Node 22 LTS win-x64 (versión y SHA-256 fijados)
 #   video-engine/app/                         dist/, plantilla/, catalogo/, package.json y
-#                                             node_modules de producción (npm ci --omit=dev)
-#   video-engine/browser/chrome-headless-shell-win64/   Chrome for Testing de Google, la versión que
-#                                             fija hyperframes (zip con SHA-256 fijado)
-#   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         build LGPL de la tarea 2 (SHA-256 fijado)
+#                                             node_modules de producción (npm ci --omit=dev), con
+#                                             el parche de HyperFrames aplicado (I3): --ignore-scripts
+#                                             no ejecuta el postinstall, así que se aplica a mano.
+#   (el navegador del render, Chrome for Testing, no va en el instalador: lo descarga el backend
+#    en el primer uso, SEO-108)
+#   video-engine/ffmpeg/ffmpeg.exe, ffprobe.exe         ffmpeg LGPL propio (W1.5, SHA-256 fijado), solo esos dos
 #   video-engine/LICENSES/                    avisos de cada pieza
 #
 # Las descargas se cachean en %LOCALAPPDATA%\seo-studio-dev\descargas\<pieza>-<versión>\ (en CI,
 # en un directorio temporal). Los archivos descargados son datos no confiables: se comprueba su
 # SHA-256 antes de abrirlos y cada uno se extrae en su propia carpeta vacía. Aborta si un hash no
-# coincide o si el ffmpeg trae libx264 (o cualquier parte GPL / nonfree).
+# coincide o si el ffmpeg trae libx264, libopenh264 (o cualquier parte GPL / nonfree).
 #
 #   bash scripts/prepare-video-engine.sh        # desde app-ui/, en Git Bash
 set -euo pipefail
@@ -24,21 +26,17 @@ NODE_ZIP=node-v$NODE_VERSION-win-x64.zip
 NODE_URL=https://nodejs.org/dist/v$NODE_VERSION/$NODE_ZIP
 NODE_SHA256=cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20
 
-FFMPEG_PIEZA=ffmpeg-lgpl-7.1.5-12
-FFMPEG_ZIP=ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1.zip
-FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/$FFMPEG_ZIP
-FFMPEG_SHA256=b7c1c846dacca68ee4ebf5c390742c973b3d5d14a6d44b061f500d8e4ac74fc0
+# ffmpeg LGPL propio (W1.5, video-mcp-server/ffmpeg-build), reproducible: el SHA-256 es el control,
+# venga de donde venga el fichero. FFMPEG_LGPL_DIR = carpeta con ffmpeg.exe, ffprobe.exe, LICENSES/ y
+# LEEME-FFMPEG.txt (construir.sh + recopilar-avisos.sh, el mismo contenido que la release).
+# ponytail: solo carpeta local hasta que exista la release de CI (W3.2 punto 2); entonces, descarga
+# por URL con estos mismos hashes. Un bundle hecho así NO se distribuye: la oferta de código fuente
+# de LEEME-FFMPEG.txt apunta a esa release.
+FFMPEG_VERSION=7.1.5
+FFMPEG_SHA256=f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85
+FFPROBE_SHA256=d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01
 
-# chrome-headless-shell que fija hyperframes 0.8.206 (CHROME_VERSION de su CLI), bajado del
-# almacén oficial de Chrome for Testing. Google no publica SHA-256: el fijado se calculó sobre la
-# descarga, cuyo MD5 coincidía con el x-goog-hash del objeto y cuyo .exe era idéntico al que
-# descarga la propia CLI de HyperFrames. No se copia la caché de usuario (~/.cache/hyperframes):
-# es escribible y sus DLL/paks no estarían verificados.
 HYPERFRAMES_VERSION=0.8.206
-CHROME_VERSION=152.0.7977.30
-CHROME_ZIP=chrome-headless-shell-win64.zip
-CHROME_URL=https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/win64/$CHROME_ZIP
-CHROME_SHA256=5d7df999a6e4a65a1b16b25b61064f7337b8aa8ee2ed1b4e07bfdd24f6e4275e
 
 MOTOR=../video-mcp-server
 DEST=src-tauri/binaries/video-engine
@@ -85,9 +83,17 @@ extraer() {
   echo "$x"
 }
 
+# parchear_hyperframes: el sandbox y el cierre de red viven en el parche; sin él, el motor empaquetado
+# se niega a lanzar la CLI. aplicar-parche.mjs comprueba los SHA-256 y no sube al repo que contiene el
+# bundle. No hay variable ni ruta para saltárselo (I4, I11).
+parchear_hyperframes() {
+  [ "$(node -p "require('./$DEST/app/node_modules/hyperframes/package.json').version")" = "$HYPERFRAMES_VERSION" ]     || falla "el bundle no trae hyperframes $HYPERFRAMES_VERSION"
+  node "$MOTOR/scripts/aplicar-parche.mjs" "$DEST/app"     || falla "el parche de HyperFrames no se aplicó en el bundle (I3)"
+}
+
 echo "== Limpieza"
 rm -rf "$DEST" src-tauri/target/release/video-engine
-mkdir -p "$DEST"/{node,app,browser,ffmpeg,LICENSES}
+mkdir -p "$DEST"/{node,app,ffmpeg,LICENSES}
 
 echo "== Motor: build"
 # dist se borra antes: tsc no elimina los .js de fuentes que ya no existen. Este npm ci (de
@@ -96,18 +102,33 @@ echo "== Motor: build"
 (cd "$MOTOR" && rm -rf dist && npm ci --no-audit --no-fund && npm run build)
 [ "$(cd "$MOTOR" && node -p 'require("./node_modules/hyperframes/package.json").version')" = "$HYPERFRAMES_VERSION" ] \
   || falla "video-mcp-server no usa hyperframes $HYPERFRAMES_VERSION"
-grep -rqF "CHROME_VERSION = \"$CHROME_VERSION\"" "$MOTOR/node_modules/hyperframes/dist" \
-  || falla "hyperframes $HYPERFRAMES_VERSION ya no fija chrome-headless-shell $CHROME_VERSION: actualiza CHROME_*"
 
 echo "== Motor: copia y dependencias de producción"
 cp -r "$MOTOR/dist" "$DEST/app/dist"
 cp "$MOTOR/package.json" "$MOTOR/package-lock.json" "$DEST/app/"
+mkdir -p "$DEST/app/patches" && cp "$MOTOR/patches/hyperframes+$HYPERFRAMES_VERSION.sha256.json" "$DEST/app/patches/"
 # plantilla y catalogo: solo lo versionado (nada de salidas locales que se hayan colado).
 git -C "$MOTOR" ls-files -z plantilla catalogo | tar -C "$MOTOR" --null -T - -cf - | tar -C "$DEST/app" -xf -
 # --ignore-scripts: ningún script de instalación de terceros se ejecuta al empaquetar; los binarios
 # nativos (sharp, esbuild, lightningcss…) llegan como paquetes opcionales precompilados.
 (cd "$DEST/app" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+parchear_hyperframes
 rm "$DEST/app/package-lock.json"
+# I12 (SEO-113): hyperframes trae copias de GSAP que solo usa Studio. dist/vendor/npm y dist/studio no están en el
+# manifiesto de SHA-256 y el render no los carga. Se busca la cabecera de licencia, no la palabra GreenSock: un chunk
+# que no se puede borrar (chunk-2MLMO25E.js) la nombra en detectores de código. Control positivo: la misma búsqueda
+# tiene que ver la copia de muestra antes de borrarla; si no la ve, la puerta no mide nada.
+LICENCIA_GSAP='Copyright [0-9-]+, GreenSock|gsap\.com/standard-license'
+HF_APP="$DEST/app/node_modules/hyperframes/dist"
+grep -IqE "$LICENCIA_GSAP" "$HF_APP/vendor/npm/gsap@3.15.0/dist/gsap.min.js" || falla "la búsqueda de la licencia de GSAP no ve la copia de muestra (I12)"
+rm -rf "$HF_APP/vendor/npm" "$HF_APP/studio"
+rc=0
+grep -rIlE "$LICENCIA_GSAP" "$DEST/app" || rc=$?
+[ "$rc" -eq 1 ] || falla "el bundle lleva GSAP, o la búsqueda falló (I12)"
+# three147: el motor solo copia build/three.min.js (composicion.ts, con SHA-256 fijado). examples/ (~30 MB) trae
+# rutas de más de 140 caracteres que, desde un worktree profundo, pasan del MAX_PATH de 260 y makensis aborta.
+rm -rf "$DEST/app/node_modules/three147/examples"
+[ -f "$DEST/app/node_modules/three147/build/three.min.js" ] || falla "falta three147/build/three.min.js en el bundle"
 
 echo "== Node $NODE_VERSION"
 zip=$(descargar "node-$NODE_VERSION" "$NODE_URL" "$NODE_ZIP" "$NODE_SHA256")
@@ -116,23 +137,21 @@ cp "$x/node-v$NODE_VERSION-win-x64/node.exe" "$DEST/node/node.exe"
 cp "$x/node-v$NODE_VERSION-win-x64/LICENSE" "$DEST/LICENSES/node-LICENSE.txt"
 [ "$("$DEST/node/node.exe" --version | tr -d '\r')" = "v$NODE_VERSION" ] || falla "node.exe no es v$NODE_VERSION"
 
-echo "== Navegador (chrome-headless-shell $CHROME_VERSION, Chrome for Testing)"
-zip=$(descargar "chrome-headless-shell-$CHROME_VERSION" "$CHROME_URL" "$CHROME_ZIP" "$CHROME_SHA256")
-x=$(extraer "$zip")
-origen="$x/chrome-headless-shell-win64"
-[ -f "$origen/chrome-headless-shell.exe" ] || falla "el zip de Chrome no trae chrome-headless-shell-win64/chrome-headless-shell.exe"
-cp -r "$origen" "$DEST/browser/chrome-headless-shell-win64"
-cp "$origen/LICENSE.headless_shell" "$DEST/LICENSES/chrome-headless-shell-LICENSE.txt"
-cp "$origen/ABOUT" "$DEST/LICENSES/chrome-headless-shell-ABOUT.txt"
-
-echo "== ffmpeg LGPL"
-zip=$(descargar "$FFMPEG_PIEZA" "$FFMPEG_URL" "$FFMPEG_ZIP" "$FFMPEG_SHA256")
-x=$(extraer "$zip")
-bin="$x/${FFMPEG_ZIP%.zip}/bin"
-cp "$bin/ffmpeg.exe" "$bin/ffprobe.exe" "$DEST/ffmpeg/"
-cp "$x/${FFMPEG_ZIP%.zip}/LICENSE.txt" "$DEST/LICENSES/ffmpeg-LICENSE.txt"
+echo "== ffmpeg LGPL propio $FFMPEG_VERSION"
+[ -n "${FFMPEG_LGPL_DIR:-}" ] || falla "falta FFMPEG_LGPL_DIR (carpeta con el ffmpeg de video-mcp-server/ffmpeg-build, ver su LEEME): hasta la release de CI no hay descarga"
+origen=$(cygpath -u "$FFMPEG_LGPL_DIR")
+# Se comprueban las copias, no el origen: lo que se empaqueta es lo que se verificó.
+cp "$origen/ffmpeg.exe" "$origen/ffprobe.exe" "$DEST/ffmpeg/"
+comprobar_sha "$DEST/ffmpeg/ffmpeg.exe" "$FFMPEG_SHA256"
+comprobar_sha "$DEST/ffmpeg/ffprobe.exe" "$FFPROBE_SHA256"
+# La carpeta lleva exactamente esos dos ficheros: el motor rechaza cualquier otro (DLL plantada, I4).
+[ "$(ls -A "$DEST/ffmpeg" | sort | paste -sd' ' -)" = "ffmpeg.exe ffprobe.exe" ] || falla "la carpeta ffmpeg del bundle tiene ficheros de más"
 codificadores=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -encoders)
-! grep -q libx264 <<<"$codificadores" || falla "el ffmpeg del bundle lista libx264 (debe ser LGPL)"
+for prohibido in libx264 libx264rgb libx265 libopenh264; do
+  ! grep -qE "^\s*\S+\s+$prohibido\s" <<<"$codificadores" || falla "el ffmpeg del bundle lista $prohibido (debe ser el LGPL propio)"
+done
+for f in "$origen"/LICENSES/*.txt; do cp "$f" "$DEST/LICENSES/ffmpeg-$(basename "$f")"; done
+cp "$origen/LEEME-FFMPEG.txt" "$DEST/LICENSES/ffmpeg-LEEME.txt"
 version=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -version)
 ! grep -q -e '--enable-gpl' -e '--enable-nonfree' <<<"$version" || falla "el ffmpeg del bundle es GPL o nonfree"
 grep -e '^ffmpeg version' -e '^configuration:' <<<"$version" > "$DEST/LICENSES/ffmpeg-version.txt"
@@ -145,11 +164,6 @@ M="$DEST/app/node_modules"
   echo
   cat "$LICENCIAS/hyperframes-$HYPERFRAMES_VERSION-LICENSE.txt"
 } > "$DEST/LICENSES/hyperframes-LICENSE.txt"
-{
-  echo "gsap $(node -p "require('./$M/gsap/package.json').version") — GreenSock"
-  echo "Licencia: $(node -p "require('./$M/gsap/package.json').license")"
-  echo "El paquete de npm no incluye fichero de licencia; texto completo en https://gsap.com/standard-license"
-} > "$DEST/LICENSES/gsap-LICENSE.txt"
 cp "$M/three/LICENSE" "$DEST/LICENSES/three-LICENSE.txt"
 cp "$M/three147/LICENSE" "$DEST/LICENSES/three-0.147-LICENSE.txt"
 for fuente in anton inter-tight jetbrains-mono; do
@@ -163,10 +177,10 @@ cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/sh
   echo
   echo "Node.js v$NODE_VERSION win-x64   $NODE_URL"
   echo "  SHA-256 $NODE_SHA256"
-  echo "ffmpeg $FFMPEG_ZIP (LGPL, sin libx264)   $FFMPEG_URL"
-  echo "  SHA-256 $FFMPEG_SHA256"
-  echo "chrome-headless-shell $CHROME_VERSION win64 (Chrome for Testing)   $CHROME_URL"
-  echo "  SHA-256 $CHROME_SHA256"
+  echo "ffmpeg $FFMPEG_VERSION LGPL-2.1-o-posterior, build propio y reproducible (sin libx264 ni libopenh264):"
+  echo "  ver ffmpeg-LEEME.txt (código fuente correspondiente y cómo sustituirlo)"
+  echo "  SHA-256 ffmpeg.exe $FFMPEG_SHA256"
+  echo "  SHA-256 ffprobe.exe $FFPROBE_SHA256"
   echo "hyperframes $HYPERFRAMES_VERSION (Apache-2.0) y el resto de dependencias de npm: cada"
   echo "  paquete conserva su licencia en app/node_modules/<paquete>/."
   echo
@@ -176,6 +190,7 @@ cp "$MOTOR/plantilla/vendor/shaders.THIRD-PARTY-LICENSES.txt" "$DEST/LICENSES/sh
 } > "$DEST/LICENSES/LEEME.txt"
 
 echo "== Listo"
+[ ! -e "$DEST/browser" ] || falla "el bundle no debe llevar navegador (I12)"
 du -sh "$DEST"/*
 LISTO=1
 echo "Motor de vídeo listo en $DEST ($(du -sh "$DEST" | cut -f1))"

@@ -11,7 +11,7 @@ estados posibles. Lo que no está aquí no se exige.
 - Barra lateral, de arriba abajo: logo y título "SEO Studio" (`h2`); botón `nav-paleta`
   "Buscar o ejecutar… Ctrl K" (abre la paleta de comandos, también con Ctrl K); enlaces con
   icono, en este orden y con estos `data-testid`: `nav-chat` ("Chat"), `nav-publicar`
-  ("Publicar"), `nav-guiones` ("Guiones"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento");
+  ("Publicar"), `nav-guiones` ("Guiones"), `nav-video` ("Vídeo"), `nav-canal` ("Canal"), `nav-kb` ("Conocimiento");
   el activo lleva
   `aria-current="page"`; lista de conversaciones (`nav-conversaciones`) con el botón
   `conv-nueva` ("Nueva conversación") y un botón `conv-<id>` por conversación (título = primeras
@@ -31,7 +31,7 @@ estados posibles. Lo que no está aquí no se exige.
 - Onboarding ya no es un enlace fijo del menú: se llega con el aviso, desde Ajustes o al abrir
   la app sin configurar.
 - Paleta de comandos (Ctrl K): `paleta` (diálogo) con `paleta-input`; navega a cada pantalla y
-  ofrece "Nueva conversación", "Publicar un vídeo", "Escribir un guion" (Guiones en el modo
+  ofrece "Abrir Vídeo" (`/video`), "Nueva conversación", "Publicar un vídeo", "Escribir un guion" (Guiones en el modo
   Escribir) y "Preguntar a la KB…".
 - Tema: `data-theme` en `<html>` (`dark` | `light`; sin atributo sigue al sistema), guardado en
   localStorage (`seo-studio.tema`) hasta que el sidecar lo persista.
@@ -141,7 +141,7 @@ automático**: no hay botón "Guardar"; cada cambio se envía al sidecar al mome
 toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast de error y
 `ajustes-error`.
 
-- Subnavegación `ajustes-subnav` (botones `ajustes-nav-general|canales|carpetas|clave|avanzado`,
+- Subnavegación `ajustes-subnav` (botones `ajustes-nav-general|canales|carpetas|clave|video|avanzado`, seis botones,
   el activo con `aria-current="true"`) que desplaza a cada sección.
 - **General**: modelo como tarjetas de radio (`ajustes-model` = radiogroup; una tarjeta
   `ajustes-model-<id>` por modelo de `models`, con nombre, descripción y precio de la tabla
@@ -186,6 +186,52 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
   `input[type=password][data-testid=ajustes-key]` (vacío siempre) con `ajustes-key-guardar`; con
   clave guardada el campo no existe. Tras guardar nunca se muestra la clave. `ajustes-key-borrar`
   ("Borrar") pide confirmación en un diálogo.
+- **Motor de vídeo** (`ajustes-video`, entre Clave de Anthropic y Avanzado): descarga a petición del
+  navegador del render (Chrome for Testing) y modo de render. Todo por el cliente HTTP del sidecar
+  (`GET /video/navegador` con sondeo de 1 s solo mientras la fase es activa; `POST
+  /video/navegador/descarga`; `GET /video/capacidades` **solo con el navegador `listo`**, nunca al
+  abrir Ajustes: sin caché el motor hace una prueba de GPU de minutos). Nunca se descarga solo (I14):
+  cargar o recargar Ajustes no hace ningún POST. Los textos del backend (`error`, `detail`) se pintan
+  como texto, sin rutas del sistema ni hashes. **No hay selector de navegador, ruta editable, `input
+  file` ni enlace a Chrome/Edge del sistema (I11).**
+  - `ajustes-video-aviso`: «El render usa Chrome for Testing <versión> (~120 MB), que se descarga
+    una sola vez de storage.googleapis.com, solo cuando tú lo pides, y se verifica antes de usarlo.»
+  - `ajustes-video-estado` (chip): `ausente` «No descargado»; `descargando` «Descargando…»;
+    `verificando` «Verificando…»; `extrayendo` «Instalando…»; `listo` «Listo» (success); `error`
+    «Error» (destructive).
+  - `ajustes-video-descargar` (primario): solo en `ausente` («Descargar el navegador del render»),
+    `error` («Reintentar la descarga») y `listo` con el navegador corrupto («Volver a descargar»,
+    M9). Con `loading` mientras el POST está pendiente. Un 409 («Ya hay una descarga…») o una
+    recarga con la descarga en marcha retoman el progreso: no se ofrece otra descarga.
+  - `ajustes-video-progreso` (barra, solo en fases activas): `descargando` con valor
+    `descargado/tamano` y «48 de 120 MB»; `verificando` y `extrayendo` indeterminada.
+  - `ajustes-video-error` (`role="alert"`): `error` del GET, fallo del POST, o navegador `listo`
+    pero corrupto (`/video/capacidades` falla con otro error que «no está instalado», o responde
+    200 sin `chrome` y con `gpu.detalle`); en ese caso se ofrece «Volver a descargar».
+  - `ajustes-video-sin-motor`: «El módulo de vídeo no está instalado en esta versión.» si el POST o
+    `/video/capacidades` dan 503 «no está instalado»; no hay botón de descarga.
+  - `ajustes-render-modo` (radiogroup «Modo de render»): `ajustes-render-modo-auto` (Automático,
+    por defecto: «Dos pasadas; funciona en cualquier equipo»: hoy equivale a Compatible),
+    `ajustes-render-modo-rapido` («Una sola pasada con la GPU») y `ajustes-render-modo-compatible`
+    («Dos pasadas; funciona en cualquier equipo»). «Rápido» está deshabilitado salvo que
+    `capacidades.codificadores` incluya alguno distinto de `h264_mf` (software, M7), con
+    `ajustes-render-rapido-aviso`: navegador no listo «Descarga el navegador del render para
+    comprobar los codificadores»; listo y pendiente «Comprobando…»; error de capacidades (o
+    navegador corrupto) «No se han podido comprobar los codificadores»; sin GPU «No hay
+    codificador de GPU: se usará Compatible». Si «Rápido» está guardado pero no hay GPU, no se
+    marca: se marca el modo efectivo (Compatible) y lo guardado no se toca. Guardado automático en
+    `localStorage` (`seo-studio.render-modo`; un valor inválido vale «auto») con toast «Modo de
+    render guardado». El modo ya se aplica al render: el diálogo de render envía el modo efectivo
+    (Rápido sin GPU se envía como Compatible). `ajustes-render-modo-nota` se retiró en la Task 20.
+  - **Clave de ElevenLabs** (Task 20): `ajustes-eleven-estado` (chip «Configurada» success /
+    «No configurada»: es lo único que la UI sabe, por `has_elevenlabs_key`), `ajustes-eleven-clave`
+    (`input` password, **vacío siempre**: la clave solo se escribe, nunca se lee ni se pinta de
+    vuelta; se vacía al enviar, aunque la validación tarde), `ajustes-eleven-guardar` (primero
+    `POST /settings/validate-elevenlabs-key`, que no gasta; si es válida, `PUT /settings
+    { elevenlabs_api_key }`; una clave inválida no se guarda), `ajustes-eleven-borrar` (solo con clave
+    configurada; `PUT` con cadena vacía) y `ajustes-eleven-error` (`role="alert"`: texto del servidor
+    sin rutas y sin la clave). La clave nunca va a `localStorage`, al estado persistido ni a la caché
+    de consultas.
 - **Avanzado**: cuota de YouTube de hoy (`cuota-<bucket>`, "154 de 10.000"), información
   (directorio de estado y almacén de secretos con su nombre legible: "Administrador de
   credenciales de Windows") y `ajustes-asistente` ("Abrir el asistente" → Onboarding).
@@ -427,10 +473,107 @@ el texto que lee el agente). Cada elemento lleva `origen` ("publica" | "privada"
   el formato, avisa con un toast y refresca la lista) y, si está vacía, estado vacío con "Añadir
   URL". Solo se añaden URLs; las notas y los documentos locales entran por las tools del agente.
 
+## Vídeo (`/video` y `/video/:id`)
+
+Contrato completo de la Task 14. Cada lane (U1–U5) implementa su parte sin tocar este fichero; el
+orden de ficheros y de propietarios está en `PLAN-video-fase1.md`. Todo texto del modelo o del
+proyecto se pinta como texto (nunca HTML). La UI no envía rutas: los recursos se identifican por
+`bandeja_id` (32 hex del comando nativo) y los proyectos, guiones y perfiles por su id de servidor.
+Solo hay `src` de iframe desde `url` del backend, y solo si cumple `http://127.0.0.1:4781[0-3]/p/…`
+(`aPreviewUrl`). Estado del editor: `state/editor.ts` (historial ≤ 100 instantáneas, autoguardado
+con 800 ms de espera; un 409 recarga lo del servidor y guarda la edición local como borrador).
+
+### Marco
+
+`nav-video` («Vídeo»), entre `nav-guiones` y `nav-canal`. Paleta: «Abrir Vídeo». Las rutas
+`/video` (`VideoScreen`) y `/video/:id` (`EditorVideoScreen`) están dentro del marco común.
+Hasta que U2 las rellene, ambas pantallas están vacías.
+
+### Lista (`/video`)
+
+`video-lista`; por proyecto `video-proyecto-<id>` (título, perfil, duración, fecha),
+`video-proyecto-estado-<id>` (`data-estado` = `borrador|renderizando|listo|error`) y
+`video-proyecto-borrar-<id>` (con confirmación). Estados: `video-vacio`, `video-sin-motor`
+(503 del sidecar) y `video-error`.
+
+### Guiones en modo Vídeo (T15)
+
+`escribir-formato` gana la opción Vídeo. `escribir-video-nota` (coste en cuota de YouTube),
+`escribir-video-sin-motor`, `guion-video` (resultado), `guion-video-titulo`, `guion-video-gancho`,
+`guion-video-escenas`, `guion-video-escena` (`li`), `guion-video-frase`, `guion-video-tipo`,
+`guion-video-subir`, `guion-video-bajar`, `guion-video-recurso`, `guion-video-avisos`,
+`guion-video-errores` (`role=alert`), `guion-video-guardar`, `guion-video-crear`,
+`guiones-guardados`, `guion-guardado-<id>`, `guion-guardado-abrir-<id>` (carga el guion en el editor como ya guardado; texto «Abierto» y deshabilitado si es el que está abierto; con un guion sin guardar en pantalla pide confirmación «Abrir sin guardar»/«Cancelar»), `guion-guardado-borrar-<id>` (abre un diálogo de confirmación «Borrar»/«Cancelar»; si el borrado falla
+se muestra un `role=alert`).
+
+### Editor (`/video/:id`)
+
+Layout B: cabecera de 48 px; cuerpo `minmax(0, 1fr) 320px` (preview a la izquierda, panel a la
+derecha); timeline a todo el ancho, 240 px, por debajo. Cabe a 900×600.
+`editor`, `editor-titulo`, `editor-volver`, `editor-guardado` («Guardado», «Guardando…», «Error al
+guardar»), `editor-conflicto`, `editor-deshacer`, `editor-rehacer`, `editor-render`, `editor-error`.
+Zonas del layout B (contenedores de las ranuras, medidos por `video-editor.spec.ts`):
+`editor-zona-preview`, `editor-zona-panel` (320 px de ancho) y `editor-zona-timeline` (240 px de alto).
+
+- **Preview:** `preview-marco` (iframe 1080×1920 escalado con `transform`), `preview-play`,
+  `preview-tiempo`, `preview-cargando`, `preview-error`, `preview-aviso-fondo`.
+- **Panel:** `panel-pestanas`, `panel-escena`, `panel-recursos`, `panel-perfil`.
+  - Escena: `escena-vacia`, `escena-tipo`, `escena-campo-<campo>`, `escena-frase-<fraseId>`,
+    `escena-capa-recurso` (elegir la foto o el clip crea la capa), `escena-capa-sin-recursos`,
+    `escena-capa-modo`, `escena-capa-encuadre`, `escena-capa-quitar`.
+  - Recursos: `recursos-aviso`, `recursos-anadir-foto`, `recursos-anadir-clip`, `recursos-lista`,
+    `recurso-<id>`, `recurso-aviso-<id>`, `recurso-borrar-<id>`, `recursos-pendientes`,
+    `recurso-pendiente-<escenaId>`, `recursos-error`.
+  - Perfil: `perfil-selector`, `perfil-duplicar`, `perfil-color-<campo>`, `perfil-fuente`,
+    `perfil-voz`, `perfil-voz-escuchar`, `perfil-error`.
+    `perfil-voz-escuchar` está deshabilitado hasta que T11 fije la muestra de voz (no se llama ni se gasta).
+- **Timeline:** `timeline`, `timeline-regla`, `timeline-cabezal`, `pista-escenas`,
+  `pista-recursos`, `pista-voz`, `pista-musica`, `pista-subtitulos`, `clip-escena-<id>`,
+  `clip-recurso-<escenaId>`, `clip-voz-<fraseId>`, `clip-subtitulo-<i>`, `voz-generar`,
+  `voz-coste`, `voz-regenerar-<fraseId>`, `voz-quitar-silencios-<fraseId>`, `voz-sin-clave`,
+  `voz-confirmar`, `voz-confirmar-coste`, `voz-confirmar-ok`, `musica-elegir`, `musica-inicio`,
+  `musica-volumen`, `musica-ducking`, `subtitulo-texto`.
+  Añadidos por T19: `voz-onda` (forma de onda en SVG), `voz-confirmar-cancelar`, `subtitulo-dividir`,
+  `subtitulo-unir` y `subtitulo-error` (`role=alert`). Añadidos por el contrato de la voz
+  (`docs/video-fase1/contrato-voz.md`): `voz-confirmar-refacturado` (cifra de frases ya cobradas que se
+  cobrarían otra vez) y `voz-confirmar-reintentar` (casilla expresa; sin ella no se envía
+  `reintentar_facturadas: true` y el botón de confirmar queda deshabilitado). Teclado: en `timeline-regla` (`role=slider`)
+  flechas ±0,1 s, Mayús ±1 s, Inicio y Fin; en `clip-escena-<id>` Alt+flecha reordena; en
+  `clip-voz-<fraseId>` Mayús+flecha ajusta el final del recorte a una palabra; en
+  `clip-recurso-<escenaId>` Alt+flecha mueve la entrada y Mayús+flecha la salida.
+- **Render** (Task 20): `editor-render` abre `render-dialogo` (el elemento `role="dialog"`; se monta solo abierto: cada apertura
+  vuelve a mirar la voz). Envía `POST /video/proyectos/{id}/render { modo }` con el modo efectivo de
+  Ajustes (solo el id y el modo, nunca rutas); el progreso sale del job `video_render` del proyecto
+  (`args.id`), sigue vivo si se cierra el diálogo y se retoma al reabrirlo.
+  - `render-bloqueo` (`role="status"`, `data-motivo` = `voz` | `guardado`): hay frases sin voz
+    (`/voz/coste` con `pendientes`, o 409 `sin_voz`) o el proyecto está sin guardar o en conflicto.
+    Mientras exista, `render-lanzar` está deshabilitado.
+  - `render-lanzar` («Renderizar», «Renderizar de nuevo» o «Reintentar»): no existe mientras hay un
+    render activo.
+  - `render-progreso`: barra «Renderizando el vídeo» (indeterminada en cola).
+  - `render-resultado`: «Vídeo listo · 12,5 s», con `render-avisos` (lista: codificador y modo,
+    `reserva` si el motor tuvo que recurrir a otra vía, y los avisos) y `render-exportar` («Exportar
+    MP4» = `invoke("exportar_mp4", { id })`; cancelar el diálogo no es un error; fuera de Tauri
+    explica que solo existe en la aplicación).
+  - `render-error` (`role="alert"`): fallo del job, del POST o de la exportación; texto sin rutas.
+
+La verificación E2E de cada grupo la escribe el lane que lo implementa, en el mismo commit
+(U1 `video-guion.spec.ts`; U2 `video-editor.spec.ts` y `video-preview.spec.ts`; U5
+`motor-video.spec.ts` y `video-render.spec.ts`). En la Task 14 solo existe `nav-video`, cubierto
+por `marco.spec.ts`. Utilidades compartidas: `e2e/video-comun.ts` (guion y proyecto de ejemplo,
+atajos sobre la API real) y `e2e/elevenlabs-mock.ts` (ElevenLabs falso, `VIDEO_PRUEBAS_TTS_URL`).
+
+Seguridad de los E2E: `global-setup` lanza el sidecar sin heredar ninguna variable `*_API_KEY` ni
+`*_TOKEN` (las sustituye por valores falsos) y aborta si el mock de ElevenLabs no responde. Mientras
+T5 no haga que el motor lea `VIDEO_PRUEBAS_TTS_URL`, ningún E2E de voz debe poder llegar a
+`api.elevenlabs.io`; no se desactiva esa defensa.
+
 ## Regresión visual
 
-`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `onboarding` y el catálogo
+`e2e/visual.spec.ts` captura `chat`, `publicar`, `guiones` (modo Escribir, vacío), `canal`, `kb`, `ajustes`, `ajustes-video` (Ajustes desplazado a «Motor de vídeo»), `video` (lista de proyectos con los cuatro estados), `video-editor` (editor de un proyecto de cocina con la
+preview simulada: composición fija de 10 s, sin motor ni voz), `onboarding` y el catálogo
 (`/#/catalogo`) en claro y oscuro, a 1200×800 y 900×600 (el catálogo muestra los dos temas, así que
 solo se captura una vez por tamaño). Los datos que varían (ajustes, canal, estado de la KB) se
-simulan y el reloj se fija; las referencias están en `e2e/__capturas__/`.
+simulan y el reloj se fija (`ajustes-video` muestra el navegador sin descargar; `video` simula `GET /video/proyectos`; `video-editor` usa un
+proyecto real del sidecar y simula solo `POST …/preview` y la página del iframe); las referencias están en `e2e/__capturas__/`.
 

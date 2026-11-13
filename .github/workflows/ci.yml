@@ -35,6 +35,7 @@ jobs:
       ui: ${{ steps.d.outputs.ui }}
       rust: ${{ steps.d.outputs.rust }}
       video: ${{ steps.d.outputs.video }}
+      backend: ${{ steps.d.outputs.backend }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -55,7 +56,7 @@ jobs:
           py=()
           toca '^youtube-mcp-server/' && py+=('"youtube-mcp-server"')
           toca '^kb-seo/' && py+=('"kb-seo"')
-          toca '^(app-backend|kb-seo|youtube-mcp-server)/' && py+=('"app-backend"')
+          toca '^(app-backend|kb-seo|youtube-mcp-server)/' && py+=('"app-backend"') && echo backend=true >> "$GITHUB_OUTPUT"
           echo "python=[$(IFS=,; echo "${py[*]}")]" >> "$GITHUB_OUTPUT"
           toca '^app-ui/' && echo ui=true >> "$GITHUB_OUTPUT"
           toca '^app-ui/src-tauri/' && echo rust=true >> "$GITHUB_OUTPUT"
@@ -151,8 +152,9 @@ jobs:
       - run: pnpm build
 
   # Windows y con ffmpeg, como en el producto: los tests validan rutas de Windows y el render
-  # comprueba ffmpeg antes que el guion. El ffmpeg es el del instalador (URL y SHA-256 salen de
-  # prepare-video-engine.sh, así hay una sola fuente de verdad).
+  # comprueba ffmpeg antes que el guion. ffmpeg solo de tests (motor en modo desarrollo, que tolera
+  # libopenh264 con un aviso): el BtbN de antes. NO es el del instalador, que es el build propio de
+  # W1.5 (prepare-video-engine.sh). ponytail: pasar a ese build cuando su release de CI exista.
   video:
     needs: changes
     if: needs.changes.outputs.video == 'true'
@@ -170,9 +172,12 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: video-mcp-server/package-lock.json
-      - name: ffmpeg LGPL del instalador
+      - name: ffmpeg de los tests (BtbN, SHA-256 fijado)
+        env:
+          FFMPEG_ZIP: ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1.zip
+          FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-7.1.zip
+          FFMPEG_SHA256: b7c1c846dacca68ee4ebf5c390742c973b3d5d14a6d44b061f500d8e4ac74fc0
         run: |
-          eval "$(grep -E '^FFMPEG_(ZIP|URL|SHA256)=' ../app-ui/scripts/prepare-video-engine.sh)"
           curl -fsSL -o "$RUNNER_TEMP/$FFMPEG_ZIP" "$FFMPEG_URL"
           echo "$FFMPEG_SHA256  $RUNNER_TEMP/$FFMPEG_ZIP" | sha256sum -c -
           7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/$FFMPEG_ZIP" > /dev/null
@@ -180,6 +185,31 @@ jobs:
           echo "$RUNNER_TEMP/${FFMPEG_ZIP%.zip}/bin" >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm test
+
+  # Windows, como en el producto: los tests de junctions, del candado entre procesos (msvcrt) y de
+  # las rutas del navegador del render (SEO-108) y del motor de vídeo solo cuentan aquí; en el job
+  # `python` (ubuntu) los de junctions se saltan.
+  # También la frontera REST (T9) y la preview (T10): la reserva de los puertos de preview con
+  # SO_EXCLUSIVEADDRUSE (R0-7) solo se puede probar en Windows.
+  backend-windows:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: app-backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.0"
+          enable-cache: true
+          cache-dependency-glob: app-backend/uv.lock
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync --extra dev pytest -q -rs tests/test_navegador.py tests/test_video.py tests/test_video_rest.py tests/test_preview.py
 
   # Windows: el shell enlaza win32job y windows-sys, y es la única plataforma que se publica.
   tauri-rust:
@@ -323,9 +353,63 @@ jobs:
         working-directory: video-mcp-server
         run: npm audit --omit=dev --audit-level high
 
+  # Trivy: vulnerabilidades de todos los locks (Cargo.lock incluido, que no audita ningún otro job,
+  # con una base independiente de la de pip-audit y npm) y misconfig de Dockerfile y compose.
+  # El escáner de secretos queda fuera: lo cubre gitleaks. Se ejecuta siempre, porque toca todos
+  # los subproyectos. Las excepciones van en .trivyignore, razonadas.
+  #
+  # Cadena de suministro: en marzo de 2026 se reescribieron 76 de 77 etiquetas de
+  # aquasecurity/trivy-action, todas las de setup-trivy y se publicó un binario v0.69.4 malicioso
+  # (GHSA-69fq-xp46-6x23, CVE-2026-33634). Por eso no se usa ninguna action de Trivy: se baja el
+  # binario de una release inmutable posterior al incidente y a los parches de junio de 2026
+  # (GHSA-mcj4-mphf-j9ff, path traversal por base manipulada, corregido en 0.71.1), se compara su
+  # SHA-256 con el fijado aquí (sacado del checksums.txt firmado de la release) y se verifica la
+  # atestación de la release inmutable con gh. Al subir de versión: SHA-256 nuevo del
+  # trivy_<ver>_checksums.txt, release con al menos dos semanas y advisories revisados.
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Fecha de la base de vulnerabilidades
+        id: fecha
+        run: echo "dia=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Una base por día. Si no hay caché de hoy se restaura la última y Trivy la actualiza.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ steps.fecha.outputs.dia }}
+          restore-keys: trivy-db-
+      - name: Binario de Trivy verificado
+        env:
+          GH_TOKEN: ${{ github.token }} # solo lectura: consulta la atestación de la release pública
+          VERSION: 0.76.1
+          SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+        run: |
+          tgz="trivy_${VERSION}_Linux-64bit.tar.gz"
+          mkdir -p "$RUNNER_TEMP/trivy-dl"
+          curl -fsSL -o "$RUNNER_TEMP/trivy-dl/$tgz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/$tgz"
+          echo "$SHA256  $RUNNER_TEMP/trivy-dl/$tgz" | sha256sum -c -
+          gh release verify-asset "v${VERSION}" "$RUNNER_TEMP/trivy-dl/$tgz" --repo aquasecurity/trivy
+          tar -xzf "$RUNNER_TEMP/trivy-dl/$tgz" -C "$RUNNER_TEMP/trivy-dl" trivy
+          "$RUNNER_TEMP/trivy-dl/trivy" --version
+      - name: trivy fs (vuln y misconfig, HIGH y CRITICAL con corrección)
+        run: |
+          "$RUNNER_TEMP/trivy-dl/trivy" fs \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --scanners vuln,misconfig \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            --no-progress \
+            .
+
   ci-ok:
     if: always()
-    needs: [changes, python, app-ui, video, tauri-rust, secretos, workflows-y-scripts, higiene-pr, dependencias]
+    needs: [changes, python, app-ui, video, backend-windows, tauri-rust, secretos, workflows-y-scripts, higiene-pr, dependencias, trivy]
     runs-on: ubuntu-latest
     steps:
       - env:

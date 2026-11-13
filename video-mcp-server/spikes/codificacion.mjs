@@ -22,7 +22,7 @@ const dist = (f) => import(new URL(`../dist/${f}`, import.meta.url).href);
 const { parsearGuion } = await dist("guion.js");
 const { procesarAlineacion } = await dist("alineacion.js");
 const { prepararRender, montarComposicion, HYPERFRAMES_BIN } = await dist("render.js");
-const { ejecutar, herramientasFfmpeg, entornoConFfmpeg } = await dist("proceso.js");
+const { ejecutar, herramientasFfmpeg, entornoHijo } = await dist("proceso.js");
 
 const FF = path.join(LGPL, "ffmpeg.exe");
 const FP = path.join(LGPL, "ffprobe.exe");
@@ -106,7 +106,7 @@ async function fase(nombre, comando, args, opciones = {}) {
   return r;
 }
 
-const env = entornoConFfmpeg(herramientasFfmpeg(LGPL));
+const env = entornoHijo();
 const hf = (nombre, salida, extra) =>
   fase(nombre, process.execPath, [HYPERFRAMES_BIN, "render", COMP, "-o", salida, "--fps", "30", "--quality", "delivery", ...extra], { cwd: COMP, env });
 

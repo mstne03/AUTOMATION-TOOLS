@@ -7,9 +7,12 @@ NO debe importar `youtube_mcp.server`.
 
 Variables propias:
 - APP_BACKEND_DIR: directorio de estado (ajustes, cuota, jobs). Por defecto
-  %LOCALAPPDATA%\\seo-studio.
+  %LOCALAPPDATA%\\seo-studio. Solo para desarrollo y tests: tiene que ser absoluto (si no,
+  se ignora) y no apuntar a una carpeta compartida, porque el estado no lleva ACL propia y
+  hereda la de la carpeta que lo contiene.
 - APP_BACKEND_SECRETS: "keyring" (por defecto, Credential Manager) o "file"
   (JSON en claro en el directorio de estado; solo para tests y desarrollo).
+- APP_BACKEND_SIN_DOTENV: con "1" no se cargan `.env` ni `.env.local` (lo fijan los E2E).
 - APP_BACKEND_TOKEN: token de la cabecera Authorization. Si falta se genera uno.
 - ANTHROPIC_API_KEY: respaldo para desarrollo; en el producto la clave va al almacen
   de secretos via PUT /settings y esta variable no se usa.
@@ -31,6 +34,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
+def cargar_dotenv(raiz: Path) -> bool:
+    """Carga `.env` y `.env.local` de `raiz` (`.env.local` pisa a `.env`), salvo con
+    APP_BACKEND_SIN_DOTENV=1: los E2E la fijan para que un `.env.local` de desarrollo con claves
+    reales no entre nunca en el sidecar de prueba. Devuelve si cargó algo."""
+    if os.environ.get("APP_BACKEND_SIN_DOTENV") == "1":
+        return False
+    load_dotenv(raiz / ".env")
+    load_dotenv(raiz / ".env.local", override=True)
+    return True
+
+
 # Binario de PyInstaller (sys.frozen): sin .env (un fichero junto al ejecutable no debe
 # poder cambiar la configuracion) y con el modelo de embeddings dentro del bundle.
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -44,12 +59,16 @@ else:
     # .env y .env.local junto a pyproject.toml, solo para desarrollo (ver .env.example).
     # Ninguno se commitea; .env.local pisa a .env.
     _RAIZ = Path(__file__).resolve().parent.parent
-    load_dotenv(_RAIZ / ".env")
-    load_dotenv(_RAIZ / ".env.local", override=True)
+    cargar_dotenv(_RAIZ)
+
+def _absoluta(valor: str | None) -> str | None:
+    """A27-8: una ruta de estado relativa colgaría del cwd del proceso; se ignora, igual que en `lib.rs`."""
+    return valor if valor and Path(valor).is_absolute() else None
+
 
 STATE_DIR = Path(
-    os.environ.get("APP_BACKEND_DIR")
-    or Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "seo-studio"
+    _absoluta(os.environ.get("APP_BACKEND_DIR"))
+    or Path(_absoluta(os.environ.get("LOCALAPPDATA")) or Path.home()) / "seo-studio"
 )
 SETTINGS_PATH = STATE_DIR / "settings.json"
 
@@ -80,12 +99,55 @@ def anthropic_api_key(store) -> str | None:
 
 
 # Motor de vídeo (video-mcp-server, Node): en el instalador va junto al ejecutable, en
-# `video-engine/` (node/node.exe, app/dist/index.js, browser/, ffmpeg/); en desarrollo es la
-# carpeta del paquete en el repo.
+# `video-engine/` (node/node.exe, app/dist/index.js, ffmpeg/); en desarrollo es la carpeta del
+# paquete en el repo. El navegador del render NO va en el instalador: ver NAVEGADOR_*.
 VIDEO_ENGINE_DIR = (
     Path(sys.executable).parent / "video-engine"
     if FROZEN
     else Path(__file__).resolve().parent.parent.parent / "video-mcp-server"
+)
+
+# Navegador del render: chrome-headless-shell de Chrome for Testing, descargado por el backend en
+# el primer uso, a petición del usuario (SEO-108, spec D10, I4, I14). Versión, URL, hashes y topes
+# fijados aquí: ninguno lee el entorno (Ruling 6). Subir de versión = cambiar estas constantes
+# repitiendo la comparación de `video-mcp-server/spikes/INFORME-chromium.md`.
+NAVEGADOR_VERSION = "156.0.8078.73"
+NAVEGADOR_URL = (
+    "https://storage.googleapis.com/chrome-for-testing-public/"
+    f"{NAVEGADOR_VERSION}/win64/chrome-headless-shell-win64.zip"
+)
+NAVEGADOR_SHA256 = "e6d26810df71efd0a3dfd0f7246d75d279ebdf8a8ec153d1ac44069657298628"
+# Medido sobre el zip verificado: 125 506 562 bytes, 288 ficheros, 294 930 633 bytes extraído.
+# Topes = esperado + 10 %.
+NAVEGADOR_TAMANO = 125_506_562
+NAVEGADOR_MAX_DESCARGA = 138_057_218
+NAVEGADOR_MAX_EXTRAIDO = 324_423_696
+NAVEGADOR_MAX_FICHEROS = 320
+# SHA-256 de la serialización canónica del manifiesto de esa versión
+# (`navegador.serializar_manifiesto`), calculado una vez con el zip de arriba: un manifiesto
+# regenerado a mano tras añadir una .dll no casa con él.
+NAVEGADOR_MANIFIESTO_SHA256 = "51085c8fa3f8c022a832617bab007a5099bb9c1b519c88893c73a28276011ccb"
+VIDEO_ROOT = STATE_DIR / "video" / "proyectos"  # una carpeta videoNNN por proyecto (la borra el backend)
+NAVEGADOR_DIR = STATE_DIR / "video" / "navegador"  # fuera de video/proyectos y de la preview
+NAVEGADOR_EXE = "chrome-headless-shell-win64/chrome-headless-shell.exe"
+NAVEGADOR_MANIFIESTO = "MANIFIESTO-SHA256.json"
+# Chrome lo escribe junto a su exe y ninguna bandera lo evita: única excepción a I4 (decisión M-2).
+NAVEGADOR_LOG = "chrome-headless-shell-win64/debug.log"
+
+# Preview del editor de vídeo (T10, M-D1, I8): puertos fijos y propios, distintos del de la API, que
+# `frame-src` de `tauri.conf.json` lista uno a uno (lo comprueba `tests/test_preview.py`).
+PUERTOS_PREVIEW = (47810, 47811, 47812, 47813)
+# Runtime de HyperFrames 0.8.206 que la preview inyecta: se lee una vez, se verifica contra este
+# SHA-256 y se sirve desde memoria. Si no cuadra, no se sirve ningún otro (I4, I11).
+RUNTIME_SHA256 = "cafd7cc9ef6867d0e08910ef27d471ebcb38127c2bc68b1e5c8950a513ac607e"
+RUNTIME_PREVIEW_REL = ("node_modules", "hyperframes", "dist", "hyperframe.runtime.iife.js")
+# Política del `<meta>` de `index.html`, tal como la emite el motor (`plantilla/index.html`). La preview
+# la sustituye exactamente una vez, cambiando `'self'` por el origen exacto; si no aparece una sola
+# vez, la composición no se sirve (R0-10). Un test la compara con la plantilla.
+CSP_META_COMPOSICION = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+    "worker-src 'none'; base-uri 'none'; form-action 'none'"
 )
 
 ELEVENLABS_KEY = "elevenlabs_api_key"  # clave en el almacen de secretos
