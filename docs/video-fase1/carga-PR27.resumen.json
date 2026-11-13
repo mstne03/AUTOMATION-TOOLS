@@ -1,0 +1,395 @@
+{
+    "root_group": {
+        "checks": {
+            "coste con plan": {
+                "name": "coste con plan",
+                "path": "::coste con plan",
+                "id": "0e1082367998d71890ef30f0b38e211f",
+                "passes": 7,
+                "fails": 0
+            },
+            "preview HTML": {
+                "name": "preview HTML",
+                "path": "::preview HTML",
+                "id": "20f754da99fbd7d122c7778467d983eb",
+                "passes": 335,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {}
+    },
+    "metrics": {
+        "http_req_blocked": {
+            "avg": 0.037939824304538766,
+            "med": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 1.2871289999999938,
+            "max": 3.7493
+        },
+        "http_req_duration{scenario:listados}": {
+            "avg": 36.065447333333324,
+            "med": 48.309799999999996,
+            "p(90)": 65.85331,
+            "p(95)": 70.76619999999997,
+            "p(99)": 78.627136,
+            "max": 81.7569,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_duration{name:POST /video/proyectos/{id}/preview}": {
+            "avg": 210.96750029850728,
+            "med": 161.2677,
+            "p(90)": 194.91012,
+            "p(95)": 203.16685,
+            "p(99)": 294.9387340000003,
+            "max": 5292.9744,
+            "thresholds": {
+                "p(95)<1500": false
+            }
+        },
+        "iteration_duration": {
+            "p(99)": 5259.560236999994,
+            "max": 77929.4857,
+            "avg": 820.39495591398,
+            "med": 211.72775000000001,
+            "p(90)": 1957.0338300000003,
+            "p(95)": 2082.17101
+        },
+        "http_req_duration{name:POST /video/proyectos/{id}/voz}": {
+            "p(99)": 58801.612126,
+            "max": 60001.5656,
+            "avg": 20002.947900000003,
+            "med": 3.8919,
+            "p(90)": 48002.030860000006,
+            "p(95)": 54001.79822999999,
+            "thresholds": {
+                "p(95)<5000": true
+            }
+        },
+        "http_req_duration{name:GET /video/guiones}": {
+            "p(90)": 10.277120000000002,
+            "p(95)": 10.60036,
+            "p(99)": 23.036180000000236,
+            "max": 57.5372,
+            "avg": 9.417732000000003,
+            "med": 8.6948,
+            "thresholds": {
+                "p(95)<300": false
+            }
+        },
+        "guardados_ok": {
+            "count": 409,
+            "rate": 1.0623138849936593
+        },
+        "http_req_duration{scenario:coste}": {
+            "p(95)": 23189.17629,
+            "p(99)": 23592.355098,
+            "max": 23693.1498,
+            "avg": 16251.547042857143,
+            "med": 18011.5117,
+            "p(90)": 22685.20278,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_waiting": {
+            "p(90)": 1748.30782,
+            "p(95)": 1993.3318699999998,
+            "p(99)": 2227.6833289999986,
+            "max": 60001.5656,
+            "avg": 466.4527724499751,
+            "med": 12.406099999999999
+        },
+        "checks": {
+            "passes": 342,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_duration{name:POST /video/proyectos/{id}/recursos (tras guardar)}": {
+            "p(90)": 59999.6305,
+            "p(95)": 59999.6305,
+            "p(99)": 59999.6305,
+            "max": 59999.6305,
+            "avg": 59999.6305,
+            "med": 59999.6305,
+            "thresholds": {
+                "p(95)<10000": true
+            }
+        },
+        "http_req_duration{scenario:recursos}": {
+            "avg": 6778.222508333335,
+            "med": 7361.68655,
+            "p(90)": 7484.38274,
+            "p(95)": 7487.19703,
+            "p(99)": 7488.966446,
+            "max": 7489.4088,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_failed": {
+            "passes": 2,
+            "fails": 4096,
+            "value": 0.0004880429477794046
+        },
+        "sin_respuesta": {
+            "count": 2,
+            "rate": 0.005194688924174373,
+            "thresholds": {
+                "count==0": true
+            }
+        },
+        "http_req_duration{name:POST /video/proyectos/{id}/recursos}": {
+            "avg": 6778.222508333335,
+            "med": 7361.68655,
+            "p(90)": 7484.38274,
+            "p(95)": 7487.19703,
+            "p(99)": 7488.966446,
+            "max": 7489.4088,
+            "thresholds": {
+                "p(95)<10000": false
+            }
+        },
+        "iterations": {
+            "count": 2418,
+            "rate": 6.280378909326817
+        },
+        "http_req_duration{scenario:guardar_concurrente}": {
+            "p(95)": 18.4027,
+            "p(99)": 24.190339,
+            "max": 39.8086,
+            "avg": 10.591617804878052,
+            "med": 9.362850000000002,
+            "p(90)": 16.475830000000002,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_duration": {
+            "p(99)": 2229.989591999998,
+            "max": 60001.5656,
+            "avg": 468.1847099804795,
+            "med": 13.7415,
+            "p(90)": 1750.43811,
+            "p(95)": 1994.3060399999997
+        },
+        "estado_inesperado": {
+            "passes": 2,
+            "fails": 4096,
+            "thresholds": {
+                "rate==0": true
+            },
+            "value": 0.0004880429477794046
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0,
+            "avg": 0,
+            "med": 0
+        },
+        "http_req_duration{scenario:voz}": {
+            "med": 17693.0767,
+            "p(90)": 38847.32115,
+            "p(95)": 49424.443375,
+            "p(99)": 57886.141155000005,
+            "max": 60001.5656,
+            "avg": 18848.012300000002,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "data_sent": {
+            "count": 1686799,
+            "rate": 4381.198041304204
+        },
+        "http_req_receiving": {
+            "avg": 1.7135262567105962,
+            "med": 1.1812,
+            "p(90)": 4.096750000000001,
+            "p(95)": 5.647599999999999,
+            "p(99)": 8.520912999999991,
+            "max": 15.2711
+        },
+        "http_req_duration{scenario:recursos_tras_guardar}": {
+            "max": 59999.6305,
+            "avg": 59999.6305,
+            "med": 59999.6305,
+            "p(90)": 59999.6305,
+            "p(95)": 59999.6305,
+            "p(99)": 59999.6305,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_duration{scenario:pico}": {
+            "avg": 1436.5358879999992,
+            "med": 1604.1943,
+            "p(90)": 2071.6602000000003,
+            "p(95)": 2134.22237,
+            "p(99)": 2221.153072,
+            "max": 2344.2927,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "proyecto_corrupto": {
+            "count": 0,
+            "rate": 0,
+            "thresholds": {
+                "count==0": false
+            }
+        },
+        "http_req_duration{name:GET /video/capacidades}": {
+            "avg": 5032.4334,
+            "med": 4585.8391,
+            "p(90)": 5928.719639999999,
+            "p(95)": 6348.7599199999995,
+            "p(99)": 6684.792143999999,
+            "max": 6768.8002,
+            "thresholds": {
+                "p(95)<5000": true
+            }
+        },
+        "http_reqs": {
+            "count": 4098,
+            "rate": 10.64391760563329
+        },
+        "http_req_sending": {
+            "avg": 0.01841127379209371,
+            "med": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0.5400119999999999,
+            "max": 6.2285
+        },
+        "conflictos_409": {
+            "count": 410,
+            "rate": 1.0649112294557463
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 1.1428719999999994,
+            "max": 3.7493,
+            "avg": 0.033719375305026826,
+            "med": 0
+        },
+        "respuestas_5xx": {
+            "count": 0,
+            "rate": 0,
+            "thresholds": {
+                "count==0": false
+            }
+        },
+        "vus": {
+            "max": 80,
+            "value": 1,
+            "min": 0
+        },
+        "http_req_duration{name:PUT /video/proyectos/{id}}": {
+            "avg": 34.481445376344084,
+            "med": 12.248999999999999,
+            "p(90)": 141.34626,
+            "p(95)": 155.163415,
+            "p(99)": 174.33200200000002,
+            "max": 5288.966,
+            "thresholds": {
+                "p(95)<800": false
+            }
+        },
+        "vus_max": {
+            "value": 87,
+            "min": 27,
+            "max": 87
+        },
+        "http_req_duration{scenario:capacidades}": {
+            "avg": 5032.4334,
+            "med": 4585.8391,
+            "p(90)": 5928.719639999999,
+            "p(95)": 6348.7599199999995,
+            "p(99)": 6684.792143999999,
+            "max": 6768.8002,
+            "thresholds": {
+                "max>=0": false
+            }
+        },
+        "http_req_duration{name:GET /video/proyectos}": {
+            "avg": 1272.48354430605,
+            "med": 1530.7816,
+            "p(90)": 2080.74002,
+            "p(95)": 2147.4128949999995,
+            "p(99)": 2232.202296,
+            "max": 2344.2927,
+            "thresholds": {
+                "p(95)<300": true
+            }
+        },
+        "http_req_duration{name:GET /video/proyectos/{id}}": {
+            "p(90)": 1744.355070000001,
+            "p(95)": 1957.2969549999998,
+            "p(99)": 2122.712724,
+            "max": 2261.2391,
+            "avg": 384.79524808743025,
+            "med": 10.815100000000001,
+            "thresholds": {
+                "p(95)<300": true
+            }
+        },
+        "http_req_duration{name:POST /video/proyectos/{id}/voz/coste}": {
+            "max": 23693.1498,
+            "avg": 16684.00594,
+            "med": 17693.0767,
+            "p(90)": 22181.22927,
+            "p(95)": 22937.189534999998,
+            "p(99)": 23541.957747,
+            "thresholds": {
+                "p(95)<3000": true
+            }
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(99)": 2220.84706,
+            "max": 23693.1498,
+            "avg": 439.1161487792979,
+            "med": 13.7212,
+            "p(90)": 1748.00025,
+            "p(95)": 1993.0254499999999
+        },
+        "data_received": {
+            "count": 6016670,
+            "rate": 15627.364504706113
+        },
+        "http_req_duration{name:GET preview/index.html}": {
+            "avg": 7.499487164179107,
+            "med": 7.2747,
+            "p(90)": 9.19672,
+            "p(95)": 10.36008,
+            "p(99)": 13.922938000000032,
+            "max": 21.7587,
+            "thresholds": {
+                "p(95)<300": false
+            }
+        },
+        "dropped_iterations": {
+            "count": 679,
+            "rate": 1.7635968897571996
+        },
+        "http_req_duration{scenario:preview_mientras_guarda}": {
+            "med": 89.74644999999998,
+            "p(90)": 176.65302,
+            "p(95)": 188.91350499999996,
+            "p(99)": 227.33961200000027,
+            "max": 5292.9744,
+            "avg": 109.33458116591913,
+            "thresholds": {
+                "max>=0": false
+            }
+        }
+    }
+}
