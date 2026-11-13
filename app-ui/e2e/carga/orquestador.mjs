@@ -146,7 +146,8 @@ async function main() {
     // ni la descarga del modelo de embeddings de Hugging Face (la sonda vio una petición real sin esto).
     KB_UPDATE_URL: "http://127.0.0.1:9/kb/", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1",
     ELEVENLABS_API_KEY: "carga-eleven-falsa", ELEVENLABS_VOICE_ID: "voz-carga",
-    APP_BACKEND_VIDEO_CMD: JSON.stringify(["node", motor]),
+    // INSPECT=<segundos>: el motor abre el inspector de Node en 127.0.0.1:9333 (solo diagnóstico del hallazgo 1).
+    APP_BACKEND_VIDEO_CMD: JSON.stringify(process.env.INSPECT ? ["node", "--inspect=127.0.0.1:9333", motor] : ["node", motor]),
     VIDEO_PRUEBAS_TTS_URL: mock.url, VIDEO_E2E: "1",
     ...(ffmpeg ? { FFMPEG_DIR: ffmpeg } : {}),
   });
@@ -206,12 +207,96 @@ async function main() {
     return;
   }
 
+  if (process.argv.includes("--conexion")) { // hallazgo 1: ¿qué respuesta deja inservible una conexión keep-alive?
+    const { request, Agent } = await import("node:http");
+    const agente = new Agent({ keepAlive: true, maxSockets: 1 });
+    const pet = (metodo, ruta, cuerpo, plazo = 15_000) => new Promise((ok) => {
+      const t0 = Date.now();
+      const datosCuerpo = cuerpo === undefined ? undefined : JSON.stringify(cuerpo);
+      const req = request(BASE + ruta, { method: metodo, agent: agente, timeout: plazo, headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", ...(datosCuerpo ? { "Content-Length": Buffer.byteLength(datosCuerpo) } : {}) } }, (res) => {
+        let t = ""; res.on("data", (d) => (t += d)); res.on("end", () => { let j; try { j = JSON.parse(t); } catch {} ok({ estado: res.statusCode, ms: Date.now() - t0, j }); });
+      });
+      req.on("timeout", () => { req.destroy(); ok({ estado: "TIMEOUT", ms: Date.now() - t0 }); });
+      req.on("error", (e) => ok({ estado: "ERROR " + e.code, ms: Date.now() - t0 }));
+      if (datosCuerpo) req.write(datosCuerpo);
+      req.end();
+    });
+    const id = datos.guardar;
+    const dosRecursos = (n) => pet("POST", `/video/proyectos/${datos.recursos}/recursos`, { bandeja_id: datos.bandeja[n], clase: "foto", nombre_original: `c${n}.png` });
+    const resumen = (r) => `${r.estado}/${r.ms}ms`;
+    const leer = async () => (await pet("GET", `/video/proyectos/${id}`)).j;
+    let p = await leer();
+    log("CONEXION 1 PUT ok →", resumen(await pet("PUT", `/video/proyectos/${id}`, { revision: p.revision, proyecto: p })), "→ importación:", resumen(await dosRecursos(0)));
+    p = await leer();
+    const vieja = { ...p, revision: p.revision - 1 };
+    log("CONEXION 2 PUT 409 →", resumen(await pet("PUT", `/video/proyectos/${id}`, { revision: vieja.revision, proyecto: vieja })), "→ importación:", resumen(await dosRecursos(1)));
+    let r409 = [];
+    for (let i = 0; i < 300; i++) { p = await leer(); const v = { ...p, revision: p.revision - 1 }; r409.push((await pet("PUT", `/video/proyectos/${id}`, { revision: v.revision, proyecto: v })).estado); }
+    log("CONEXION 3 tras 300 PUT 409 seguidos (estados únicos:", [...new Set(r409)].join(","), ") → importación:", resumen(await dosRecursos(2)));
+    log("CONEXION 4 coste →", resumen(await pet("POST", `/video/proyectos/${datos.voz}/voz/coste`, {})), " preview →", resumen(await pet("POST", `/video/proyectos/${datos.preview}/preview`, {})));
+    for (const [i, espera] of [2, 4.5, 4.95, 5.05, 6].entries()) { // tiempo ocioso de la conexión antes de reutilizarla
+      await leer();
+      await new Promise((r) => setTimeout(r, espera * 1000));
+      log(`CONEXION 5 tras ${espera} s ociosa → importación:`, resumen(await dosRecursos(3 + i)));
+    }
+    agente.destroy();
+    return;
+  }
+
   // ---------------------------------------------------------------- k6 (solo loopback)
-  const k6 = spawnSync("k6", ["run", "--summary-export", salida, join(aqui, "carga.k6.js")], {
-    env: { ...process.env, ...(SOLO ? { SOLO } : {}), BASE, TOKEN, DATOS: JSON.stringify(datos), K6_NO_USAGE_REPORT: "true" },
-    stdio: "inherit",
-  });
+  const envK6 = { ...process.env, ...(SOLO ? { SOLO } : {}), BASE, TOKEN, DATOS: JSON.stringify(datos), K6_NO_USAGE_REPORT: "true" };
+  const argsK6 = ["run", "--summary-export", salida, join(aqui, "carga.k6.js")];
+  let k6;
+  if (process.env.INSPECT) { // k6 en paralelo; a los INSPECT segundos se pide al motor su informe de diagnóstico
+    const hijoK6 = spawn("k6", argsK6, { env: envK6, stdio: "ignore" });
+    pids.push(hijoK6.pid);
+    const fin = new Promise((ok) => hijoK6.on("exit", (c) => ok({ status: c })));
+    await new Promise((r) => setTimeout(r, Number(process.env.INSPECT) * 1000));
+    const arbolHijos = spawnSync("powershell", ["-NoProfile", "-Command", `$h=@(${pids[0]}); $n=1; while($n){ $c=Get-CimInstance Win32_Process | Where-Object { $h -contains $_.ParentProcessId -and $h -notcontains $_.ProcessId }; $n=@($c).Count; $h+=@($c).ProcessId }; Get-CimInstance Win32_Process | Where-Object { $h -contains $_.ProcessId -and $_.Name -notmatch 'uv|app-backend|python|conhost' } | ForEach-Object { $cpu=(Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue); '{0} pid={1} ppid={2} cpu={3} inicio={4} :: {5}' -f $_.Name,$_.ProcessId,$_.ParentProcessId,[math]::Round($cpu.CPU,1),$cpu.StartTime.ToString('HH:mm:ss'),($_.CommandLine -replace '\\s+',' ').Substring(0,[Math]::Min(330,$_.CommandLine.Length)) }`], { encoding: "utf8" }).stdout.trim();
+    log("INSPECT hijos del motor en pleno cuelgue:\n" + arbolHijos);
+    const detalleFfmpeg = spawnSync("powershell", ["-NoProfile", "-Command", `$p=Get-CimInstance Win32_Process -Filter "Name='ffmpeg.exe' OR Name='ffprobe.exe'"; foreach($x in $p){ $g=Get-Process -Id $x.ProcessId -ErrorAction SilentlyContinue; 'EDAD={0}s hilos={1} manejadores={2} cpu={3}' -f [math]::Round(((Get-Date)-$g.StartTime).TotalSeconds,1),$g.Threads.Count,$g.HandleCount,$g.CPU; 'ESTADOS HILOS: ' + (($g.Threads | ForEach-Object { [string]$_.ThreadState + '/' + [string]$_.WaitReason }) -join ' '); 'CMD COMPLETA: ' + $x.CommandLine }`], { encoding: "utf8" }).stdout.trim();
+    log("INSPECT detalle del ffmpeg/ffprobe vivo:\n" + detalleFfmpeg);
+    try {
+      const lista = await (await fetch("http://127.0.0.1:9333/json")).json();
+      const ws = new WebSocket(lista[0].webSocketDebuggerUrl);
+      await new Promise((ok, ko) => { ws.onopen = ok; ws.onerror = ko; });
+      const informe = await new Promise((ok) => {
+        ws.onmessage = (m) => { const j = JSON.parse(m.data); if (j.id === 1) ok(j); };
+        ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "JSON.stringify(process.report.getReport())", returnByValue: true } }));
+      });
+      ws.close();
+      const rep = JSON.parse(informe.result.result.value);
+      const porTipo = {};
+      for (const h of rep.libuv) { const k = `${h.type}${h.is_active ? "(activo)" : ""}`; porTipo[k] = (porTipo[k] ?? 0) + 1; }
+      log("INSPECT libuv por tipo:", JSON.stringify(porTipo));
+      log("INSPECT pila de JS:", (rep.javascriptStack?.stack ?? []).slice(0, 8).join(" | "));
+      log("INSPECT hilos del pool de libuv / workers:", JSON.stringify({ uvthreadpool: rep.header?.uvthreadpoolSize, cpu: rep.resourceUsage ?? null }).slice(0, 300));
+      writeFileSync(join(raiz, "docs", "video-fase1", "carga-PR27.informe-motor-colgado.json"), JSON.stringify({ libuv: rep.libuv, javascriptStack: rep.javascriptStack, nativeStack: rep.nativeStack?.slice(0, 20), header: { nodeVersion: rep.header?.nodeVersion } }, null, 1));
+    } catch (e) { log("INSPECT falló:", e.message); }
+    k6 = await fin;
+  } else if (process.env.K6_BLOQUEANTE) { // solo para reproducir el artefacto: spawnSync deja de drenar el stderr del sidecar
+    k6 = spawnSync("k6", argsK6, { env: envK6, stdio: "inherit" });
+  } else {
+    // Asíncrono a propósito: con spawnSync el orquestador no lee las tuberías del sidecar durante la ejecución, se llenan
+    // (64 KB) y el sidecar se bloquea al escribir logs (falso positivo de «cuelgue» en las primeras ejecuciones).
+    const hijoK6 = spawn("k6", argsK6, { env: envK6, stdio: "inherit" });
+    pids.push(hijoK6.pid);
+    k6 = await new Promise((ok) => hijoK6.on("exit", (c) => ok({ status: c })));
+  }
   log("k6 terminó con código", k6.status, "(99 = umbrales incumplidos)");
+
+  if (process.argv.includes("--diag")) { // diagnóstico del hallazgo 1: ¿qué hace el motor mientras la importación está colgada?
+    const arbol = () => spawnSync("powershell", ["-NoProfile", "-Command", `$h=@(${pids[0]}); $n=1; while($n){ $c=Get-CimInstance Win32_Process | Where-Object { $h -contains $_.ParentProcessId -and $h -notcontains $_.ProcessId }; $n=@($c).Count; $h+=@($c).ProcessId }; Get-CimInstance Win32_Process | Where-Object { $h -contains $_.ProcessId } | ForEach-Object { $cpu=(Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).CPU; '{0} pid={1} ppid={2} cpu={3} hilos={4} :: {5}' -f $_.Name,$_.ProcessId,$_.ParentProcessId,[math]::Round($cpu,1),$_.ThreadCount,($_.CommandLine -replace '\s+',' ').Substring(0,[Math]::Min(110,$_.CommandLine.Length)) }`], { encoding: "utf8" }).stdout.trim();
+    const t0 = Date.now();
+    const colgada = fetch(`${BASE}/video/proyectos/${datos.recursos}/recursos`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify({ bandeja_id: datos.bandeja[13], clase: "foto" }), signal: AbortSignal.timeout(45_000) }).then((r) => `HTTP ${r.status} en ${Date.now() - t0} ms`, (e) => `sin respuesta en ${Date.now() - t0} ms (${e.name})`);
+    await new Promise((r) => setTimeout(r, 12_000));
+    log("DIAG árbol (12 s tras lanzar la importación):\n" + arbol());
+    await new Promise((r) => setTimeout(r, 5_000));
+    log("DIAG árbol (17 s):\n" + arbol());
+    log("DIAG bandeja:", readdirSync(bandeja).length, "archivos;", "motor responde a GET /proyectos:", await fetch(BASE + "/video/proyectos", { headers: { Authorization: `Bearer ${TOKEN}` } }).then((r) => r.status));
+    log("DIAG resultado de la importación:", await colgada);
+    log("DIAG stderr del sidecar, últimas 8 líneas:\n" + stderr.split("\n").slice(-8).join("\n"));
+  }
 
   // ---------------------------------------------------------------- estado del motor tras la carga
   const medir = async (nombre, ruta, init) => {
@@ -229,6 +314,8 @@ async function main() {
   log("Estado del motor justo después de k6:", await tabla());
   await new Promise((r) => setTimeout(r, 25_000));
   log("Estado del motor 25 s más tarde:    ", await tabla());
+
+
 
   // ---------------------------------------------------------------- verificación en disco
   const problemas = [];

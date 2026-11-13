@@ -1,11 +1,11 @@
 {
   "problemas": [],
-  "revision_guardar": 410,
+  "revision_guardar": 734,
   "llamadas_tts": {
-    "sintesis": 5,
-    "caracteres": 122
+    "sintesis": 8,
+    "caracteres": 188
   },
   "proyectos": 10,
-  "disco_antes_gb": "157,83",
-  "k6_codigo": 99
+  "disco_antes_gb": "155,45",
+  "k6_codigo": 0
 }
