@@ -241,3 +241,21 @@ test("cambio_se_ve_sin_render: editar un texto recarga la preview con el cambio 
   // El cartel parte el texto en una pieza por palabra (karaoke) y la plantilla lo pone en mayúsculas por CSS.
   await expect(marco(page).locator("body")).toContainText(/texto\s*nuevo\s*de\s*prueba/i);
 });
+
+test("voz_desde_el_editor_reabre_la_preview: generar la voz con el editor abierto deja reproducir sin salir", async ({ page }) => {
+  test.skip(!process.env.E2E_FFMPEG, "Hace falta ffmpeg (FFMPEG_DIR o PATH) para el motor real");
+  test.setTimeout(150_000);
+  const id = await proyectoDeCocina();
+  await irAlEditor(page, id); // sin voz: el motor todavía no puede montar la preview
+  await expect(page.getByTestId("editor")).toBeVisible();
+  await expect(page.getByTestId("preview-play")).toBeDisabled();
+  await page.getByTestId("voz-generar").click();
+  await page.getByTestId("voz-confirmar-ok").click();
+  await expect(page.getByTestId("voz-confirmar")).toHaveCount(0, { timeout: 60_000 });
+  // Sin salir del editor: la preview se reabre sola con la voz nueva y reproduce.
+  await expect(page.getByTestId("preview-cargando")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("preview-error")).toHaveCount(0);
+  await expect(page.getByTestId("preview-play")).toBeEnabled();
+  await page.getByTestId("preview-play").click();
+  await expect(page.getByTestId("preview-tiempo")).not.toContainText("0:00 /", { timeout: 10_000 });
+});

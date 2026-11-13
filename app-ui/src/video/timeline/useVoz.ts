@@ -9,6 +9,7 @@ import { useClient } from "../../api/context";
 import type { CosteVoz } from "../../api/types";
 import { asegurarGuardado, cargar, fijarTiempo, guardar, seleccionar, useEditor } from "../../state/editor";
 import { toast } from "../../ui";
+import { recargarPreview } from "../previewRecarga";
 
 export function useFormaVoz(id: string | undefined) {
   const client = useClient();
@@ -145,6 +146,9 @@ export function useGastoVoz() {
       };
       const r = await client.videoVozGenerar(id, cuerpo);
       setGasto(null);
+      // La voz no sube la revisión del proyecto: sin esto, una preview que no se pudo montar sin voz (o
+      // con la voz vieja) se quedaba así hasta salir del editor.
+      recargarPreview();
       await qc.invalidateQueries({ queryKey: ["video", "voz", id] });
       const fallo = r && typeof r === "object" && "fallo" in r ? (r.fallo as { facturada?: unknown } | undefined) : undefined;
       if (fallo) {

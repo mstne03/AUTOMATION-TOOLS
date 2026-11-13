@@ -8,6 +8,7 @@ import { cargar, deshacer, desvincularCliente, reiniciarEditor, useEditor, vincu
 import { Toaster, reiniciarToasts } from "../ui";
 import type { Proyecto } from "../video/modelo";
 import { Timeline } from "../video/timeline/Timeline";
+import { usePreviewRecarga } from "../video/previewRecarga";
 
 const HOSTIL = "<img src=x onerror=alert(1)>";
 
@@ -186,6 +187,17 @@ describe("voz y coste (I10)", () => {
     await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledTimes(1));
     expect(client.videoVozGenerar).toHaveBeenCalledWith("p1", { plan_confirmado: "plan-A", caracteres_confirmados: 120, reintentar_facturadas: false });
     await waitFor(() => expect(t("voz-confirmar")).toBeNull());
+  });
+
+  it("generar la voz reabre la preview: sin voz no se pudo montar y la revisión no cambia", async () => {
+    const { client } = montar(proyecto(2));
+    const antes = usePreviewRecarga.getState().contador;
+    fireEvent.click(screen.getByTestId("voz-generar"));
+    await screen.findByTestId("voz-confirmar-coste");
+    expect(usePreviewRecarga.getState().contador).toBe(antes); // pedir el coste no gasta ni recarga
+    confirmar();
+    await waitFor(() => expect(client.videoVozGenerar).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(usePreviewRecarga.getState().contador).toBe(antes + 1));
   });
 
   it("regenerar una frase pide el coste de esa frase al servidor (con emoji) y envía su plan", async () => {
