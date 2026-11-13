@@ -483,14 +483,34 @@ async function lanzar(comando: string, args: string[], opciones: OpcionesEjecuta
   return r;
 }
 
+/**
+ * A27-2: la revisión de la carpeta del ffmpeg se repite justo antes de lanzarlo, no solo al pedir las herramientas.
+ * Quien obtuvo `Herramientas` antes de que apareciera una DLL junto al exe no la carga sin enterarse (W3.2, I11).
+ */
+export function exigirCarpetaFfmpeg(comando: string, raiz = SERVER_ROOT): void {
+  if (!/^ff(mpeg|probe)(\.exe)?$/i.test(path.basename(comando))) return;
+  const fallo = revisarCarpetaFfmpeg(path.dirname(comando), raiz);
+  if (fallo) {
+    log.error(`ffmpeg del bundle rechazado: ${fallo}`);
+    throw new Error(`${mensajeSinFfmpeg()} (${fallo})`);
+  }
+}
+
 function lanzarUno(comando: string, args: string[], opciones: OpcionesEjecutar): Promise<Resultado> {
   const { onLinea, timeoutMs, salidaBinaria, ...spawnOpts } = opciones;
+  try {
+    if (esIntegrado()) exigirCarpetaFfmpeg(comando);
+  } catch (e) {
+    return Promise.reject(e);
+  }
   return new Promise((resolve, reject) => {
     // detached (solo fuera de Windows): el hijo lidera su grupo y se puede matar todo el árbol con process.kill(-pid).
     const hijo = spawn(comando, args, {
       ...spawnOpts,
       // Después del spread: un `env` llegado de un .mjs se pisa (I5).
       env: entornoHijo(),
+      // A27-8: sin cwd propio, el hijo no hereda el del motor (la carpeta de instalación): va a hf-home.
+      cwd: spawnOpts.cwd ?? hfHome(),
       shell: false,
       windowsHide: true,
       detached: process.platform !== "win32",
@@ -1055,13 +1075,19 @@ export function argsEntrada(archivo: string, demuxer = DEMUXERS[path.extname(arc
 }
 
 /**
+ * Tope de píxeles por fotograma de todo ffmpeg/ffprobe que abre un medio sin un límite más estricto (A27-1): el lado
+ * máximo de foto (8192) al cuadrado. Una cabecera con dimensiones enormes falla en vez de agotar la memoria del motor.
+ */
+export const MAX_PIXELES = 8192 * 8192;
+
+/**
  * ffprobe de un medio. Con `soloMp4` (el MP4 propio): demuxer mp4, cuenta los paquetes y cualquier error de ffprobe,
  * aunque salga con 0, es un fallo.
  */
-export async function sondear(ffprobe: string, archivo: string, { soloMp4 = false, demuxer, maxPixeles }: { soloMp4?: boolean; demuxer?: string; maxPixeles?: number } = {}): Promise<InfoMedio> {
+export async function sondear(ffprobe: string, archivo: string, { soloMp4 = false, demuxer, maxPixeles = MAX_PIXELES }: { soloMp4?: boolean; demuxer?: string; maxPixeles?: number } = {}): Promise<InfoMedio> {
   const previos = soloMp4 ? [...argsEntrada(archivo, "mp4"), "-count_packets"] : argsEntrada(archivo, demuxer ?? DEMUXERS[path.extname(archivo).toLowerCase()]);
   // maxPixeles: tope del decodificador (ffprobe decodifica un fotograma por pista de vídeo al abrir el fichero; carátulas incluidas).
-  const tope = maxPixeles ? ["-max_pixels", String(maxPixeles)] : [];
+  const tope = ["-max_pixels", String(maxPixeles)];
   const r = await ejecutar(ffprobe, ["-v", "error", ...tope, ...previos, "-print_format", "json", "-show_format", "-show_streams", archivo], { timeoutMs: 30000 });
   if (r.code !== 0 || (soloMp4 && r.stderr.trim())) throw new Error(`ffprobe no puede leer ${path.basename(archivo)}: ${r.stderr.trim().slice(0, 300)}`);
   type Pista = {

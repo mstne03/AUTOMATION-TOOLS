@@ -24,6 +24,9 @@ Nivel de cada hallazgo: todos están **inspeccionados en código**; ninguno se h
 | A27-7 | Info | `app-backend/app_backend/preview.py:483-486` | El socket de la API no lleva `SO_EXCLUSIVEADDRUSE` |
 | A27-8 | Info | varios | Defensa en profundidad y documentación (bandeja, ACL, `FFMPEG_DIR`, cwd, LEEME) |
 
+**Correcciones (rama `fix/21-auditoria-pr27`, 2026-11-13).** A27-1 a A27-5 corregidos y A27-8 en lo que tenía arreglo
+en código; A27-6 y A27-7 siguen como propuestas. Detalle en «Estado de las correcciones», al final.
+
 No hay hallazgos Critical, High ni Medium. Las superficies del encargo están cerradas en el código revisado, salvo lo
 que se lista arriba y los heredados que siguen abiertos (ver «Heredados»).
 
@@ -217,3 +220,17 @@ dentro del alcance. Recomendado antes del piloto: A27-3 y A27-4, porque retienen
 porque es requisito de W3.2. A27-1, A27-5 y A27-7 pueden ir después. El piloto sigue condicionado por los puntos 3–9 de
 la R2 que no dependen de R2-1 y R2-2 (estos dos están arreglados en código; falta la prueba con Rust real del punto 1 en
 la app instalada).
+
+## Estado de las correcciones
+
+| ID | Estado | Qué se ha hecho | Test |
+|---|---|---|---|
+| A27-1 | Corregido | `sondear` lleva siempre `-max_pixels` (por defecto `MAX_PIXELES` = 8192², `proceso.ts`), así que lo llevan las llamadas del flujo heredado de `herramientas.ts`, `render.ts`, `musica.ts` y `voz.ts`. `normalizarVoz` y `prepararMusica` pasan `-max_pixels` a ffmpeg. `hyperframes audio` no admite opciones de entrada: sigue protegido por el `sondear` previo, que con `argsEntrada` rechaza la ruta, el protocolo o el formato ajenos. | suites del motor |
+| A27-2 | Corregido | `exigirCarpetaFfmpeg` (`proceso.ts`) revisa la carpeta del ffmpeg o el ffprobe dentro de `lanzarUno`, justo antes del `spawn`, en el modo integrado; si sobra un fichero, la llamada falla con el mensaje de «falta ffmpeg» y el motivo. | `carpeta-ffmpeg.test.ts` |
+| A27-3 | Corregido | El motor barre, además de los `.uso-*`, los `.bin` y `.parcial` de más de una hora (nunca la entrada que se está importando). Si la importación falla antes de reclamar la entrada (proyecto inexistente, clase inválida), la entrada se retira. Rust copia a `<id>.parcial` y la renombra a `.bin` al terminar. | `recursos.test.ts`, `lib.rs` (`la_bandeja_no_deja_parciales…`) |
+| A27-4 | Corregido | `barrer_papeleras` (`video_rest.py`) vacía las `.borrando-video###-<8hex>` al arrancar el backend (lifespan) y antes de cada borrado. Solo toca hijas directas con el nombre exacto, y sin seguir enlaces. | `test_borrar_barre_papeleras…` |
+| A27-5 | Corregido | `_lista` filtra cada resumen por id con su patrón y deja solo los campos de `types.ts`, con escalares acotados. Crear guion, crear proyecto y guardar proyecto devuelven solo `id` o `revision` y los avisos filtrados (`_avisos_documento`). Leer guion devuelve `{guion, avisos}` y perfiles, solo los que tienen id válido. El motor falso de los tests devuelve ya la forma real de `video_guion_leer`, y la frase de la R2 está corregida. | `test_salida_del_motor_filtrada…` |
+| A27-6 | Abierto (propuesta) | Tope de gasto y nonce de un solo uso: queda para la fase 2. | — |
+| A27-7 | Abierto (propuesta) | No se ha tocado. | — |
+| A27-8 | Corregido en parte | **Bandeja:** Rust rechaza la bandeja o su carpeta `video` si es un enlace o una junction. **Estado:** `APP_BACKEND_DIR` y `LOCALAPPDATA` relativos se ignoran, con la misma regla en `config.py` y `lib.rs`; el estado nunca es relativo, y queda documentado que `APP_BACKEND_DIR` es solo para desarrollo y que no lleva ACL propia. **cwd:** los hijos sin cwd propio arrancan en `hf-home`. **LEEME:** protocolos `file pipe fd` y ningún `PENDIENTE-TAREA-10`, comprobado con `comprobar-pendientes.sh`. **Frase del ffmpeg ajeno:** un test del backend vigila que siga en `render.ts`; un `codigo` propio exigiría tipar los errores de render, y no compensa para una falla que ya es visible. **Sin cambios:** `FFMPEG_DIR` en el motor integrado, porque el backend congelado fija siempre el del bundle y los E2E necesitan otro; y el SHA de ffmpeg en ejecución, por la decisión de I4. | `dir_estado_sigue_a_config_py`, `test_frase_del_ffmpeg_ajeno…` |
+

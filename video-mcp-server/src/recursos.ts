@@ -159,7 +159,7 @@ function reclamarBandeja(raiz: string, bandejaId: unknown, maxBytes: number): st
     quitar(origen);
     throw new ErrorAlmacen("demasiado_grande", `El archivo pesa más de ${maxBytes / MiB} MB.`);
   }
-  limpiarUsosHuerfanos(dir);
+  limpiarUsosHuerfanos(dir, `${bandejaId}.bin`);
   const uso = path.join(dir, `${bandejaId}.uso-${randomBytes(6).toString("hex")}`);
   try {
     fs.renameSync(origen, uso);
@@ -170,11 +170,15 @@ function reclamarBandeja(raiz: string, bandejaId: unknown, maxBytes: number): st
   }
   return uso;
 }
-/** Los `.uso-*` de más de una hora son de una importación que murió a medias (L-2). */
-function limpiarUsosHuerfanos(dir: string): void {
+/**
+ * Lo que lleva más de una hora en la bandeja es de una importación que murió a medias (L-2) o que nadie reclamó (A27-3):
+ * `.uso-*`, `.bin` sin reclamar y `.parcial` de una copia nativa cortada. Son copias privadas del usuario de hasta 500 MB.
+ */
+function limpiarUsosHuerfanos(dir: string, salvo?: string): void {
   try {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.isFile() && /^[0-9a-f]{32}\.uso-[0-9a-f]{12}$/.test(e.name) && Date.now() - fs.statSync(path.join(dir, e.name)).mtimeMs > 3600_000) quitar(path.join(dir, e.name));
+      if (e.name === salvo || !e.isFile() || !/^[0-9a-f]{32}\.(uso-[0-9a-f]{12}|bin|parcial)$/.test(e.name)) continue;
+      if (Date.now() - fs.statSync(path.join(dir, e.name)).mtimeMs > 3600_000) quitar(path.join(dir, e.name));
     }
   } catch {
     /* otra instancia la está limpiando */
@@ -188,6 +192,12 @@ const isLink = (ruta: string): boolean => {
     return false;
   }
 };
+/** A27-3: una importación que falla antes de reclamar la entrada la retira igualmente (un solo uso, nada retenido). */
+function descartarBandeja(raiz: string, bandejaId: unknown): void {
+  if (typeof bandejaId !== "string" || !BANDEJA_RE.test(bandejaId)) return;
+  const dir = carpetaBandeja(raiz);
+  if (fs.existsSync(dir) && sinEnlace(dir)) quitar(path.join(dir, `${bandejaId}.bin`));
+}
 const quitar = (ruta: string): void => {
   try {
     fs.unlinkSync(ruta);
@@ -347,7 +357,10 @@ function limpiarRestos(destino: string): void {
  * privada `.imp-*` de `destino` y el resultado entra con un rename (atómico): nunca queda un fichero a medias a la vista.
  */
 async function importarA(cfg: Config, bandejaId: unknown, clase: Clase, destino: string, nombre: string, deps: DepsRecursos): Promise<Normalizado & { publicados: string[] }> {
-  if (!Object.hasOwn(TIPOS_POR_CLASE, clase as string)) throw esquema("La clase no es foto, clip ni musica.", "clase_invalida", "clase");
+  if (!Object.hasOwn(TIPOS_POR_CLASE, clase as string)) {
+    descartarBandeja(cfg.videoRoot, bandejaId);
+    throw esquema("La clase no es foto, clip ni musica.", "clase_invalida", "clase");
+  }
   const maxBytes = LIMITES_MEDIO[clase].bytes;
   const uso = reclamarBandeja(cfg.videoRoot, bandejaId, maxBytes);
   let trabajo = "";
@@ -402,7 +415,12 @@ export async function importarRecurso(
   a: { id: string; bandejaId: unknown; clase: Clase; nombreOriginal?: unknown },
   deps: DepsRecursos = {},
 ): Promise<ResultadoImportar> {
-  proyectoLeer(cfg.videoRoot, a.id); // id válido, proyecto existente y válido
+  try {
+    proyectoLeer(cfg.videoRoot, a.id); // id válido, proyecto existente y válido
+  } catch (e) {
+    descartarBandeja(cfg.videoRoot, a.bandejaId);
+    throw e;
+  }
   const rid = idRecurso();
   const n = await importarA(cfg, a.bandejaId, a.clase, carpetaRecursos(cfg.videoRoot, a.id), rid, deps);
   const recurso: Recurso = { id: rid, clase: a.clase, ext: n.ext, nombreOriginal: nombreRecursoSeguro(a.nombreOriginal), ancho: n.ancho, alto: n.alto, duracion: n.duracion };

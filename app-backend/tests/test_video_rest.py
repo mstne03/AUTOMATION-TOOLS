@@ -16,6 +16,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
 from app_backend import config, registry, video, video_rest
@@ -76,7 +77,7 @@ async def test_ciclo_de_guiones(api):
     gid = await _guion(api)
     assert re.fullmatch(r"g-[0-9a-f]{16}", gid)
     assert [g["id"] for g in (await api.get("/video/guiones")).json()] == [gid]
-    assert (await api.get(f"/video/guiones/{gid}")).json()["titulo"] == "Prueba"
+    assert (await api.get(f"/video/guiones/{gid}")).json()["guion"]["titulo"] == "Prueba"
     assert (await api.delete(f"/video/guiones/{gid}")).json() == {}
     assert (await api.get(f"/video/guiones/{gid}")).status_code == 404
     assert (await api.delete(f"/video/guiones/{gid}")).status_code == 404
@@ -808,3 +809,51 @@ def test_ffmpeg_ajeno_no_se_confunde_con_falta_ffmpeg():
     assert detalle == {"mensaje": video_rest.MENSAJE_FFMPEG_AJENO, "codigo": "no_disponible"}
     falta = video_rest._http(video.MotorError("Falta ffmpeg en la instalación de SEO Studio; reinstala la aplicación.")).detail
     assert falta["mensaje"] == video_rest.MENSAJE_SIN_FFMPEG
+
+
+async def test_borrar_barre_papeleras_de_un_borrado_a_medias(api):
+    """A27-4: una papelera que no se vació (antivirus, fichero abierto) se barre en el siguiente borrado."""
+    vieja = api.raiz / ".borrando-video007-0123abcd"
+    (vieja / "voz").mkdir(parents=True)
+    (vieja / "voz" / "frase.mp3").write_bytes(b"x")
+    parecida = api.raiz / ".borrando-video007-xyz"  # no es el nombre exacto: no se toca
+    parecida.mkdir()
+    pid = await _proyecto(api)
+    assert (await api.delete(f"/video/proyectos/{pid}")).status_code == 200
+    assert not vieja.exists()
+    assert parecida.is_dir()
+    assert video_rest.barrer_papeleras() == 0
+
+
+def test_salida_del_motor_filtrada_campo_a_campo():
+    """A27-5: listados, guardados y avisos solo llevan a la UI los campos del contrato."""
+    lista = video_rest._lista(
+        {
+            "proyectos": [
+                {"id": "video001", "titulo": "T", "revision": 3, "escenas": 2, "ruta": "C:/Users/x", "extra": {"a": 1}},
+                {"id": "video002", "valido": False},
+                {"id": "../video003", "titulo": "fuera"},
+                "texto suelto",
+                {"id": "video004", "titulo": ["no", "texto"], "revision": True},
+            ]
+        },
+        "proyectos",
+    )
+    assert lista == [
+        {"id": "video001", "titulo": "T", "revision": 3, "escenas": 2},
+        {"id": "video002", "valido": False},
+        {"id": "video004"},
+    ]
+    guardado = video_rest._guardado(
+        {"revision": 4, "proyecto": {"x": 1}, "avisos": [{"codigo": "sin_voz", "mensaje": "Falta voz", "ruta": "escenas.0"}, {"codigo": "<b>"}, "x"]},
+        "revision",
+    )
+    assert guardado == {"revision": 4, "avisos": [{"codigo": "sin_voz", "mensaje": "Falta voz", "ruta": "escenas.0"}]}
+    with pytest.raises(HTTPException):
+        video_rest._guardado({"id": "g-nope"}, "id", video_rest.GUION)
+
+
+def test_frase_del_ffmpeg_ajeno_sigue_en_el_motor():
+    """A27-8: `_http` reconoce el ffmpeg ajeno por esta frase del motor; si `render.ts` la cambia, este test avisa."""
+    render = (Path(__file__).resolve().parents[2] / "video-mcp-server" / "src" / "render.ts").read_text(encoding="utf-8")
+    assert "no es el LGPL del bundle" in render

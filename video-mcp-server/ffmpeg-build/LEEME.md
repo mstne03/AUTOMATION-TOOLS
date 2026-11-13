@@ -4,10 +4,10 @@ Build reproducible de `ffmpeg.exe` + `ffprobe.exe` para win64, LGPL-2.1-o-poster
 que usan HyperFrames y el motor de vídeo. Sustituirá al ffmpeg de BtbN del instalador en W3.2.
 
 **Estado:** tareas 1–9 hechas sin red y descargas locales de la Tarea 10 hechas (ver «Estado de la
-Tarea 10»). Quedan marcadores `PENDIENTE-TAREA-10` (hashes, commits,
-huellas, anclajes, digest de la imagen, snapshot de Debian y versiones de paquetes). Ninguna
-construcción real arranca mientras quede uno: `comprobar-pendientes.sh` es la primera orden de
-`construir.sh` y del job `construir`, antes de cualquier descarga.
+Tarea 10»). Ya no queda ningún marcador `PENDIENTE-TAREA-10` en las entradas del build
+(`comprobar-pendientes.sh` pasa; comprobado el 2026-11-13). La puerta se mantiene: es la primera
+orden de `construir.sh` y del job `construir`, antes de cualquier descarga, y para cualquier
+construcción si un cambio vuelve a dejar uno.
 
 ## Archivos
 
@@ -34,7 +34,8 @@ construcción real arranca mientras quede uno: `comprobar-pendientes.sh` es la p
 
 Codificadores: `prores_ks` (intermedio 4444), `h264_mf`, `h264_nvenc`, `h264_amf`, `aac`, `png`,
 `pcm_s16le`, `rawvideo`. Decodifica H.264, HEVC, VP9, AV1 (dav1d), JPEG, PNG, WebP, ProRes, AAC,
-MP3, FLAC, Vorbis, Opus y PCM. Protocolos: solo `file` y `pipe`. Detalle y motivos en
+MP3, FLAC, Vorbis, Opus y PCM. Protocolos: solo `file`, `pipe` y `fd` (desde 7.0 la CLI
+traduce `-` a `fd:`; ver `componentes.conf` y `9290b8a`). Detalle y motivos en
 `componentes.conf`. Fuera, con su decisión:
 
 - **libvpl / `h264_qsv`** (ruling R0): una fuente sin firma y una vía de carga de DLL menos; en

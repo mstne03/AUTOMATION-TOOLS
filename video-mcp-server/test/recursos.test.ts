@@ -567,6 +567,35 @@ describe("cierres de la revisión 1 de seguridad (M-1, M-2, L-2, L-5)", () => {
     expect(fs.existsSync(nuevo)).toBe(true);
   });
 
+  requiere("A27-3: un .bin o .parcial sin reclamar de más de una hora se limpia; la entrada en uso y una reciente se respetan", async () => {
+    const id = crearProyecto();
+    const dir = carpetaBandeja(RAIZ);
+    fs.mkdirSync(dir, { recursive: true });
+    const viejoBin = path.join(dir, `${"c".repeat(32)}.bin`);
+    const viejoParcial = path.join(dir, `${"d".repeat(32)}.parcial`);
+    const reciente = path.join(dir, `${"e".repeat(32)}.bin`);
+    for (const f of [viejoBin, viejoParcial, reciente]) fs.writeFileSync(f, "x");
+    const hace2h = new Date(Date.now() - 2 * 3600_000);
+    for (const f of [viejoBin, viejoParcial]) fs.utimesSync(f, hace2h, hace2h);
+    const actual = bandeja(fs.readFileSync(fx("pequena.png")));
+    fs.utimesSync(path.join(dir, `${actual}.bin`), hace2h, hace2h); // la que se importa ahora no se barre aunque sea vieja
+    const r = await importarRecurso(cfg(), { id, bandejaId: actual, clase: "foto" });
+    expect(r.recurso.clase).toBe("foto");
+    expect(fs.existsSync(viejoBin)).toBe(false);
+    expect(fs.existsSync(viejoParcial)).toBe(false);
+    expect(fs.existsSync(reciente)).toBe(true);
+  });
+
+  it("A27-3: si el proyecto no existe o la clase no vale, la entrada de la bandeja se retira igualmente", async () => {
+    const b1 = bandeja("x");
+    await falla(importarRecurso(cfg(), { id: "video999-00000000", bandejaId: b1, clase: "foto" }));
+    expect(enBandeja(b1)).toBe(false);
+    const id = crearProyecto();
+    const b2 = bandeja("x");
+    await falla(importarRecurso(cfg(), { id, bandejaId: b2, clase: "otra" as never }));
+    expect(enBandeja(b2)).toBe(false);
+  });
+
   requiere("L-5: borrar un recurso con recursos/ convertido en enlace se rechaza y no toca el destino", async () => {
     const id = crearProyecto();
     const r = await importarRecurso(cfg(), { id, bandejaId: bandeja(fs.readFileSync(fx("pequena.png"))), clase: "foto" });

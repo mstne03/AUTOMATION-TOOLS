@@ -299,14 +299,15 @@ fn dir_estado_desde(
     local_app_data: Option<String>,
     home: Option<PathBuf>,
 ) -> PathBuf {
-    if let Some(d) = app_backend_dir.filter(|d| !d.is_empty()) {
+    // A27-8: nunca una ruta relativa (colgaría del cwd). Vacío o relativo cuenta como ausente.
+    if let Some(d) = app_backend_dir.filter(|d| Path::new(d).is_absolute()) {
         return PathBuf::from(d);
     }
     let base = local_app_data
-        .filter(|d| !d.is_empty())
         .map(PathBuf::from)
-        .or(home)
-        .unwrap_or_default();
+        .filter(|p| p.is_absolute())
+        .or(home.filter(|p| p.is_absolute()))
+        .unwrap_or_else(std::env::temp_dir);
     base.join("seo-studio")
 }
 
@@ -435,15 +436,33 @@ fn copiar_a_destino_nuevo(origen: &mut File, destino: &Path, limite: u64) -> Res
 const EXISTE: &str = "El destino ya existe; elige otro nombre.";
 
 /// Importa `origen` a `dir/<32 hex>.bin` y devuelve el id (los 32 hex, nunca la ruta).
+/// La copia va a `<id>.parcial` y entra como `.bin` con un rename al terminar: el motor nunca ve
+/// un `.bin` a medias, y lo que deja un proceso muerto a media copia lo barre el motor (A27-3).
 fn copiar_a_bandeja(origen: &Path, dir: &Path, limite: u64) -> Result<String, String> {
     let mut f = abrir_regular(origen, limite)?;
     std::fs::create_dir_all(dir).map_err(|_| "No se pudo preparar la bandeja.".to_string())?;
+    // A27-8: la bandeja ni su carpeta `video` pueden ser un enlace o una junction (el motor tampoco la leería).
+    for d in [Some(dir), dir.parent()].into_iter().flatten() {
+        if std::fs::symlink_metadata(d).map_or(true, |m| m.file_type().is_symlink()) {
+            return Err("La carpeta de la bandeja no es válida.".into());
+        }
+    }
     for _ in 0..3 {
         let mut bytes = [0u8; 16];
         rand::rng().fill_bytes(&mut bytes);
         let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        match copiar_a_destino_nuevo(&mut f, &dir.join(format!("{id}.bin")), limite) {
-            Ok(()) => return Ok(id),
+        let parcial = dir.join(format!("{id}.parcial"));
+        let bin = dir.join(format!("{id}.bin"));
+        if bin.exists() {
+            continue;
+        }
+        match copiar_a_destino_nuevo(&mut f, &parcial, limite) {
+            Ok(()) => {
+                return std::fs::rename(&parcial, &bin).map(|_| id).map_err(|_| {
+                    let _ = std::fs::remove_file(&parcial);
+                    "No se pudo terminar la copia.".to_string()
+                });
+            }
             // Colisión de id (prácticamente imposible): se reintenta desde el principio.
             Err(e) if e == EXISTE => {
                 f.seek(SeekFrom::Start(0))
@@ -712,6 +731,37 @@ b",
     }
 
     #[test]
+    fn la_bandeja_no_deja_parciales_y_rechaza_un_enlace() {
+        let t = Tmp::nueva();
+        let o = t.fichero("a.png", b"contenido");
+        let id = copiar_a_bandeja(&o, &t.bandeja(), 100).unwrap();
+        let nombres: Vec<String> = fs::read_dir(t.bandeja())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(nombres, vec![format!("{id}.bin")]);
+        #[cfg(windows)]
+        {
+            let real = t.0.join("real");
+            fs::create_dir_all(&real).unwrap();
+            let enlace = t.0.join("enlace");
+            if std::os::windows::fs::symlink_dir(&real, &enlace).is_ok() {
+                assert!(copiar_a_bandeja(&o, &enlace, 100).is_err());
+                assert!(vacia(&real));
+            }
+        }
+        #[cfg(unix)]
+        {
+            let real = t.0.join("real");
+            fs::create_dir_all(&real).unwrap();
+            let enlace = t.0.join("enlace");
+            std::os::unix::fs::symlink(&real, &enlace).unwrap();
+            assert!(copiar_a_bandeja(&o, &enlace, 100).is_err());
+            assert!(vacia(&real));
+        }
+    }
+
+    #[test]
     fn copia_a_la_bandeja_con_id_de_32_hex() {
         let t = Tmp::nueva();
         let o = t.fichero("a.png", b"contenido");
@@ -892,11 +942,16 @@ b",
             dir_estado_desde(p(""), p(""), home),
             PathBuf::from(r"C:\Users\x\seo-studio")
         );
+        // Relativo cuenta como ausente (A27-8), igual que `_absoluta` en config.py.
+        assert_eq!(
+            dir_estado_desde(p("estado"), p(r"seo\L"), Some(PathBuf::from(r"C:\Users\x"))),
+            PathBuf::from(r"C:\Users\x\seo-studio")
+        );
         // Cruzado por literal con el backend: si config.py cambia, este test avisa.
         let config = include_str!("../../../app-backend/app_backend/config.py");
         for literal in [
-            r#"os.environ.get("APP_BACKEND_DIR")"#,
-            r#"os.environ.get("LOCALAPPDATA")"#,
+            r#"_absoluta(os.environ.get("APP_BACKEND_DIR"))"#,
+            r#"_absoluta(os.environ.get("LOCALAPPDATA"))"#,
             r#"/ "seo-studio""#,
             r#"STATE_DIR / "video" / "proyectos""#,
         ] {

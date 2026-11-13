@@ -111,6 +111,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(video_rest.barrer_papeleras)  # A27-4: borrados que quedaron a medias
         runners = {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()}
         runners["video_render"] = video_rest.crear_runner_render(app.state, asyncio.get_running_loop())
         # El render va en su carril y solo lo encola la ruta de render: POST /jobs lo rechaza con 400.

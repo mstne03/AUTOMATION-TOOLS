@@ -407,12 +407,66 @@ def _http(e: video.MotorError) -> HTTPException:
     return _error(502, MENSAJE_502, "error_motor")
 
 
+# A27-5: campos de cada resumen que llegan a la UI (`types.ts`); el resto de lo que diga el motor se descarta.
+_CAMPOS_RESUMEN = {
+    "guiones": (GUION, ("titulo", "escenas", "creado")),
+    "proyectos": (PROYECTO, ("titulo", "revision", "actualizado", "escenas", "perfil", "duracion")),
+}
+
+
+def _escalar(v: Any) -> Any:
+    """Texto acotado o número; cualquier otra forma (objeto, lista, booleano) no pasa."""
+    if isinstance(v, str):
+        return v[:200]
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v
+    return None
+
+
+def _resumen(e: Any, patron: str, campos: tuple[str, ...]) -> dict | None:
+    if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not re.fullmatch(patron, e["id"]):
+        return None
+    salida: dict = {"id": e["id"]}
+    for c in campos:
+        if (v := _escalar(e.get(c))) is not None:
+            salida[c] = v
+    if e.get("valido") is False:
+        salida["valido"] = False
+    return salida
+
+
 def _lista(datos: Any, clave: str) -> list:
-    """El motor lista como `{clave: [...]}`; la UI (`client.ts`) espera la lista sola."""
+    """El motor lista como `{clave: [...]}`; la UI (`client.ts`) espera la lista sola, filtrada campo a campo."""
     lista = datos.get(clave) if isinstance(datos, dict) else None
     if not isinstance(lista, list):
         raise _inesperada()
-    return lista
+    patron, campos = _CAMPOS_RESUMEN[clave]
+    return [r for e in lista if (r := _resumen(e, patron, campos)) is not None]
+
+
+_RUTA_DOC = re.compile(r"[A-Za-z0-9_.\[\]]{1,80}", re.ASCII)
+
+
+def _avisos_documento(avisos: Any) -> list[dict]:
+    """Avisos de guion y proyecto (recomendaciones del motor): código, frase y ruta dentro del documento."""
+    salida = []
+    for a in (avisos if isinstance(avisos, list) else [])[:50]:
+        if not isinstance(a, dict) or not isinstance(a.get("codigo"), str) or not _AVISO_CODIGO.fullmatch(a["codigo"]):
+            continue
+        aviso = {"codigo": a["codigo"], "mensaje": a["mensaje"][:300] if isinstance(a.get("mensaje"), str) else ""}
+        if isinstance(a.get("ruta"), str) and _RUTA_DOC.fullmatch(a["ruta"]):
+            aviso["ruta"] = a["ruta"]
+        salida.append(aviso)
+    return salida
+
+
+def _guardado(datos: Any, campo: str, patron: str | None = None) -> dict:
+    """Respuesta de un guardado: solo `campo` (id o revisión) y los avisos (A27-5)."""
+    v = datos.get(campo) if isinstance(datos, dict) else None
+    valido = isinstance(v, str) and re.fullmatch(patron, v) if patron else isinstance(v, int) and not isinstance(v, bool)
+    if not valido:
+        raise _inesperada()
+    return {campo: v, "avisos": _avisos_documento(datos.get("avisos"))}
 
 
 def _proyecto(datos: Any) -> dict:
@@ -751,6 +805,7 @@ def borrar_proyecto(id: str) -> bool:
         raise ProyectoEsEnlace from None
     if es_enlace(carpeta):
         raise ProyectoEsEnlace
+    barrer_papeleras()
     if not carpeta.is_dir():
         return False
     papelera = raiz / f".borrando-{id}-{secrets.token_hex(4)}"
@@ -766,6 +821,31 @@ def borrar_proyecto(id: str) -> bool:
     except OSError as e:  # el proyecto ya no existe para el usuario; la papelera se barre luego
         log.warning("Papelera de %s sin vaciar del todo: %s", id, e)
     return True
+
+
+PAPELERA = re.compile(r"\.borrando-video[0-9]{3}-[0-9a-f]{8}")
+
+
+def barrer_papeleras() -> int:
+    """Vacía las papeleras `.borrando-*` que dejó un borrado a medias (A27-4). Devuelve cuántas.
+
+    Se llama al arrancar y antes de cada borrado. Solo hijas directas de `VIDEO_ROOT` con el nombre
+    exacto que crea `borrar_proyecto`; un enlace con ese nombre se quita sin seguirlo (`_borrar`).
+    """
+    raiz = config.VIDEO_ROOT
+    try:
+        comprobar_ancestros()
+        hijas = [p for p in raiz.iterdir() if PAPELERA.fullmatch(p.name)]
+    except Exception:  # noqa: BLE001 - sin raíz, o un ancestro enlazado: no se toca nada
+        return 0
+    vaciadas = 0
+    for p in hijas:
+        try:
+            _borrar(p)
+            vaciadas += 1
+        except OSError as e:
+            log.warning("Papelera %s sin vaciar del todo: %s", p.name, e)
+    return vaciadas
 
 
 # ---------------------------------------------------------------------- router
@@ -789,11 +869,14 @@ def crear_router(estado, protegido: list) -> APIRouter:
     @r.post("/guiones", status_code=201)
     async def crear_guion(request: Request):
         cuerpo = await leer_cuerpo(request, GuionIn)
-        return await _llamar(estado, "video_guion_guardar", {"guion": cuerpo.guion})
+        return _guardado(await _llamar(estado, "video_guion_guardar", {"guion": cuerpo.guion}), "id", GUION)
 
     @r.get("/guiones/{gid}")
     async def leer_guion(gid: IdGuion):
-        return await _llamar(estado, "video_guion_leer", {"id": gid})
+        datos = await _llamar(estado, "video_guion_leer", {"id": gid})
+        if not isinstance(datos, dict) or not isinstance(datos.get("guion"), dict):
+            raise _inesperada()
+        return {"guion": datos["guion"], "avisos": _avisos_documento(datos.get("avisos"))}
 
     @r.delete("/guiones/{gid}")
     async def borrar_guion(gid: IdGuion):
@@ -805,8 +888,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
         lista = _lista(await _llamar(estado, "video_proyecto_listar"), "proyectos")
         jobs = estado.jobs.list(200) if getattr(estado, "jobs", None) is not None else []
         for p in lista:
-            if isinstance(p, dict):
-                p["estado"] = await asyncio.to_thread(_estado_proyecto, estado, p.get("id"), jobs)
+            p["estado"] = await asyncio.to_thread(_estado_proyecto, estado, p["id"], jobs)
         return lista
 
     @r.post("/proyectos", status_code=201)
@@ -815,7 +897,7 @@ def crear_router(estado, protegido: list) -> APIRouter:
         datos = await _llamar(
             estado, "video_proyecto_crear", {"guionId": cuerpo.guion_id, "perfilId": cuerpo.perfil_id}
         )
-        return datos
+        return {"id": _guardado(datos, "id", PROYECTO)["id"]}
 
     @r.get("/proyectos/{id}")
     async def leer_proyecto(id: IdProyecto):
@@ -829,8 +911,13 @@ def crear_router(estado, protegido: list) -> APIRouter:
         if "revision" in cuerpo.proyecto and cuerpo.proyecto["revision"] != cuerpo.revision:
             raise _422("La revisión del proyecto no coincide con la del sobre.", "revision_distinta")
         async with cerrojo_de(id):
-            return await _llamar(
-                estado, "video_proyecto_guardar", {"id": id, "revision": cuerpo.revision, "proyecto": cuerpo.proyecto}
+            return _guardado(
+                await _llamar(
+                    estado,
+                    "video_proyecto_guardar",
+                    {"id": id, "revision": cuerpo.revision, "proyecto": cuerpo.proyecto},
+                ),
+                "revision",
             )
 
     @r.delete("/proyectos/{id}")
@@ -1024,7 +1111,14 @@ def crear_router(estado, protegido: list) -> APIRouter:
         d = await _llamar(estado, "video_perfiles_listar")
         if not isinstance(d, dict) or not isinstance(d.get("perfiles"), list):
             raise _inesperada()
-        return d
+        # A27-5: solo perfiles con id válido; el documento de cada uno lo valida el motor con su esquema (I1).
+        return {
+            "perfiles": [
+                p
+                for p in d["perfiles"]
+                if isinstance(p, dict) and isinstance(p.get("id"), str) and re.fullmatch(PERFIL, p["id"])
+            ]
+        }
 
     @r.post("/perfiles/{pid}/duplicar", status_code=201)
     async def duplicar_perfil(pid: IdPerfil, request: Request):

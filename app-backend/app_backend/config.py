@@ -7,7 +7,9 @@ NO debe importar `youtube_mcp.server`.
 
 Variables propias:
 - APP_BACKEND_DIR: directorio de estado (ajustes, cuota, jobs). Por defecto
-  %LOCALAPPDATA%\\seo-studio.
+  %LOCALAPPDATA%\\seo-studio. Solo para desarrollo y tests: tiene que ser absoluto (si no,
+  se ignora) y no apuntar a una carpeta compartida, porque el estado no lleva ACL propia y
+  hereda la de la carpeta que lo contiene.
 - APP_BACKEND_SECRETS: "keyring" (por defecto, Credential Manager) o "file"
   (JSON en claro en el directorio de estado; solo para tests y desarrollo).
 - APP_BACKEND_SIN_DOTENV: con "1" no se cargan `.env` ni `.env.local` (lo fijan los E2E).
@@ -59,9 +61,14 @@ else:
     _RAIZ = Path(__file__).resolve().parent.parent
     cargar_dotenv(_RAIZ)
 
+def _absoluta(valor: str | None) -> str | None:
+    """A27-8: una ruta de estado relativa colgaría del cwd del proceso; se ignora, igual que en `lib.rs`."""
+    return valor if valor and Path(valor).is_absolute() else None
+
+
 STATE_DIR = Path(
-    os.environ.get("APP_BACKEND_DIR")
-    or Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "seo-studio"
+    _absoluta(os.environ.get("APP_BACKEND_DIR"))
+    or Path(_absoluta(os.environ.get("LOCALAPPDATA")) or Path.home()) / "seo-studio"
 )
 SETTINGS_PATH = STATE_DIR / "settings.json"
 

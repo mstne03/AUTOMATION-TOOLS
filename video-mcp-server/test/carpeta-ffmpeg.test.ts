@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { revisarCarpetaFfmpeg } from "../src/proceso.js";
+import { exigirCarpetaFfmpeg, revisarCarpetaFfmpeg } from "../src/proceso.js";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 const tmps: string[] = [];
@@ -47,5 +47,22 @@ describe("revisarCarpetaFfmpeg", () => {
     const b = bundle();
     fs.writeFileSync(path.join(b.ffmpeg, "ffplay.exe"), "x");
     expect(revisarCarpetaFfmpeg(b.ffmpeg, path.join(b.app, "otra"))).toBeUndefined();
+  });
+});
+
+describe("exigirCarpetaFfmpeg (A27-2: justo antes del spawn)", () => {
+  it("una DLL plantada después de pedir las herramientas frena el lanzamiento", () => {
+    const b = bundle();
+    const ffmpeg = path.join(b.ffmpeg, `ffmpeg${EXE}`);
+    expect(() => exigirCarpetaFfmpeg(ffmpeg, b.app)).not.toThrow();
+    fs.writeFileSync(path.join(b.ffmpeg, "amfrt64.dll"), "x");
+    expect(() => exigirCarpetaFfmpeg(ffmpeg, b.app)).toThrow(/amfrt64\.dll/i);
+    expect(() => exigirCarpetaFfmpeg(path.join(b.ffmpeg, `ffprobe${EXE}`), b.app)).toThrow(/amfrt64\.dll/i);
+  });
+
+  it("no mira la carpeta de otros comandos", () => {
+    const b = bundle();
+    fs.writeFileSync(path.join(b.ffmpeg, "amfrt64.dll"), "x");
+    expect(() => exigirCarpetaFfmpeg(path.join(b.ffmpeg, `node${EXE}`), b.app)).not.toThrow();
   });
 });

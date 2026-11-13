@@ -147,7 +147,7 @@ def video_guion_leer(id: str) -> CallToolResult:
         )
     if id not in _GUIONES:
         return _error("no_encontrado", "No existe ese guion.")
-    return _ok("Guion", _GUIONES[id])
+    return _ok("Guion", {"guion": _GUIONES[id], "avisos": []})  # forma del motor real (guionLeer)
 
 
 @mcp.tool()

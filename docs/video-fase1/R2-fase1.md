@@ -155,7 +155,7 @@ coincida con la de las rutas.
 - **UI → backend → motor.** Rutas con patrón (`video_rest.py:41-50`), id de la ruta igual al del cuerpo, tope de
   1 MiB contando el flujo real, profundidad 16, errores con mensajes fijos y sin rutas (`_http`, `_problemas_seguros`),
   resultados del motor filtrados campo a campo (`recurso_seguro`, `_pista_segura`, `_resultado_render`: nunca la ruta
-  del MP4). El modelo no tiene tools `video_*`; renders y voz solo desde la UI (D2, I10).
+  del MP4; los listados, guardados y avisos de guiones, proyectos y perfiles, desde A27-5 en `auditoria-PR27.md`). El modelo no tiene tools `video_*`; renders y voz solo desde la UI (D2, I10).
 - **Composición.** Todo `{{…}}` de `plantilla/` se rellena en una pasada; texto por `escaparHtml`, JSON en `<script>`
   por `jsonParaScript` (con `<`, `>`, `&`, U+2028/2029 escapados y números no finitos rechazados), colores por
   `COLOR_RE`, fuentes de lista cerrada, `validarTema` al planificar y `hallazgosDeRed` antes de escribir. Sin
