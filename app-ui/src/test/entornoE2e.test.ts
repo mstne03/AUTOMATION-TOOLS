@@ -42,6 +42,7 @@ describe("entorno del sidecar en los E2E (lista blanca)", () => {
     expect(env.ELEVENLABS_VOICE_ID).toBe("voz-e2e");
     expect(env.VIDEO_PRUEBAS_TTS_URL).toBe("http://127.0.0.1:1234");
     expect(env.APP_BACKEND_SIN_DOTENV).toBe("1");
+    expect(env.APP_BACKEND_OFFLINE).toBe("1");
     expect(JSON.stringify(env)).not.toMatch(/_real|real"/);
   });
 

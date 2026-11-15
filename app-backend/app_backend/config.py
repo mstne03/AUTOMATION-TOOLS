@@ -61,6 +61,13 @@ else:
     _RAIZ = Path(__file__).resolve().parent.parent
     cargar_dotenv(_RAIZ)
 
+# SEO-131: modo hermético de desarrollo y E2E (APP_BACKEND_OFFLINE=1). Corta la comprobación de la KB
+# (kb.mstne.dev) y la descarga de modelos de HuggingFace, y `offline.instalar` bloquea cualquier
+# conexión fuera de loopback. Con `not FROZEN` la app instalada nunca lo hereda del entorno.
+OFFLINE = not FROZEN and os.environ.get("APP_BACKEND_OFFLINE") == "1"
+if OFFLINE:
+    os.environ["HF_HUB_OFFLINE"] = "1"  # fastembed y faster-whisper solo leen su caché local
+
 def _absoluta(valor: str | None) -> str | None:
     """A27-8: una ruta de estado relativa colgaría del cwd del proceso; se ignora, igual que en `lib.rs`."""
     return valor if valor and Path(valor).is_absolute() else None

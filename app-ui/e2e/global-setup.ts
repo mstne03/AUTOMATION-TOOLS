@@ -76,6 +76,11 @@ export default async function globalSetup() {
   const mockVivo = await fetch(`${eleven.url}/__llamadas`).then((r) => r.ok).catch(() => false);
   if (!mockVivo) throw new Error(`El ElevenLabs falso no responde en ${eleven.url}: se aborta para no llegar a api.elevenlabs.io.`);
 
+  // Sin red no se baja el modelo de embeddings: se lee de la caché compartida con pytest (app-backend/tests/conftest.py).
+  const cacheModelo = join(tmpdir(), "fastembed_cache");
+  if (!existsSync(join(cacheModelo, "models--intfloat--multilingual-e5-small"))) {
+    throw new Error(`Falta el modelo de embeddings en ${cacheModelo}: ejecuta una vez «uv run pytest -q» en app-backend (con red) para descargarlo.`);
+  }
   const ffmpeg = carpetaFfmpeg();
   const sidecar: ChildProcess = spawn("uv", ["run", "app-backend"], {
     cwd: resolve(raiz, "..", "app-backend"),
@@ -85,6 +90,7 @@ export default async function globalSetup() {
       APP_BACKEND_TOKEN: TOKEN,
       ANTHROPIC_BASE_URL: mock.url,
       APP_BACKEND_VIDEO_CMD: JSON.stringify(["node", join(motorDir, "dist", "index.js")]),
+      EMBED_CACHE_DIR: cacheModelo,
       VIDEO_PRUEBAS_TTS_URL: eleven.url,
       VIDEO_E2E: "1", // sin ella el motor integrado ignora VIDEO_PRUEBAS_TTS_URL
       ...(ffmpeg ? { FFMPEG_DIR: ffmpeg } : {}),
