@@ -1100,3 +1100,21 @@ def test_reabrir_con_conexion_aceptada_en_time_wait_en_windows():
         assert set(segunda.puertos) | set(segunda.ajenos) == {p}
     finally:
         segunda.cerrar()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="SO_EXCLUSIVEADDRUSE solo existe en Windows")
+def test_socket_de_la_api_exclusivo_en_windows():
+    """A27-7: nadie puede vincular encima del puerto de la API, ni con la opción de reutilización."""
+    s = preview.vincular_api()
+    try:
+        assert s.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) == 1
+        assert s.getsockname()[0] == "127.0.0.1"
+        intruso = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            intruso.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with pytest.raises(OSError):
+                intruso.bind(("127.0.0.1", s.getsockname()[1]))
+        finally:
+            intruso.close()
+    finally:
+        s.close()
