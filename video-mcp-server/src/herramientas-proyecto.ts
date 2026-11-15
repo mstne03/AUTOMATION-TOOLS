@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { descripcionEsquema } from "./esquema.js";
+import { log } from "./log.js";
 import { montarPreviewTool, type Respuesta } from "./herramientas.js";
 import {
   ErrorAlmacen,
@@ -153,6 +154,15 @@ export function resultadoDeError(nombre: string, e: unknown): CallToolResult {
   const content: CallToolResult["content"] = [{ type: "text", text: `Error en ${nombre}: ${mensaje}` }];
   if (e instanceof ErrorAlmacen) content.push({ type: "text", text: JSON.stringify({ codigo: e.codigo, problemas: e.problemas }) });
   return { isError: true, content };
+}
+
+/**
+ * Deja constancia en video.log de una herramienta que falló. Un `conflicto` (el 409 de revisión o de «ya en curso»)
+ * es flujo normal: se guarda a nivel info y sin el detalle (SEO-129; 735 líneas `[error]` en 30 s ahogaban el log).
+ */
+export function registrarFallo(nombre: string, e: unknown): void {
+  if (e instanceof ErrorAlmacen && e.codigo === "conflicto") log.info(`${nombre}: conflicto (409)`);
+  else log.error(`${nombre}: ${(e as Error).message ?? String(e)}`);
 }
 
 type Envolver = (nombre: string, fn: () => Respuesta | Promise<Respuesta>) => Promise<CallToolResult>;

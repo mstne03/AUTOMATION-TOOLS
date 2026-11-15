@@ -109,6 +109,23 @@ describe("motor genérico (G1)", () => {
     }
   });
 
+  it("un conflicto queda en video.log como info y sin detalle; otro fallo, como error (SEO-129)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video conflicto "));
+    try {
+      vi.stubEnv("VIDEO_STATE_DIR", dir);
+      const { registrarFallo } = await import("../src/herramientas-proyecto.js");
+      const { ErrorAlmacen } = await import("../src/proyecto.js");
+      registrarFallo("video_proyecto_guardar", new ErrorAlmacen("conflicto", "El proyecto está en la revisión 7 y se intentó guardar sobre la 3."));
+      registrarFallo("video_proyecto_guardar", new Error("disco lleno"));
+      const lineas = fs.readFileSync(path.join(dir, "video.log"), "utf8").trim().split(/\r?\n/);
+      expect(lineas).toHaveLength(2);
+      expect(lineas[0]).toMatch(/^\S+ \[info\] video_proyecto_guardar: conflicto \(409\)$/);
+      expect(lineas[1]).toMatch(/^\S+ \[error\] video_proyecto_guardar: disco lleno$/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("video.log rota a video.log.1 pasados 5 MB y oculta la clave de ElevenLabs", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video log "));
     try {

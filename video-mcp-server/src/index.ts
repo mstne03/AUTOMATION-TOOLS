@@ -10,7 +10,7 @@ import { barrerRenderHuerfanos } from "./montaje.js";
 import { barridoAlArrancar, esIntegrado, herramientasFfmpeg } from "./proceso.js";
 import * as h from "./herramientas.js";
 import { resumenCampos } from "./formato.js";
-import { registrarHerramientasProyecto, resultadoDeError } from "./herramientas-proyecto.js";
+import { registrarFallo, registrarHerramientasProyecto, resultadoDeError } from "./herramientas-proyecto.js";
 
 // Red de seguridad: cualquier console.log accidental (también de dependencias) va a stderr.
 console.log = (...a: unknown[]) => log.info(...a);
@@ -30,8 +30,7 @@ async function envolver(nombre: string, fn: () => h.Respuesta | Promise<h.Respue
   try {
     return aResultado(await fn());
   } catch (e) {
-    const mensaje = (e as Error).message ?? String(e);
-    log.error(`${nombre}: ${mensaje}`);
+    registrarFallo(nombre, e);
     return resultadoDeError(nombre, e);
   }
 }
