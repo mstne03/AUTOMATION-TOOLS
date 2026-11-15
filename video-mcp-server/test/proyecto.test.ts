@@ -19,7 +19,7 @@ import {
   proyectoLeer,
   proyectoListar,
 } from "../src/proyecto.js";
-import { ID_GUION, ID_PROYECTO, guionEsquemaTool, proyectoGuardarTool, proyectoLeerTool, resultadoDeError } from "../src/herramientas-proyecto.js";
+import { ID_GUION, ID_PROYECTO, guionEsquemaTool, proyectoGuardarTool, proyectoLeerTool, proyectoListarTool, resultadoDeError } from "../src/herramientas-proyecto.js";
 
 const BASE = fs.mkdtempSync(path.join(os.tmpdir(), "video proyecto "));
 afterAll(() => fs.rmSync(BASE, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }));
@@ -269,7 +269,7 @@ describe("proyectos", () => {
     const a = nuevoProyecto();
     fs.mkdirSync(path.join(RAIZ, "video050")); // formato anterior: sin proyecto.json
     expect(proyectoListar(RAIZ)).toEqual([
-      { id: a.id, titulo: GUION.titulo, revision: 0, actualizado: a.disco().actualizado, escenas: 2 },
+      { id: a.id, titulo: GUION.titulo, revision: 0, actualizado: a.disco().actualizado, escenas: 2, perfilId: "defecto" },
       { id: "video050", valido: false },
     ]);
   });
@@ -528,6 +528,14 @@ describe.runIf(process.platform === "win32")("cierre T4 en Windows (junctions)",
 
 describe("herramientas", () => {
   const cfg = () => ({ videoRoot: RAIZ }) as Config;
+
+  it("video_proyecto_listar da a la UI el nombre del perfil y, sin voz, ninguna duración", () => {
+    const a = nuevoProyecto();
+    const [p] = (proyectoListarTool(cfg()).datos as { proyectos: Record<string, unknown>[] }).proyectos;
+    expect(p).toMatchObject({ id: a.id, titulo: GUION.titulo, perfil: "Perfil por defecto" });
+    expect(p).not.toHaveProperty("perfilId");
+    expect(p).not.toHaveProperty("duracion");
+  });
 
   it("video_guion_esquema devuelve el texto del esquema", () => {
     expect(guionEsquemaTool().datos).toEqual({ texto: descripcionEsquema() });

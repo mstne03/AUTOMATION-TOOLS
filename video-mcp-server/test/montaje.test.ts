@@ -97,6 +97,7 @@ import { dependencias, esperarJob } from "../src/render.js";
 import { montarPreviewTool, renderizar, estadoRender } from "../src/herramientas.js";
 import { ensamblarVoz, vozCoste, vozGenerar } from "../src/voz.js";
 import { barrerRenderHuerfanos } from "../src/montaje.js";
+import { proyectoListarTool } from "../src/herramientas-proyecto.js";
 
 const RAIZ = path.join(F.dir, "raiz");
 const VOZ = "Vz12345678AB";
@@ -177,6 +178,17 @@ const hijos = (id: string, sub: string) => (fs.existsSync(path.join(RAIZ, id, su
 const ffmpegLanzado = () => lanzados.filter(([c]) => /ffmpeg|ffprobe/i.test(path.basename(c)));
 
 describe("T6 · preview en `_composicion/r<n>/`", () => {
+  requiere("la lista de proyectos lleva la duración de la línea de tiempo cuando la voz está completa", async () => {
+    const id = nuevo();
+    const listar = () => (proyectoListarTool(cfg()).datos as { proyectos: Record<string, unknown>[] }).proyectos.find((p) => p.id === id);
+    expect(listar()).not.toHaveProperty("duracion"); // sin voz todavía
+    await conVoz(id);
+    const p = listar()!;
+    expect(p.perfil).toBe("Perfil por defecto (copia)");
+    expect(p.duracion).toBeGreaterThan(0);
+    expect(p.duracion).toBe((await preview(id)).duracion);
+  });
+
   requiere("montar_preview_forma: { carpeta: r<n>, duracion, avisos, fondo } y la composición escrita", async () => {
     const id = nuevo();
     await conVoz(id);

@@ -18,8 +18,9 @@ import {
   proyectoListar,
 } from "./proyecto.js";
 import { borrarRecurso, importarRecurso, musicaImportar, musicaListar, type Clase } from "./recursos.js";
-import { perfilDuplicar, perfilGuardar, perfilesListar } from "./perfil.js";
-import { vozCoste, vozForma, vozGenerar, vozMuestra, vozQuitarSilencios, voces } from "./voz.js";
+import { cargarPerfil, perfilDuplicar, perfilGuardar, perfilesListar } from "./perfil.js";
+import { construirLinea } from "./linea.js";
+import { vozCoste, vozDeProyecto, vozForma, vozGenerar, vozMuestra, vozQuitarSilencios, voces } from "./voz.js";
 
 export function guionEsquemaTool(): Respuesta {
   return { texto: "Esquema del guion de vídeo.", datos: { texto: descripcionEsquema() } };
@@ -50,8 +51,35 @@ export function proyectoCrearTool(cfg: Config, a: { guionId: string; perfilId: s
   return { texto: `Proyecto ${r.id} creado a partir de ${a.guionId}.`, datos: r };
 }
 
+/**
+ * Lista para la UI (`ProyectoVideoResumen`): el nombre del perfil y, si la voz está completa, la duración del vídeo
+ * (la misma línea de tiempo que el render). Sin voz, o con el perfil sin voz, el proyecto sale sin `duracion`.
+ */
 export function proyectoListarTool(cfg: Config): Respuesta {
-  const proyectos = proyectoListar(cfg.videoRoot);
+  const nombres = new Map<string, string>();
+  const nombrePerfil = (pid: string): string => {
+    if (!nombres.has(pid)) {
+      try {
+        nombres.set(pid, cargarPerfil(cfg.videoRoot, pid).nombre);
+      } catch {
+        nombres.set(pid, pid); // perfil borrado o inválido: se muestra su id
+      }
+    }
+    return nombres.get(pid)!;
+  };
+  // ponytail: lee la voz de cada proyecto en cada listado; caché por revisión si la lista crece mucho.
+  const proyectos = proyectoListar(cfg.videoRoot).map((r) => {
+    if (!("perfilId" in r)) return r;
+    const { perfilId, ...resto } = r;
+    let duracion: number | undefined;
+    try {
+      const { proyecto, voz } = vozDeProyecto(cfg, r.id);
+      duracion = construirLinea(proyecto, voz).duracionTotal;
+    } catch {
+      /* voz pendiente o perfil sin voz */
+    }
+    return { ...resto, perfil: nombrePerfil(perfilId), ...(duracion !== undefined ? { duracion } : {}) };
+  });
   return { texto: `${proyectos.length} proyecto(s).`, datos: { proyectos } };
 }
 

@@ -122,6 +122,12 @@ describe("lista de proyectos", () => {
     expect(t("video-proyecto-a")!.textContent).toContain("defecto");
   });
 
+  it("sin voz completa el motor no da duración: se lee «sin voz»", async () => {
+    montar({ videoProyectos: vi.fn(async () => [resumen("a", "borrador", { duracion: undefined })]) });
+    await screen.findByTestId("video-lista");
+    expect(t("video-proyecto-a")!.textContent).toContain("sin voz");
+  });
+
   it("titulo_html_es_texto: el título con HTML se pinta como texto", async () => {
     montar({
       videoProyectos: vi.fn(async () => [

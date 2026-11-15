@@ -297,7 +297,7 @@ export function proyectoCrear(raiz: string, args: { guionId: string; perfilId: s
   return { id };
 }
 
-export type ResumenProyecto = { id: string; titulo: string; revision: number; actualizado: string; escenas: number } | { id: string; valido: false };
+export type ResumenProyecto = { id: string; titulo: string; revision: number; actualizado: string; escenas: number; perfilId: string } | { id: string; valido: false };
 
 export function proyectoListar(raiz: string): ResumenProyecto[] {
   return listarIds(raiz).flatMap((id): ResumenProyecto[] => {
@@ -315,7 +315,7 @@ export function proyectoListar(raiz: string): ResumenProyecto[] {
     }
     try {
       const p = cargarProyecto(raiz, id);
-      return [{ id, titulo: p.titulo, revision: p.revision, actualizado: p.actualizado, escenas: p.escenas.length }];
+      return [{ id, titulo: p.titulo, revision: p.revision, actualizado: p.actualizado, escenas: p.escenas.length, perfilId: p.perfilId }];
     } catch {
       return [{ id, valido: false }];
     }
