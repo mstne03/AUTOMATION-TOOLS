@@ -24,8 +24,8 @@ Nivel de cada hallazgo: todos están **inspeccionados en código**; ninguno se h
 | A27-7 | Info | `app-backend/app_backend/preview.py:483-486` | El socket de la API no lleva `SO_EXCLUSIVEADDRUSE` |
 | A27-8 | Info | varios | Defensa en profundidad y documentación (bandeja, ACL, `FFMPEG_DIR`, cwd, LEEME) |
 
-**Correcciones (rama `fix/21-auditoria-pr27`, 2026-11-13).** A27-1 a A27-5 corregidos y A27-8 en lo que tenía arreglo
-en código; A27-6 y A27-7 siguen como propuestas. Detalle en «Estado de las correcciones», al final.
+**Correcciones (rama `fix/21-auditoria-pr27`, 2026-11-13).** A27-1 a A27-5 y A27-7 corregidos y A27-8 en lo que tenía
+arreglo en código. A27-6 queda para la fase 2 (decisión de Marc del 2026-11-15). Detalle en «Estado de las correcciones», al final.
 
 No hay hallazgos Critical, High ni Medium. Las superficies del encargo están cerradas en el código revisado, salvo lo
 que se lista arriba y los heredados que siguen abiertos (ver «Heredados»).
@@ -230,7 +230,12 @@ la app instalada).
 | A27-3 | Corregido | El motor barre, además de los `.uso-*`, los `.bin` y `.parcial` de más de una hora (nunca la entrada que se está importando). Si la importación falla antes de reclamar la entrada (proyecto inexistente, clase inválida), la entrada se retira. Rust copia a `<id>.parcial` y la renombra a `.bin` al terminar. | `recursos.test.ts`, `lib.rs` (`la_bandeja_no_deja_parciales…`) |
 | A27-4 | Corregido | `barrer_papeleras` (`video_rest.py`) vacía las `.borrando-video###-<8hex>` al arrancar el backend (lifespan) y antes de cada borrado. Solo toca hijas directas con el nombre exacto, y sin seguir enlaces. | `test_borrar_barre_papeleras…` |
 | A27-5 | Corregido | `_lista` filtra cada resumen por id con su patrón y deja solo los campos de `types.ts`, con escalares acotados. Crear guion, crear proyecto y guardar proyecto devuelven solo `id` o `revision` y los avisos filtrados (`_avisos_documento`). Leer guion devuelve `{guion, avisos}` y perfiles, solo los que tienen id válido. El motor falso de los tests devuelve ya la forma real de `video_guion_leer`, y la frase de la R2 está corregida. | `test_salida_del_motor_filtrada…` |
-| A27-6 | Abierto (propuesta) | Tope de gasto y nonce de un solo uso: queda para la fase 2. | — |
-| A27-7 | Abierto (propuesta) | No se ha tocado. | — |
+| A27-6 | Fase 2 | Tope de gasto y nonce de un solo uso: Marc lo deja para la fase 2 (2026-11-15). | — |
+| A27-7 | Corregido | `_crear_socket_api` aplica `SO_EXCLUSIVEADDRUSE` con el mismo `getattr` que `_vincular`; las dos escuchas del sidecar siguen ya la misma regla. | `test_socket_de_la_api_exclusivo_en_windows` |
 | A27-8 | Corregido en parte | **Bandeja:** Rust rechaza la bandeja o su carpeta `video` si es un enlace o una junction. **Estado:** `APP_BACKEND_DIR` y `LOCALAPPDATA` relativos se ignoran, con la misma regla en `config.py` y `lib.rs`; el estado nunca es relativo, y queda documentado que `APP_BACKEND_DIR` es solo para desarrollo y que no lleva ACL propia. **cwd:** los hijos sin cwd propio arrancan en `hf-home`. **LEEME:** protocolos `file pipe fd` y ningún `PENDIENTE-TAREA-10`, comprobado con `comprobar-pendientes.sh`. **Frase del ffmpeg ajeno:** un test del backend vigila que siga en `render.ts`; un `codigo` propio exigiría tipar los errores de render, y no compensa para una falla que ya es visible. **Sin cambios:** `FFMPEG_DIR` en el motor integrado, porque el backend congelado fija siempre el del bundle y los E2E necesitan otro; y el SHA de ffmpeg en ejecución, por la decisión de I4. | `dir_estado_sigue_a_config_py`, `test_frase_del_ffmpeg_ajeno…` |
 
+**Visto de pasada y corregido (no era un hallazgo de seguridad).** La lista de proyectos pintaba `perfil` y `duracion`,
+pero el motor no los daba. Ahora `video_proyecto_listar` devuelve el nombre del perfil y, con la voz completa, la duración
+de la misma línea de tiempo que la preview; sin voz, la UI dice «sin voz». Tests: `proyecto.test.ts`, `montaje.test.ts`
+y `videoLista.test.tsx`. El resto de A27-8 (`codigo` propio del ffmpeg ajeno y `FFMPEG_DIR` integrado) no se toca, por
+decisión de Marc.
