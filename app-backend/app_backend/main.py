@@ -138,6 +138,7 @@ def create_app(
         app.state.motor = video.MotorVideo(
             argv, cwd, lambda: video.entorno_motor(yt_auth.store), actividad=app.state.cerrojos.alguno
         )
+        app.state.capacidades = video.CacheCapacidades()
         # Segundo proceso para las tools de video.TOOLS_CANAL_RENDER, sin la clave de ElevenLabs.
         app.state.motor_render = video.MotorVideo(
             argv, cwd, lambda: video.entorno_motor(yt_auth.store, con_clave=False)
@@ -506,16 +507,19 @@ def create_app(
 
     @app.get("/video/capacidades", dependencies=protegido)
     async def video_capacidades():
-        try:
-            r = await app.state.motor.llamar(
-                "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
-            )
-        except video.MotorError as e:
-            # R1 T1→T9 (N2): mensajes fijos, como en video_rest; el detalle (con rutas) solo al log.
-            raise video_rest._http(e) from None
-        if not isinstance(r.datos, dict):
-            raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
-        return r.datos
+        async def sondear():
+            try:
+                r = await app.state.motor.llamar(
+                    "video_capacidades", {"reprobar": False}, timeout=video.TIMEOUT_CAPACIDADES
+                )
+            except video.MotorError as e:
+                # R1 T1→T9 (N2): mensajes fijos, como en video_rest; el detalle (con rutas) solo al log.
+                raise video_rest._http(e) from None
+            if not isinstance(r.datos, dict):
+                raise HTTPException(status_code=502, detail="El motor de vídeo devolvió una respuesta inesperada.")
+            return r.datos
+
+        return await app.state.capacidades.obtener(sondear)
 
     # Navegador del render (Chrome for Testing) en el primer uso. Lo inicia el usuario desde la UI;
     # el modelo no tiene tool ni tipo de job para esto (D2, I10, I14). La UI sondea el GET (barato).

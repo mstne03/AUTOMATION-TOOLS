@@ -500,6 +500,50 @@ def motor_de(estado, tool: str) -> MotorVideo:
     return estado.motor_render if tool in TOOLS_CANAL_RENDER else estado.motor
 
 
+def _sello(p: Path) -> tuple[int, int] | None:
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def huella_capacidades() -> tuple:
+    """Lo que, si cambia, cambia las capacidades del motor: ffmpeg, navegador y el interruptor de GPU.
+
+    Barata a propósito (stat, sin hashear el navegador, que lo hace `entorno_motor` al arrancar).
+    """
+    ffmpeg = config.VIDEO_ENGINE_DIR / "ffmpeg" / "ffmpeg.exe"
+    chrome = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION / config.NAVEGADOR_EXE
+    return (
+        os.environ.get("FFMPEG_DIR"),
+        _sello(ffmpeg),
+        _sello(chrome),
+        os.environ.get("VIDEO_FORZAR_SIN_GPU"),
+    )
+
+
+class CacheCapacidades:
+    """`GET /video/capacidades` por sesión del sidecar (SEO-128): el sondeo cuesta ~4,6 s y ocupa al motor.
+
+    Un cerrojo cubre el sondeo: dos llamadas a la vez no lanzan dos, la segunda espera y lee la caché.
+    Un fallo no se cachea. Si cambia la huella, se vuelve a sondear.
+    """
+
+    def __init__(self) -> None:
+        self._cerrojo = asyncio.Lock()
+        self._huella: tuple | None = None
+        self._datos: dict | None = None
+
+    async def obtener(self, sondear):
+        async with self._cerrojo:
+            huella = huella_capacidades()
+            if self._datos is None or huella != self._huella:
+                self._datos = await sondear()
+                self._huella = huella
+            return self._datos
+
+
 def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
     """Entorno propio del hijo; se recalcula en cada arranque (la clave puede haber cambiado).
 

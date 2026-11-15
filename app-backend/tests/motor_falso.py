@@ -463,6 +463,19 @@ def _lanzar_huerfanos() -> None:
         subprocess.Popen([str(exe), "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
 
 
+_SONDEOS = 0
+
+
+@mcp.tool()
+async def video_capacidades(reprobar: bool = False) -> list[TextContent]:
+    """Cuenta los sondeos (SEO-128): `datos.sondeos` dice cuántas veces se ha ejecutado de verdad."""
+    global _SONDEOS
+    _SONDEOS += 1
+    n = _SONDEOS
+    await anyio.sleep(0.4)  # el sondeo real tarda segundos: da margen a que otra llamada se solape
+    return [TextContent(type="text", text="capacidades"), TextContent(type="text", text=json.dumps({"sondeos": n}))]
+
+
 @mcp.tool()
 def video_renderizar(id: str, modo: str = "auto") -> CallToolResult:
     if id.endswith("98") and os.environ.get("FFMPEG_DIR"):
