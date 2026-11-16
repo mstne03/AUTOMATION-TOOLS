@@ -457,10 +457,12 @@ def _lanzar_huerfanos() -> None:
 
     chrome = Path(os.environ["HYPERFRAMES_BROWSER_PATH"])
     chrome.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(shutil.which("sleep") or "/bin/sleep", chrome)
+    # `sh` y no `sleep`: en Ubuntu 26.04 `sleep` es un enlace al binario multicall `coreutils`, que copiado con otro
+    # nombre se niega a arrancar. El `; :` final evita que dash haga exec del último comando y cambie la imagen.
+    shutil.copy(shutil.which("sh") or "/bin/sh", chrome)
     os.chmod(chrome, 0o755)
     for exe in (chrome, Path(os.environ["FFMPEG_DIR"]) / "ffmpeg.exe"):
-        subprocess.Popen([str(exe), "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+        subprocess.Popen([str(exe), "-c", "sleep 300; :"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
 
 
 @mcp.tool()
