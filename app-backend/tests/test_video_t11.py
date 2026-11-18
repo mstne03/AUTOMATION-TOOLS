@@ -669,7 +669,7 @@ async def test_motor_muere_en_render(api, tmp_path, monkeypatch):
     bundle = tmp_path / "video-engine"
     (bundle / "ffmpeg").mkdir(parents=True)
     for n in ("ffmpeg.exe", "ffprobe.exe"):
-        shutil.copy(shutil.which("sleep"), bundle / "ffmpeg" / n)
+        shutil.copy(shutil.which("sh"), bundle / "ffmpeg" / n)  # `sh`, no `sleep`: multicall en Ubuntu 26.04
     monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", bundle)
     monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
