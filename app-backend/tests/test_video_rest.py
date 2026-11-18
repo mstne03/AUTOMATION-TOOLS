@@ -53,6 +53,27 @@ async def api(tmp_path, fake_anthropic, monkeypatch):
             yield c
 
 
+async def test_capacidades_cacheadas_y_sin_sondeos_simultaneos(api, monkeypatch):
+    """SEO-128: dos llamadas a la vez son un solo sondeo; la siguiente sale de la caché."""
+    a, b = await asyncio.gather(api.get("/video/capacidades"), api.get("/video/capacidades"))
+    assert (a.json(), b.json()) == ({"sondeos": 1}, {"sondeos": 1})
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 1}
+
+
+async def test_capacidades_se_invalidan_si_cambia_la_huella(api, monkeypatch, tmp_path):
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 1}
+    monkeypatch.setenv("VIDEO_FORZAR_SIN_GPU", "1")
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 2}
+    monkeypatch.setenv("FFMPEG_DIR", str(tmp_path))
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 3}
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "nav")
+    chrome = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION / config.NAVEGADOR_EXE
+    chrome.parent.mkdir(parents=True)
+    chrome.write_bytes(b"x")  # el navegador «se instala»: otra huella
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 4}
+    assert (await api.get("/video/capacidades")).json() == {"sondeos": 4}
+
+
 async def _guion(c, **extra) -> str:
     r = await c.post("/video/guiones", json={"guion": {**GUION, **extra}})
     assert r.status_code == 201, r.text
