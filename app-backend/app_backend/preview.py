@@ -472,7 +472,15 @@ def reservar_puertos(
 
 def _crear_socket_api() -> socket.socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))  # nunca 0.0.0.0: el sidecar es local
+    try:
+        # A27-7: la misma regla que los puertos de preview (`_vincular`): uso exclusivo en Windows.
+        exclusivo = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusivo is not None:
+            s.setsockopt(socket.SOL_SOCKET, exclusivo, 1)
+        s.bind(("127.0.0.1", 0))  # nunca 0.0.0.0: el sidecar es local
+    except OSError:
+        s.close()
+        raise
     return s
 
 
