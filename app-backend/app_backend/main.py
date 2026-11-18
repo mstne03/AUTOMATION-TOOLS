@@ -38,7 +38,7 @@ from youtube_mcp.server import auth as yt_auth
 from youtube_mcp.server import quota as yt_quota
 from youtube_mcp.server import youtube_auth
 
-from app_backend import config, navegador, preview, registry, video, video_rest
+from app_backend import config, navegador, offline, preview, registry, video, video_rest
 from app_backend.agent import Agent, ConversacionOcupada
 from app_backend.approvals import Approvals
 from app_backend.canal import METRICAS, CanalCache, CanalError, Fuentes
@@ -111,6 +111,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        if config.OFFLINE:
+            offline.instalar(config.STATE_DIR / "red-bloqueada.log")
         await asyncio.to_thread(video_rest.barrer_papeleras)  # A27-4: borrados que quedaron a medias
         runners = {kind: tools[name].fn for name, kind in registry.JOB_KINDS.items()}
         runners["video_render"] = video_rest.crear_runner_render(app.state, asyncio.get_running_loop())
@@ -162,7 +164,7 @@ def create_app(
 
     async def _arranque_kb(updater: KBUpdater) -> None:
         """Al arrancar: comprobar el snapshot si toca (diario) y calentar el modelo."""
-        if updater.due():
+        if updater.due() and not config.OFFLINE:  # SEO-131: sin red en desarrollo/E2E
             try:
                 r = await asyncio.to_thread(updater.update)
                 log.info("KB: %s", r)

@@ -43,5 +43,7 @@ export function entornoSidecar(heredado: Readonly<Record<string, string | undefi
     ELEVENLABS_API_KEY: "e2e-eleven-falsa",
     ELEVENLABS_VOICE_ID: "voz-e2e",
     APP_BACKEND_SIN_DOTENV: "1",
+    // SEO-131: ni KB remota ni HuggingFace; el sidecar bloquea además todo lo que no sea loopback.
+    APP_BACKEND_OFFLINE: "1",
   };
 }
