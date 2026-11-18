@@ -694,8 +694,10 @@ async def test_motor_muere_en_render(api, tmp_path, monkeypatch):
             await asyncio.sleep(0.1)
         assert _procesos_con_imagen_bajo(carpetas, exactos) == []
     finally:
+        from tests.motor_falso import matar_grupo
+
         for pid in _procesos_con_imagen_bajo(carpetas, exactos):
-            os.kill(pid, 9)
+            matar_grupo(pid)  # con su `sleep`: matar solo `sh` lo dejaría huérfano 300 s
 
 
 @pytest.mark.skip(reason="Necesita Windows con el CfT descargado, el ffmpeg del bundle y un render real de HyperFrames (lo valida Marc / T21).")

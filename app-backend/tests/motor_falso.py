@@ -445,10 +445,19 @@ def _barrer() -> None:
         except OSError:
             continue
         if _bajo(exe, carpetas) or exe in exactos:
-            try:
-                os.kill(int(d.name), 9)
-            except OSError:
-                pass
+            matar_grupo(int(d.name))
+
+
+def matar_grupo(pid: int) -> None:
+    """Mata el grupo de `pid` (lo crea `_lanzar_huerfanos` con `start_new_session`): el `sleep` hijo de `sh`
+    tiene otra imagen y el barrido por imagen no lo vería. Si `pid` no lidera un grupo, solo `pid`."""
+    try:
+        os.killpg(pid, 9)
+    except OSError:
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
 
 
 def _lanzar_huerfanos() -> None:
@@ -461,6 +470,7 @@ def _lanzar_huerfanos() -> None:
     # nombre se niega a arrancar. El `; :` final evita que dash haga exec del último comando y cambie la imagen.
     shutil.copy(shutil.which("sh") or "/bin/sh", chrome)
     os.chmod(chrome, 0o755)
+    # `start_new_session`: cada `sh` lidera su grupo y se lleva a su `sleep` con `matar_grupo`.
     for exe in (chrome, Path(os.environ["FFMPEG_DIR"]) / "ffmpeg.exe"):
         subprocess.Popen([str(exe), "-c", "sleep 300; :"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
 
