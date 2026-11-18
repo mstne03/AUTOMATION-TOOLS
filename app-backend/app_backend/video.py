@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -540,29 +541,36 @@ def capacidades_completas(datos: dict) -> bool:
     return not (bundle_ffmpeg and not datos.get("ffmpeg"))
 
 
+# ponytail: TTL fijo. El motor no distingue un fallo pasajero (una sonda que agotó el tiempo) de uno
+# permanente (equipo sin GPU: el render con --browser-gpu falla siempre y nunca hay `luminancia`). Con
+# 60 s, el degradado pasajero se corrige en un minuto y el permanente cuesta un sondeo por minuto, no uno
+# por GET. Si hiciera falta afinar, que el motor marque el fallo como permanente y se cachee sin caducar.
+TTL_CAPACIDADES_DEGRADADAS = 60.0
+
+
 class CacheCapacidades:
     """`GET /video/capacidades` por sesión del sidecar (SEO-128): el sondeo cuesta ~4,6 s y ocupa al motor.
 
     Un cerrojo cubre el sondeo: dos llamadas a la vez no lanzan dos, la segunda espera y lee la caché.
-    Ni un fallo ni un resultado degradado (`capacidades_completas`) se cachean: se devuelven al
-    llamante y la siguiente llamada vuelve a sondear. Si cambia la huella, también.
+    Un resultado completo (`capacidades_completas`) no caduca; uno degradado, a los
+    `TTL_CAPACIDADES_DEGRADADAS` segundos. Un fallo no se guarda. Si cambia la huella, se vuelve a sondear.
     """
 
     def __init__(self) -> None:
         self._cerrojo = asyncio.Lock()
         self._huella: tuple | None = None
         self._datos: dict | None = None
+        self._caduca: float | None = None  # None: no caduca
 
     async def obtener(self, sondear):
         async with self._cerrojo:
             huella = huella_capacidades()
-            if self._datos is not None and huella == self._huella:
+            vigente = self._caduca is None or time.monotonic() < self._caduca
+            if self._datos is not None and huella == self._huella and vigente:
                 return self._datos
             datos = await sondear()
-            if capacidades_completas(datos):
-                self._datos, self._huella = datos, huella
-            else:
-                self._datos = None
+            self._datos, self._huella = datos, huella
+            self._caduca = None if capacidades_completas(datos) else time.monotonic() + TTL_CAPACIDADES_DEGRADADAS
             return datos
 
 

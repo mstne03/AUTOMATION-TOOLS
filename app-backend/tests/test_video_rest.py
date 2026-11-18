@@ -108,11 +108,14 @@ async def test_capacidades_fallo_del_sondeo_no_se_cachea():
         {k: v for k, v in _COMPLETAS.items() if k != "ffmpeg"},  # con ffmpeg en el bundle
     ],
 )
-async def test_capacidades_degradadas_no_se_cachean(degradado, monkeypatch, tmp_path):
-    """SEO-128: el motor devuelve un dict válido aunque una sonda agote el tiempo; eso no se fija la sesión."""
+async def test_capacidades_degradadas_caducan_a_los_60_s(degradado, monkeypatch, tmp_path):
+    """SEO-128: el motor devuelve un dict válido aunque una sonda agote el tiempo (o sin GPU, siempre): se
+    guarda `TTL_CAPACIDADES_DEGRADADAS` y no toda la sesión; lo completo, sin caducar."""
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", tmp_path)
     (tmp_path / "ffmpeg").mkdir()
     (tmp_path / "ffmpeg" / "ffmpeg.exe").write_bytes(b"x")
+    ahora = [1000.0]
+    monkeypatch.setattr(video.time, "monotonic", lambda: ahora[0])
     respuestas = [degradado, _COMPLETAS]
 
     async def sondear():
@@ -120,8 +123,13 @@ async def test_capacidades_degradadas_no_se_cachean(degradado, monkeypatch, tmp_
 
     cache = video.CacheCapacidades()
     assert await cache.obtener(sondear) == degradado  # el llamante lo recibe igual
-    assert await cache.obtener(sondear) == _COMPLETAS  # se volvió a sondear
-    assert await cache.obtener(sondear) == _COMPLETAS  # y lo completo sí queda en caché
+    ahora[0] += video.TTL_CAPACIDADES_DEGRADADAS - 1
+    assert await cache.obtener(sondear) == degradado  # dentro de los 60 s, sin sondear
+    assert respuestas == [_COMPLETAS]
+    ahora[0] += 1
+    assert await cache.obtener(sondear) == _COMPLETAS  # caducado: se vuelve a sondear
+    ahora[0] += 10 * video.TTL_CAPACIDADES_DEGRADADAS
+    assert await cache.obtener(sondear) == _COMPLETAS  # lo completo no caduca
     assert respuestas == []
 
 
