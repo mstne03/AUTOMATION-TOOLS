@@ -96,7 +96,7 @@ export function VideoScreen() {
                     {p.titulo}
                   </Link>
                   <span className={s.meta}>
-                    {p.perfil} · {duracionTexto(p.duracion)} ·{" "}
+                    {p.perfil} · {p.duracion === undefined ? "sin voz" : duracionTexto(p.duracion)} ·{" "}
                     {fecha(p.actualizado)}
                   </span>
                 </div>

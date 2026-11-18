@@ -245,7 +245,7 @@ export interface ProyectoVideoResumen {
   id: string;
   titulo: string;
   perfil: string;
-  duracion: number;
+  duracion?: number; // segundos; sin voz completa, el motor no la da
   actualizado: string;
   estado: EstadoProyectoVideo;
 }
