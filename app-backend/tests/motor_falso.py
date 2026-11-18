@@ -475,7 +475,9 @@ async def video_capacidades(reprobar: bool = False) -> list[TextContent]:
     _SONDEOS += 1
     n = _SONDEOS
     await anyio.sleep(0.4)  # el sondeo real tarda segundos: da margen a que otra llamada se solape
-    return [TextContent(type="text", text="capacidades"), TextContent(type="text", text=json.dumps({"sondeos": n}))]
+    # Resultado completo (con luminancia y codificadores): el backend solo cachea lo que se midió entero.
+    datos = {"sondeos": n, "gpu": {"webgpu": False, "luminancia": 0, "fecha": "2026-01-01T00:00:00Z", "detalle": "falso"}, "codificadores": []}
+    return [TextContent(type="text", text="capacidades"), TextContent(type="text", text=json.dumps(datos))]
 
 
 @mcp.tool()
