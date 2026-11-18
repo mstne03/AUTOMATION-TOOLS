@@ -53,25 +53,89 @@ async def api(tmp_path, fake_anthropic, monkeypatch):
             yield c
 
 
-async def test_capacidades_cacheadas_y_sin_sondeos_simultaneos(api, monkeypatch):
+async def _sondeos(c) -> int:
+    return (await c.get("/video/capacidades")).json()["sondeos"]
+
+
+async def test_capacidades_cacheadas_y_sin_sondeos_simultaneos(api):
     """SEO-128: dos llamadas a la vez son un solo sondeo; la siguiente sale de la caché."""
     a, b = await asyncio.gather(api.get("/video/capacidades"), api.get("/video/capacidades"))
-    assert (a.json(), b.json()) == ({"sondeos": 1}, {"sondeos": 1})
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 1}
+    assert (a.json()["sondeos"], b.json()["sondeos"]) == (1, 1)
+    assert await _sondeos(api) == 1
 
 
 async def test_capacidades_se_invalidan_si_cambia_la_huella(api, monkeypatch, tmp_path):
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 1}
+    assert await _sondeos(api) == 1
     monkeypatch.setenv("VIDEO_FORZAR_SIN_GPU", "1")
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 2}
+    assert await _sondeos(api) == 2
     monkeypatch.setenv("FFMPEG_DIR", str(tmp_path))
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 3}
+    assert await _sondeos(api) == 3
     monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "nav")
     chrome = config.NAVEGADOR_DIR / config.NAVEGADOR_VERSION / config.NAVEGADOR_EXE
     chrome.parent.mkdir(parents=True)
     chrome.write_bytes(b"x")  # el navegador «se instala»: otra huella
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 4}
-    assert (await api.get("/video/capacidades")).json() == {"sondeos": 4}
+    assert await _sondeos(api) == 4
+    assert await _sondeos(api) == 4
+
+
+_COMPLETAS = {"gpu": {"webgpu": True, "luminancia": 120}, "codificadores": [], "ffmpeg": "ffmpeg version 7"}
+
+
+async def test_capacidades_fallo_del_sondeo_no_se_cachea():
+    """SEO-128: si el sondeo lanza, la siguiente llamada vuelve a sondear."""
+    llamadas = []
+
+    async def sondear():
+        llamadas.append(1)
+        if len(llamadas) == 1:
+            raise HTTPException(status_code=502, detail="El motor de vídeo no respondió.")
+        return _COMPLETAS
+
+    cache = video.CacheCapacidades()
+    with pytest.raises(HTTPException):
+        await cache.obtener(sondear)
+    assert await cache.obtener(sondear) == _COMPLETAS
+    assert await cache.obtener(sondear) == _COMPLETAS
+    assert len(llamadas) == 2
+
+
+@pytest.mark.parametrize(
+    "degradado",
+    [
+        {**_COMPLETAS, "gpu": {"webgpu": False, "detalle": "La prueba agotó el tiempo."}},  # sin luminancia
+        {**_COMPLETAS, "gpu": None},
+        {k: v for k, v in _COMPLETAS.items() if k != "codificadores"},
+        {k: v for k, v in _COMPLETAS.items() if k != "ffmpeg"},  # con ffmpeg en el bundle
+    ],
+)
+async def test_capacidades_degradadas_caducan_a_los_60_s(degradado, monkeypatch, tmp_path):
+    """SEO-128: el motor devuelve un dict válido aunque una sonda agote el tiempo (o sin GPU, siempre): se
+    guarda `TTL_CAPACIDADES_DEGRADADAS` y no toda la sesión; lo completo, sin caducar."""
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", tmp_path)
+    (tmp_path / "ffmpeg").mkdir()
+    (tmp_path / "ffmpeg" / "ffmpeg.exe").write_bytes(b"x")
+    ahora = [1000.0]
+    monkeypatch.setattr(video.time, "monotonic", lambda: ahora[0])
+    respuestas = [degradado, _COMPLETAS]
+
+    async def sondear():
+        return respuestas.pop(0)
+
+    cache = video.CacheCapacidades()
+    assert await cache.obtener(sondear) == degradado  # el llamante lo recibe igual
+    ahora[0] += video.TTL_CAPACIDADES_DEGRADADAS - 1
+    assert await cache.obtener(sondear) == degradado  # dentro de los 60 s, sin sondear
+    assert respuestas == [_COMPLETAS]
+    ahora[0] += 1
+    assert await cache.obtener(sondear) == _COMPLETAS  # caducado: se vuelve a sondear
+    ahora[0] += 10 * video.TTL_CAPACIDADES_DEGRADADAS
+    assert await cache.obtener(sondear) == _COMPLETAS  # lo completo no caduca
+    assert respuestas == []
+
+
+def test_capacidades_sin_ffmpeg_en_el_bundle_no_lo_exigen(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", tmp_path)
+    assert video.capacidades_completas({k: v for k, v in _COMPLETAS.items() if k != "ffmpeg"})
 
 
 async def _guion(c, **extra) -> str:

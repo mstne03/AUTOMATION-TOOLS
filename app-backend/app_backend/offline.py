@@ -1,6 +1,8 @@
 """Cinturón del modo offline (SEO-131): si algo intenta salir de loopback, falla y queda anotado.
 
 Los E2E comprueban que el fichero de anotaciones no existe al terminar (`zz-hermetico.spec.ts`).
+Límite: es un parche del `socket` de este proceso, así que solo vigila al sidecar. La UI que carga
+Playwright, el motor de vídeo (Node) y el Chrome que lanza el motor quedan fuera.
 Cubre `getaddrinfo` (todo nombre de host) y `connect`/`connect_ex` (también IP literales con el
 bucle de selector). ponytail: con el bucle Proactor de Windows una IP literal llega a ConnectEx sin
 pasar por `socket.connect`; si hiciera falta cerrar ese hueco, medirlo con Get-NetTCPConnection."""

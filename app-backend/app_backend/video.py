@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -519,29 +520,58 @@ def huella_capacidades() -> tuple:
         os.environ.get("FFMPEG_DIR"),
         _sello(ffmpeg),
         _sello(chrome),
-        os.environ.get("VIDEO_FORZAR_SIN_GPU"),
+        # Solo llega al motor en desarrollo (`entorno_motor`); instalado no cambia nada.
+        None if config.FROZEN else os.environ.get("VIDEO_FORZAR_SIN_GPU"),
     )
+
+
+def capacidades_completas(datos: dict) -> bool:
+    """¿El sondeo midió todo? El motor devuelve un dict válido aunque alguna sonda agote el tiempo.
+
+    Sin `gpu.luminancia` la prueba de GPU no se midió (el motor tampoco la guarda en disco); sin
+    `codificadores` falló su sondeo; sin `ffmpeg`, `ffmpeg -version` no respondió aunque el bundle lo
+    trae. Un resultado así puede ser pasajero: cachearlo lo dejaría fijo toda la sesión.
+    """
+    gpu = datos.get("gpu")
+    if not isinstance(gpu, dict) or gpu.get("luminancia") is None:
+        return False
+    if datos.get("codificadores") is None:  # [] es un sondeo válido: ningún codificador funciona
+        return False
+    bundle_ffmpeg = (config.VIDEO_ENGINE_DIR / "ffmpeg" / "ffmpeg.exe").is_file()
+    return not (bundle_ffmpeg and not datos.get("ffmpeg"))
+
+
+# ponytail: TTL fijo. El motor no distingue un fallo pasajero (una sonda que agotó el tiempo) de uno
+# permanente (equipo sin GPU: el render con --browser-gpu falla siempre y nunca hay `luminancia`). Con
+# 60 s, el degradado pasajero se corrige en un minuto y el permanente cuesta un sondeo por minuto, no uno
+# por GET. Si hiciera falta afinar, que el motor marque el fallo como permanente y se cachee sin caducar.
+TTL_CAPACIDADES_DEGRADADAS = 60.0
 
 
 class CacheCapacidades:
     """`GET /video/capacidades` por sesión del sidecar (SEO-128): el sondeo cuesta ~4,6 s y ocupa al motor.
 
     Un cerrojo cubre el sondeo: dos llamadas a la vez no lanzan dos, la segunda espera y lee la caché.
-    Un fallo no se cachea. Si cambia la huella, se vuelve a sondear.
+    Un resultado completo (`capacidades_completas`) no caduca; uno degradado, a los
+    `TTL_CAPACIDADES_DEGRADADAS` segundos. Un fallo no se guarda. Si cambia la huella, se vuelve a sondear.
     """
 
     def __init__(self) -> None:
         self._cerrojo = asyncio.Lock()
         self._huella: tuple | None = None
         self._datos: dict | None = None
+        self._caduca: float | None = None  # None: no caduca
 
     async def obtener(self, sondear):
         async with self._cerrojo:
             huella = huella_capacidades()
-            if self._datos is None or huella != self._huella:
-                self._datos = await sondear()
-                self._huella = huella
-            return self._datos
+            vigente = self._caduca is None or time.monotonic() < self._caduca
+            if self._datos is not None and huella == self._huella and vigente:
+                return self._datos
+            datos = await sondear()
+            self._datos, self._huella = datos, huella
+            self._caduca = None if capacidades_completas(datos) else time.monotonic() + TTL_CAPACIDADES_DEGRADADAS
+            return datos
 
 
 def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
@@ -587,7 +617,8 @@ def entorno_motor(store, con_clave: bool = True) -> dict[str, str]:
         # Solo desarrollo y E2E: nunca en el producto instalado (el motor, además, lo ignora fuera de VIDEO_E2E).
         # VIDEO_E2E: sin ella el motor integrado ignora la URL de pruebas. FFMPEG_DIR: el motor integrado
         # no mira el PATH; en desarrollo, si no hay ffmpeg en la carpeta del motor, vale el del entorno.
-        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID", "VIDEO_E2E"):
+        # VIDEO_FORZAR_SIN_GPU: interruptor de pruebas del motor (apaga WebGPU); está en la huella.
+        for nombre in ("VIDEO_PRUEBAS_TTS_URL", "ELEVENLABS_VOICE_ID", "VIDEO_E2E", "VIDEO_FORZAR_SIN_GPU"):
             if os.environ.get(nombre):
                 env[nombre] = os.environ[nombre]
         if "FFMPEG_DIR" not in env and os.environ.get("FFMPEG_DIR"):
