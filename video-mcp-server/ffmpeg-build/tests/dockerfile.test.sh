@@ -73,7 +73,7 @@ afirmar "UID 10001" grep -q 'useradd .*--uid 10001' "$DF"
 
 # comprobar-inrelease.sh: Date ≤ marca de tiempo y SHA-256 igual al de fuentes.lock.
 CI="$DIR_BUILD/comprobar-inrelease.sh"
-printf 'Origin: Debian\nSuite: trixie\nDate: Tue, 14 Oct 2026 20:12:34 UTC\n' >"$TMP_TEST/InRelease"
+printf 'Origin: Debian\nSuite: trixie\nDate: Wed, 14 Oct 2026 20:12:34 UTC\n' >"$TMP_TEST/InRelease"
 sha=$(sha256sum "$TMP_TEST/InRelease" | cut -d' ' -f1)
 fila() { printf 'debian-inrelease\ttrixie\tapt\thttps://snapshot.debian.org/archive/debian/%s/dists/trixie/InRelease\t%s\t-\t-\t-\t-\t-\t-\n' "$1" "$2" >"$TMP_TEST/lock"; }
 fila 20261015T000000Z "$sha"; afirmar "InRelease anclado y anterior a la marca → 0" bash "$CI" "$TMP_TEST/InRelease" "$TMP_TEST/lock"
