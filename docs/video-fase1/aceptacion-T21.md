@@ -110,7 +110,7 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 ## Condiciones para `VIDEO_ENGINE=1` en el piloto local
 
 1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado)
-   y W3.5 (borrado del spike).
+   y W3.5 (borrado del spike: **hecho**, SEO-107).
 2. M-4 cerrada, M-5 medida y M2 hecha.
 3. R2-1 y R2-2 arreglados (hecho) y la importación probada con la app instalada (Rust real, no E2E simulados).
 4. Decisión escrita sobre WebRTC en la preview y sonda de red con la app real.

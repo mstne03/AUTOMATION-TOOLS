@@ -1,7 +1,11 @@
 # Spike D6 — preview de la composición en el WebView2
 
 Fecha: 2026-10-27/28 · Máquina: Windows 11, portátil con RTX 4060 Laptop + Radeon 780M · HyperFrames 0.8.206.
-Código del spike (desechable, solo desarrollo): `app-backend/app_backend/spike_preview.py`,
+> **Borrado en W3.5:** `spike_preview.py`, su test, `app-ui/src/spikes/` y `spike-preview-medir.mjs` ya no existen
+> (recuperables en git antes de ese commit). `spikes/shader/servir.mjs` leía `CONTROL_JS` de `spike_preview.py`:
+> para repetir esa medición hay que sacarlo de git. La preview real vive en `app_backend/preview.py`.
+
+Código del spike (desechable, solo desarrollo, borrado en W3.5): `app-backend/app_backend/spike_preview.py`,
 `app-ui/src/spikes/PreviewSpike.tsx` (ruta `/#/spike-preview`), `app-ui/scripts/spike-preview-medir.mjs`
 (conductor Playwright) y, en `video-mcp-server/spikes/`: `preview-montar.mjs`, `preview-render.mjs`,
 `preview-comparar.mjs`. Salidas (PNG, MP4, JSON) en `spikes/salidas/preview/` (ignorada por git).
