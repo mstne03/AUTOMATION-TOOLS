@@ -98,12 +98,13 @@ const ClipVoz = memo(function ClipVoz({ fraseId, texto, recorte, audio, inicio, 
       className={cx(s.clip, s.clipVoz, pendiente && s.pendiente)}
       style={{ left: inicio, width: anchoVisible }}
       data-testid={`clip-voz-${fraseId}`}
-      aria-label={`Frase: ${texto}. Mayús y flechas ajustan el final del recorte a una palabra.`}
+      aria-label={`Frase: ${texto}.${pendiente ? " Pendiente." : ""} Mayús y flechas ajustan el final del recorte a una palabra.`}
       onKeyDown={alTeclar}
     >
+      {/* Solo visual (el estado va en aria-label): en clips estrechos se reduce a un punto, nunca se recorta. */}
       {pendiente && (
-        <Chip tone="write" className={s.chipPend}>
-          Pendiente
+        <Chip tone="write" className={s.chipPend} aria-hidden="true" title="Pendiente">
+          <span className={s.chipPendTexto}>Pendiente</span>
         </Chip>
       )}
       <span className={s.accionesClip}>
