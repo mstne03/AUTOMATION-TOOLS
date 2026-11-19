@@ -35,7 +35,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main, fix/w3-2-ffmpeg-lgpl] # TEMPORAL: registrar el workflow fuera de main (se revierte)
+    branches: [main]
     paths:
       - video-mcp-server/ffmpeg-build/**
       - .github/workflows/ffmpeg-lgpl.yml
