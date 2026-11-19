@@ -14,6 +14,8 @@
 #                 ella (lo normal) el instalador lleva video-engine/ con solo un marcador y el backend
 #                 responde 503 «módulo de vídeo no instalado». Se queda apagada hasta resolver los
 #                 pendientes de video-mcp-server/LICENCIAS.md (Chrome for Testing, ffmpeg LGPL).
+#   FFMPEG_LGPL_TAG  solo con VIDEO_ENGINE=1: etiqueta de la release ffmpeg-lgpl-<rev> de este repo
+#                 (la crea ffmpeg-lgpl.yml con publicar). El ffmpeg del instalador sale de ahí.
 # Despues, en el VPS: bash deploy/publish-app.sh vX.Y.Z (kb-seo/deploy) para servir
 # latest.json y el instalador en https://kb.mstne.dev/app/.
 #
@@ -86,9 +88,21 @@ jobs:
       # Motor de vídeo (D10), solo con VIDEO_ENGINE=1: Node y ffmpeg LGPL (sin navegador, I12) con versión y
       # SHA-256 fijados en el script; las descargas van a RUNNER_TEMP. El script ya hace el npm ci del
       # motor; los tests van después sobre ese mismo node_modules. Antes del smoke test, que lo comprueba.
+      # ffmpeg: el LGPL propio de la release ffmpeg-lgpl-<rev> de este repo (ffmpeg-lgpl.yml, W3.2), nunca
+      # BtbN ni el del runner. FFMPEG_LGPL_TAG es esa etiqueta; el control es el SHA-256 fijado en el script,
+      # que aborta si no coincide. La release sube LICENSES/* planos: se recolocan como en construir.sh.
       - name: Motor de vídeo - empaquetado y tests
         if: vars.VIDEO_ENGINE == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FFMPEG_LGPL_TAG: ${{ vars.FFMPEG_LGPL_TAG }}
         run: |
+          [[ "$FFMPEG_LGPL_TAG" =~ ^ffmpeg-lgpl-[A-Za-z0-9_.-]+$ ]] || { echo "::error::Falta FFMPEG_LGPL_TAG (release ffmpeg-lgpl-<rev>)"; exit 1; }
+          export FFMPEG_LGPL_DIR="$RUNNER_TEMP/ffmpeg-lgpl"
+          mkdir -p "$FFMPEG_LGPL_DIR/LICENSES"
+          gh release download "$FFMPEG_LGPL_TAG" --repo "$GITHUB_REPOSITORY" --dir "$FFMPEG_LGPL_DIR" \
+            --pattern ffmpeg.exe --pattern ffprobe.exe --pattern '*.txt'
+          find "$FFMPEG_LGPL_DIR" -maxdepth 1 -name '*.txt' ! -name LEEME-FFMPEG.txt -exec mv -t "$FFMPEG_LGPL_DIR/LICENSES" {} +
           (cd app-ui && bash scripts/prepare-video-engine.sh)
           (cd video-mcp-server && npm test)
 
