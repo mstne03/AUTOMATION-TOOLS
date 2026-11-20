@@ -9,4 +9,12 @@
 4. Sin test que fije `-t`, `-fs`, `-map` y `-ac` de `musica.ts` (opcional).
 5. `npm test`: 52 ficheros pasan, 1066 tests (antes de los topes y de `-ac 2`; tras ellos se repitieron `audio-wav`,
    `render-verificacion` y `render-modos`; `-ac 2` solo con `audio-wav` y `tsc`).
-6. Puerta W3.2: punto 1 cumplido; faltan SHA-256 de CI, prueba de nvenc/mf por Marc y fijar el SHA.
+6. Puerta W3.2 (2026-11-19): puntos 1, 2 y 4 cumplidos en código. La ejecución de CI
+   [44585754745](https://github.com/mstne03/AUTOMATION-TOOLS/actions/runs/44585754745) (`ffmpeg-lgpl.yml`, commit `77ed5e8`, sin `SIN_MF`) da a y b idénticos y
+   `ffmpeg.exe` `f8a83b58…6d85`, `ffprobe.exe` `d22d908e…e01`: los mismos que la construcción de
+   testigo de Marc y los fijados en `prepare-video-engine.sh`, que aborta si no coinciden.
+   `release.yml` empaqueta ese ffmpeg (`FFMPEG_LGPL_DIR` desde la release `vars.FFMPEG_LGPL_TAG`).
+   `sin_lame` cubre ya el artefacto: el script rechaza un ffmpeg con `libmp3lame` y un `dist/` que lo nombre.
+   **Falta:** la prueba de Marc con `h264_nvenc` y `h264_mf` usando ese build en un render real; la
+   variable `REPO_FUENTE` (sin ella `empaquetar` falla y no hay avisos ni tarball de fuente) y la
+   release `ffmpeg-lgpl-<rev>` desde `main` (`publicar`), y después `FFMPEG_LGPL_TAG`.
