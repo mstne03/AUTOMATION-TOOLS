@@ -124,6 +124,85 @@ test("layout_b_900x600: sin scroll horizontal y medidas exactas de las tres zona
   expect(desborda).toEqual({ pagina: false, main: false, alto: false });
 });
 
+test("timeline_900x600: a todo el ancho, Música a la vista o con scroll y píldoras enteras", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  // Con música elegida la fila Música lleva todos sus controles (la más alta).
+  await simularRutas(page, { "/video/musica": { pistas: [{ id: "m1", nombre: "Pista de prueba" }] } });
+  const id = await proyectoDeCocina();
+  await irAlEditor(page, id);
+  await page.getByTestId("musica-elegir").selectOption("m1");
+  await expect(page.getByTestId("musica-ducking")).toBeAttached();
+  const timeline = page.getByTestId("timeline");
+  const pildoras = page.getByTestId("pista-voz").locator("[data-tone=write]");
+  await expect(pildoras).toHaveCount(4);
+  // Evidencia para revisar a ojo (no es una referencia visual).
+  await page.screenshot({ path: test.info().outputPath("timeline-900x600.png") });
+
+  const g = await timeline.evaluate((t) => {
+    const caja = (e: Element) => e.getBoundingClientRect();
+    const zona = caja(document.querySelector("[data-testid=editor-zona-timeline]")!);
+    const tl = caja(t);
+    const derechaUtil = tl.left + t.clientLeft + t.clientWidth;
+    const filas = ["timeline-regla", "pista-escenas", "pista-recursos", "pista-voz", "pista-musica", "pista-subtitulos"].map(
+      (tid) => caja(t.querySelector(`[data-testid=${tid}]`)!).right,
+    );
+    return {
+      viewport: innerWidth,
+      zona: { left: zona.left, right: zona.right, top: zona.top, bottom: zona.bottom },
+      tl: { left: tl.left, right: tl.right, top: tl.top, bottom: tl.bottom },
+      derechaUtil,
+      filas,
+      scrollH: t.scrollHeight,
+      clientH: t.clientHeight,
+      scrollW: t.scrollWidth,
+      clientW: t.clientWidth,
+      pulgar: getComputedStyle(t).scrollbarColor,
+    };
+  });
+  // 1. El timeline ocupa toda su zona y cada fila llega a su borde derecho útil.
+  expect(g.zona.right).toBeLessThanOrEqual(g.viewport);
+  expect(Math.round(g.tl.left)).toBe(Math.round(g.zona.left));
+  expect(Math.round(g.tl.right)).toBe(Math.round(g.zona.right));
+  for (const derecha of g.filas) expect(Math.round(derecha)).toBe(Math.round(g.derechaUtil));
+  expect(g.scrollW).toBeLessThanOrEqual(g.clientW);
+
+  // 2. La fila Música empieza dentro del área visible; si no cabe entera, el timeline se desplaza en
+  //    vertical con la barra visible en reposo (no transparente) y al desplazarse queda entera a la vista.
+  const musica = page.getByTestId("pista-musica");
+  const filaMusica = await musica.evaluate((e) => {
+    const r = e.parentElement!.parentElement!.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom };
+  });
+  expect(filaMusica.top).toBeGreaterThanOrEqual(g.tl.top);
+  expect(filaMusica.top + 24).toBeLessThanOrEqual(g.tl.bottom);
+  await expect(page.getByTestId("musica-elegir")).toBeInViewport();
+  if (filaMusica.bottom > g.tl.bottom) {
+    expect(g.scrollH).toBeGreaterThan(g.clientH);
+    expect(g.pulgar.startsWith("transparent")).toBe(false);
+    await page.getByTestId("musica-ducking").scrollIntoViewIfNeeded();
+    const tras = await musica.evaluate((e, tl) => {
+      const r = e.parentElement!.parentElement!.getBoundingClientRect();
+      return r.top >= tl.top - 0.5 && r.bottom <= tl.bottom + 0.5;
+    }, g.tl);
+    expect(tras).toBe(true);
+  }
+
+  // 3. Ninguna píldora «Pendiente» se recorta: su contenido cabe y su caja cae dentro de la del clip.
+  for (const p of await pildoras.all()) {
+    const r = await p.evaluate((e) => {
+      const chip = e.getBoundingClientRect();
+      const clip = e.closest("[data-testid^=clip-voz-]")!.getBoundingClientRect();
+      return {
+        cabe: e.scrollWidth <= e.clientWidth && e.scrollHeight <= e.clientHeight,
+        dentro: chip.left >= clip.left - 0.5 && chip.right <= clip.right + 0.5 && chip.width > 0,
+      };
+    });
+    expect(r).toEqual({ cabe: true, dentro: true });
+  }
+});
+
 test("editor: título como texto y volver a la lista", async ({ page }) => {
   const id = await proyectoDeCocina();
   const p = await leerProyecto(id);
