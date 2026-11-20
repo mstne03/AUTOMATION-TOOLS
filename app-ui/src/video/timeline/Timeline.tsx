@@ -124,10 +124,13 @@ export function Timeline() {
         </div>
         <div className={s.fila}>
           <div className={s.etiqueta}>
-            <span>Voz</span>
-            <Button size="sm" variant="secondary" data-testid="voz-generar" disabled={alDia} onClick={() => void voz.pedir()}>
-              Generar voz
-            </Button>
+            {/* Título y botón en una línea: la fila Voz no empuja Música fuera de la zona de 240 px. */}
+            <span className={s.etiquetaLinea}>
+              <span>Voz</span>
+              <Button size="sm" variant="secondary" data-testid="voz-generar" disabled={alDia} onClick={() => void voz.pedir()}>
+                Generar voz
+              </Button>
+            </span>
             <span className={s.coste} data-testid="voz-coste" aria-live="polite">
               {coste.data ? (alDia ? "Voz al día" : `${coste.data.caracteres} caracteres pendientes`) : ""}
             </span>

@@ -243,8 +243,10 @@ Lo que destapó el primer build real (corregido, con test donde cabía): `gcc` n
 (host cc de configure); `fd` en los protocolos (la CLI 7.x traduce `-` a `fd:`); `wrapped_avframe`
 como decoder (`-f lavfi`, el sondeo del motor) y como encoder (`-f null -`); comillas en las listas
 de `-buildconf`; `-L` con CRLF; `cat | grep -q` con pipefail en `compilar.sh`; la prueba `[gpu]`
-ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 1 (`musica.ts` en WAV desde T2) y 3 cumplidos; falta
-2 (el SHA-256 de CI debe coincidir con este).
+ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 1 (`musica.ts` en WAV desde T2) y 3 cumplidos; 2 cumplido el
+2026-11-19: la ejecución de CI [44585754745](https://github.com/mstne03/AUTOMATION-TOOLS/actions/runs/44585754745)
+da exactamente estos `SHA256SUMS` (a y b idénticos, sin `SIN_MF`); 4 cumplido (`prepare-video-engine.sh`).
+Falta la URL del asset (paso 9): la release necesita `REPO_FUENTE` y `publicar` desde `main`.
 
 ### Descargas que pedirá la Tarea 10
 

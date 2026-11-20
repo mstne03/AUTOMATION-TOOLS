@@ -29,9 +29,10 @@ NODE_SHA256=cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20
 # ffmpeg LGPL propio (W1.5, video-mcp-server/ffmpeg-build), reproducible: el SHA-256 es el control,
 # venga de donde venga el fichero. FFMPEG_LGPL_DIR = carpeta con ffmpeg.exe, ffprobe.exe, LICENSES/ y
 # LEEME-FFMPEG.txt (construir.sh + recopilar-avisos.sh, el mismo contenido que la release).
-# ponytail: solo carpeta local hasta que exista la release de CI (W3.2 punto 2); entonces, descarga
-# por URL con estos mismos hashes. Un bundle hecho así NO se distribuye: la oferta de código fuente
-# de LEEME-FFMPEG.txt apunta a esa release.
+# En release.yml, FFMPEG_LGPL_DIR es la release ffmpeg-lgpl-<rev> descargada (vars.FFMPEG_LGPL_TAG);
+# en local, una construcción propia. Mientras esa release no exista, un bundle NO se distribuye: la
+# oferta de código fuente de LEEME-FFMPEG.txt apunta a ella. Hashes: los de la ejecución de CI de
+# ffmpeg-lgpl.yml (a y b idénticos), que coinciden con la construcción local de Marc (testigo, M5).
 FFMPEG_VERSION=7.1.5
 FFMPEG_SHA256=f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85
 FFPROBE_SHA256=d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01
@@ -147,9 +148,13 @@ comprobar_sha "$DEST/ffmpeg/ffprobe.exe" "$FFPROBE_SHA256"
 # La carpeta lleva exactamente esos dos ficheros: el motor rechaza cualquier otro (DLL plantada, I4).
 [ "$(ls -A "$DEST/ffmpeg" | sort | paste -sd' ' -)" = "ffmpeg.exe ffprobe.exe" ] || falla "la carpeta ffmpeg del bundle tiene ficheros de más"
 codificadores=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -encoders)
-for prohibido in libx264 libx264rgb libx265 libopenh264; do
+for prohibido in libx264 libx264rgb libx265 libopenh264 libmp3lame; do
   ! grep -qE "^\s*\S+\s+$prohibido\s" <<<"$codificadores" || falla "el ffmpeg del bundle lista $prohibido (debe ser el LGPL propio)"
 done
+# sin_lame sobre el artefacto (W3.2), no solo sobre src/: el motor empaquetado no pide libmp3lame.
+rc=0
+grep -rIl libmp3lame "$DEST/app/dist" || rc=$?
+[ "$rc" -eq 1 ] || falla "el dist/ del bundle nombra libmp3lame, o la búsqueda falló (W3.2)"
 for f in "$origen"/LICENSES/*.txt; do cp "$f" "$DEST/LICENSES/ffmpeg-$(basename "$f")"; done
 cp "$origen/LEEME-FFMPEG.txt" "$DEST/LICENSES/ffmpeg-LEEME.txt"
 version=$("$DEST/ffmpeg/ffmpeg.exe" -hide_banner -version)

@@ -9,7 +9,15 @@ y la R2 en `R2-fase1.md`.
 Todos los renders usan el ffmpeg LGPL del bundle actual: BtbN `n7.1.5-12 win64-lgpl-7.1`, con el
 SHA-256 fijado en `app-ui/scripts/prepare-video-engine.sh` (comprobado) y sin `libx264` ni `--enable-gpl`.
 Se pasa por `FFMPEG_DIR`; el del PATH (full build de WinGet) no se usa. El build LGPL propio
-(W1.5) aún no sustituye a BtbN: la puerta W3.2 sigue abierta.
+(W1.5) aún no sustituye a BtbN en estos renders.
+
+**W3.2 (2026-11-19), parte de código cerrada:** el SHA-256 del build propio que da CI
+([ejecución 44585754745](https://github.com/mstne03/AUTOMATION-TOOLS/actions/runs/44585754745), a y b
+idénticos) coincide con la construcción de testigo de Marc y es el fijado en `prepare-video-engine.sh`
+(`ffmpeg.exe` `f8a83b58…6d85`, `ffprobe.exe` `d22d908e…e01`). `release.yml` lo toma de la release
+`ffmpeg-lgpl-<rev>` (`vars.FFMPEG_LGPL_TAG`) con `FFMPEG_LGPL_DIR`, y el script rechaza `libmp3lame` en el
+ffmpeg y en el `dist/` empaquetados. Queda: prueba de Marc de `h264_nvenc` y `h264_mf` con ese build en un
+render real, la variable `REPO_FUENTE` y publicar la release desde `main` (código fuente correspondiente).
 
 ## Resultados (máquina de Marc)
 
@@ -109,7 +117,8 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 
 ## Condiciones para `VIDEO_ENGINE=1` en el piloto local
 
-1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado)
+1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado;
+   código hecho, falta la prueba nvenc/mf de Marc y la release con el código fuente)
    y W3.5 (borrado del spike: **hecho**, SEO-107).
 2. M-4 cerrada, M-5 medida y M2 hecha.
 3. R2-1 y R2-2 arreglados (hecho) y la importación probada con la app instalada (Rust real, no E2E simulados).
