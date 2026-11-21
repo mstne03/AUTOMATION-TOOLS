@@ -31,11 +31,12 @@ NODE_SHA256=cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20
 # LEEME-FFMPEG.txt (construir.sh + recopilar-avisos.sh, el mismo contenido que la release).
 # En release.yml, FFMPEG_LGPL_DIR es la release ffmpeg-lgpl-<rev> descargada (vars.FFMPEG_LGPL_TAG);
 # en local, una construcción propia. Mientras esa release no exista, un bundle NO se distribuye: la
-# oferta de código fuente de LEEME-FFMPEG.txt apunta a ella. Hashes: los de la ejecución de CI de
-# ffmpeg-lgpl.yml (a y b idénticos), que coinciden con la construcción local de Marc (testigo, M5).
+# oferta de código fuente de LEEME-FFMPEG.txt apunta a ella. Hashes: los de la construcción local de
+# Marc con mjpeg y settb (2026-11-21, verificar-binario.sh entero). PENDIENTE: confirmarlos con una
+# ejecución de CI de ffmpeg-lgpl.yml (a y b idénticos) antes de cualquier release.
 FFMPEG_VERSION=7.1.5
-FFMPEG_SHA256=f8a83b58b06c70f2e12a8c8b7af9fad5fcd26bd631f192dd77926a261d2b6d85
-FFPROBE_SHA256=d22d908edd30f035c8b22563914dda439cdc22ad3084139fdf578f9672f36e01
+FFMPEG_SHA256=7a3eb8edd56c6cac4e0fbcb7f60a0e096e8f0542526d2dbd9f867eec6215e24e
+FFPROBE_SHA256=4f71455eaccabd31fc04559c3f1db446ef3f442d8521031d0beb13f1c825b28b
 
 HYPERFRAMES_VERSION=0.8.206
 
