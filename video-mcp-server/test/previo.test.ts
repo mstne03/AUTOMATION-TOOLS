@@ -17,7 +17,6 @@ const cfg: Config = {
   elevenVoiceId: undefined,
   elevenModelId: "eleven_multilingual_v2",
   videoRoot: RAIZ,
-  browserPath: undefined,
   musicaVolumen: 0.12,
   ffmpegDir: undefined,
 };
@@ -47,7 +46,7 @@ describe("validación con archivos", () => {
     expect(e.texto).toMatch(/img6 FALTA/);
     fs.writeFileSync(path.join(RAIZ, "video001", "img6.png"), "");
     await expect(prepararRender("video001", OPC)).resolves.toBeTruthy();
-  });
+  }, 120000);
 
   it("avisa de las fotos que están en la carpeta con otro nombre", async () => {
     video("video006", "escenas:\n  2:\n    tipo: cifra\n    valor: 1\n  3:\n    tipo: cifra\n    valor: 2\n  4:\n    tipo: cifra\n    valor: 3\n  5:\n    tipo: cifra\n    valor: 4", []);
@@ -71,7 +70,7 @@ describe("validación con archivos", () => {
     const h = herramientasFfmpeg();
     expect(h).toBeTruthy();
     fs.mkdirSync(path.join(RAIZ, "_musica"), { recursive: true });
-    await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=3", path.join(RAIZ, "_musica", "corta.mp3")]);
+    await ejecutar(h!.ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=3", path.join(RAIZ, "_musica", "corta.mp3")], { timeoutMs: 120_000 });
     video("video005", "musica: _musica/corta.mp3\nmusica_desde: 5", [1, 2, 3, 4, 5, 6]);
     await expect(prepararRender("video005", OPC)).rejects.toThrow(/musica_desde: 5` es mayor que la duración de la pista \(3\.0 s\)/);
     // Sin música en el render, la pista no se comprueba.

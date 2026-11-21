@@ -20,7 +20,7 @@ export function useAlTerminarTurno(chat: Chat, esperando: boolean, alTerminar: (
   }, [chat.mensajes, chat.enStream, esperando, alTerminar]);
 }
 
-export function SelectorFormato({ testid, valor, onChange }: { testid: string; valor: Formato; onChange: (f: Formato) => void }) {
+export function SelectorFormato({ testid, valor, onChange, conVideo = false }: { testid: string; valor: Formato; onChange: (f: Formato) => void; /** Solo Escribir ofrece el formato Vídeo. */ conVideo?: boolean }) {
   return (
     <div className={s.campo}>
       <span className={s.etiqueta}>Formato</span>
@@ -32,6 +32,7 @@ export function SelectorFormato({ testid, valor, onChange }: { testid: string; v
         options={[
           { value: "long", label: "Vídeo largo" },
           { value: "short", label: "Short" },
+          ...(conVideo ? [{ value: "video" as const, label: "Vídeo" }] : []),
         ]}
       />
     </div>

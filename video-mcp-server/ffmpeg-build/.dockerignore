@@ -1,0 +1,5 @@
+# La imagen solo necesita lo que copia el Dockerfile; el resto (tests, muestras, claves) se monta
+# en solo lectura al ejecutar, no entra en las capas.
+*
+!fuentes.lock
+!comprobar-inrelease.sh

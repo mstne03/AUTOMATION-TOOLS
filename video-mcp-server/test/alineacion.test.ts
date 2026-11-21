@@ -1,7 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   agruparFrases,
+  cargarPalabras,
   procesarAlineacion,
+  validarPalabras,
+  MAX_PALABRAS_JSON_BYTES,
   tiemposPorCaracter,
   type AlineacionCaracteres,
 } from "../src/alineacion.js";
@@ -120,5 +126,70 @@ describe("agruparFrases", () => {
     ];
     const f = agruparFrases(palabras);
     expect(f.map((x) => x.texto)).toEqual(["a b c", "d extraordinarily", "long", "x"]);
+  });
+});
+
+describe("palabras.json: validación al cargar (I1)", () => {
+  const { narracion, bloques } = bloquesDe(TEXTOS);
+  const real = () =>
+    procesarAlineacion({ narracion, bloques, alineacion: alinear(narracion), duracionAudio: 8, hashNarracion: "h" });
+  const clon = () => JSON.parse(JSON.stringify(real())) as Record<string, any>;
+
+  it("el resultado real de procesarAlineacion pasa y se devuelve el valor validado", () => {
+    const r = validarPalabras(clon());
+    expect(r.palabras.length).toBe(real().palabras.length);
+    expect(r.segmentos).toHaveLength(6);
+  });
+
+  it("admite un palabras.json antiguo sin duracionTotal ni avisos", () => {
+    const v = clon();
+    delete v.duracionTotal;
+    delete v.avisos;
+    const r = validarPalabras(v);
+    expect(r.duracionTotal).toBeCloseTo(8.4, 3);
+    expect(r.avisos).toEqual([]);
+  });
+
+  const malos: [string, (v: Record<string, any>) => void][] = [
+    ["inicio como texto", (v) => (v.palabras[0].inicio = "1")],
+    ["inicio null", (v) => (v.palabras[0].inicio = null)],
+    ["tiempo negativo", (v) => (v.palabras[0].fin = -1)],
+    ["segmentos que no es array", (v) => (v.segmentos = "seis")],
+    ["texto que no es string", (v) => (v.frases[0].texto = 5)],
+    ["segmento fuera de 1-6", (v) => (v.palabras[0].segmento = 9)],
+    ["índice de palabra inexistente", (v) => (v.frases[0].palabras = [99999])],
+    ["demasiadas palabras", (v) => (v.palabras = Array.from({ length: 6000 }, () => v.palabras[0]))],
+    ["hash ausente", (v) => delete v.hashNarracion],
+  ];
+  for (const [nombre, f] of malos) {
+    it(`rechaza ${nombre} pidiendo regenerar, sin traza`, () => {
+      const v = clon();
+      f(v);
+      let msg = "";
+      try {
+        validarPalabras(v);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      expect(msg).toMatch(/Regenera la voz/);
+      expect(msg).not.toMatch(/ZodError|at /);
+    });
+  }
+
+  it("un tiempo no finito (1e400 en el JSON es Infinity) se rechaza", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video palabras "));
+    try {
+      const ruta = path.join(dir, "palabras.json");
+      fs.writeFileSync(ruta, JSON.stringify(clon()).replace(/"duracionAudio":[0-9.]+/, '"duracionAudio":1e400'));
+      expect(() => cargarPalabras(ruta)).toThrow(/Regenera la voz/);
+      fs.writeFileSync(ruta, JSON.stringify(clon()));
+      expect(cargarPalabras(ruta).palabras.length).toBeGreaterThan(0);
+      fs.writeFileSync(ruta, "{no es json");
+      expect(() => cargarPalabras(ruta)).toThrow(/dañado/);
+      fs.writeFileSync(ruta, "x".repeat(MAX_PALABRAS_JSON_BYTES + 1));
+      expect(() => cargarPalabras(ruta)).toThrow(/demasiado grande/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

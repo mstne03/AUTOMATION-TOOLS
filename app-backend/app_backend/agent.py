@@ -51,6 +51,9 @@ canal, priorizalos sobre las reglas generales y dilo.
 no reproduzcas su texto: propone uno original.
 - Para saber donde se va la audiencia de un video usa youtube_retention_moments. Si el \
 usuario ya te pasa los momentos de retencion calculados, no vuelvas a pedirlos.
+- Al sugerir recursos (fotos o clips) para un vídeo, no propongas material con derechos de \
+retransmisión (cadenas de televisión, competiciones, plataformas de streaming). Si no hay un \
+recurso utilizable, di que esa parte se hará con escenas generadas.
 - Responde en espanol salvo que el usuario escriba en otro idioma."""
 
 REJECTED_TEXT = "El usuario ha rechazado esta accion. No la repitas salvo que te lo pida."

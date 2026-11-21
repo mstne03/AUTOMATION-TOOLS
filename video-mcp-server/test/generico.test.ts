@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cargarConfig, cargarDotenv } from "../src/config.js";
+import { descripcionEsquema } from "../src/esquema.js";
+import { registrarHerramientasProyecto } from "../src/herramientas-proyecto.js";
+import { PERFIL_DEFECTO } from "../src/perfil.js";
 
 const RAIZ = path.resolve(import.meta.dirname, "..");
 
@@ -46,6 +49,14 @@ describe("motor genérico (G1)", () => {
     expect(ficheros.length).toBeGreaterThan(10);
     const hallazgos = ficheros.flatMap((f) => lineas(f).filter((l) => PROHIBIDO.test(l.texto)).map((l) => `${f}:${l.n}`));
     expect(hallazgos).toEqual([]);
+  });
+
+  it("sin_futbol: prompts (descripciones de las tools), descripción del esquema y perfil por defecto", () => {
+    const descripciones: string[] = [];
+    const falso = { registerTool: (nombre: string, def: { title?: string; description?: string }) => descripciones.push(nombre, def.title ?? "", def.description ?? "") };
+    registrarHerramientasProyecto(falso as never, {} as never, (async () => ({})) as never);
+    expect(descripciones.join("\n")).toContain("video_perfil_duplicar");
+    for (const texto of [...descripciones, descripcionEsquema(), JSON.stringify(PERFIL_DEFECTO)]) expect(PROHIBIDO.test(texto)).toBe(false);
   });
 
   it("con VIDEO_ENGINE_EMBEDDED=1 no lee .env; sin ella, sí", () => {
@@ -95,6 +106,23 @@ describe("motor genérico (G1)", () => {
       expect(fs.readFileSync(path.join(dir, "video.log"), "utf8")).toContain("hola desde una ruta con acentos");
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("un conflicto queda en video.log como info y sin detalle; otro fallo, como error (SEO-129)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "video conflicto "));
+    try {
+      vi.stubEnv("VIDEO_STATE_DIR", dir);
+      const { registrarFallo } = await import("../src/herramientas-proyecto.js");
+      const { ErrorAlmacen } = await import("../src/proyecto.js");
+      registrarFallo("video_proyecto_guardar", new ErrorAlmacen("conflicto", "El proyecto está en la revisión 7 y se intentó guardar sobre la 3."));
+      registrarFallo("video_proyecto_guardar", new Error("disco lleno"));
+      const lineas = fs.readFileSync(path.join(dir, "video.log"), "utf8").trim().split(/\r?\n/);
+      expect(lineas).toHaveLength(2);
+      expect(lineas[0]).toMatch(/^\S+ \[info\] video_proyecto_guardar: conflicto \(409\)$/);
+      expect(lineas[1]).toMatch(/^\S+ \[error\] video_proyecto_guardar: disco lleno$/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

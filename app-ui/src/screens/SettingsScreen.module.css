@@ -28,6 +28,16 @@
   flex-direction: column;
   gap: var(--space-2);
 }
+/* Hasta ~1100 px (medido: a ~1070 px deja de caber) el cuerpo apila la subnavegación sobre las secciones;
+   pegajosa taparía el
+   encabezado al hacer scroll, así que pasa a una fila normal (sin cambios por encima de ese ancho). */
+@media (max-width: 1100px) {
+  .subnav {
+    position: static;
+    flex: 1 1 100%;
+    flex-flow: row wrap;
+  }
+}
 .subenlace {
   padding: calc(var(--space-6) + var(--space-2) / 2) var(--space-10);
   border: 1px solid transparent;
@@ -265,7 +275,7 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 1100px) {
   .modelos {
     grid-template-columns: minmax(0, 1fr);
   }

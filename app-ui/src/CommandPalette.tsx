@@ -1,7 +1,7 @@
 /** Paleta Ctrl K (cmdk): navegar a cada pantalla y acciones rápidas. El atajo se registra en un
  *  único sitio (useAtajoPaleta), sin listeners globales sueltos por las pantallas. */
 import { Command } from "cmdk";
-import { BookOpen, ChartLine, MessageSquare, MessageSquarePlus, ScrollText, Search, Settings, Upload } from "lucide-react";
+import { BookOpen, ChartLine, MessageSquare, MessageSquarePlus, ScrollText, Search, Settings, Upload, Video } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useNavigate } from "react-router";
@@ -63,6 +63,10 @@ export function CommandPalette() {
           <Command.Item className={s.item} onSelect={ir("/guiones")} value="Guiones">
             <ScrollText aria-hidden size="1.15em" />
             Guiones
+          </Command.Item>
+          <Command.Item className={s.item} onSelect={ir("/video")} value="Abrir Vídeo">
+            <Video aria-hidden size="1.15em" />
+            Abrir Vídeo
           </Command.Item>
           <Command.Item className={s.item} onSelect={ir("/canal")} value="Panel de canal">
             <ChartLine aria-hidden size="1.15em" />

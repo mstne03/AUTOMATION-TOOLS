@@ -9,10 +9,10 @@ test("barra lateral: título, enlaces en orden, activo con aria-current y 248 px
   await expect(nav.locator("h2")).toHaveText("SEO Studio");
   const ids = await nav.locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("data-testid")));
   const falta = !s.has_anthropic_key || !s.has_client_secret || !yt.auth.authenticated;
-  expect(ids).toEqual(["nav-chat", "nav-publicar", "nav-guiones", "nav-canal", "nav-kb", ...(falta ? ["nav-onboarding"] : []), "nav-ajustes"]);
+  expect(ids).toEqual(["nav-chat", "nav-publicar", "nav-guiones", "nav-video", "nav-canal", "nav-kb", ...(falta ? ["nav-onboarding"] : []), "nav-ajustes"]);
   await expect(page.getByTestId("nav-kb")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-chat")).not.toHaveAttribute("aria-current", "page");
-  for (const [id, texto] of [["nav-chat", "Chat"], ["nav-publicar", "Publicar"], ["nav-guiones", "Guiones"], ["nav-canal", "Canal"], ["nav-kb", "Conocimiento"]]) {
+  for (const [id, texto] of [["nav-chat", "Chat"], ["nav-publicar", "Publicar"], ["nav-guiones", "Guiones"], ["nav-video", "Vídeo"], ["nav-canal", "Canal"], ["nav-kb", "Conocimiento"]]) {
     await expect(page.getByTestId(id)).toHaveText(texto);
   }
   const ancho = await nav.evaluate((n) => n.getBoundingClientRect().width);
@@ -89,4 +89,14 @@ test("sin sidecar accesible se muestra el estado de error", async ({ page }) => 
   await page.route("**/settings", (r) => r.abort());
   await page.goto("/#/ajustes");
   await expect(page.locator("main")).toContainText("Error:");
+});
+
+test("Vídeo: nav-video lleva a /video y /video/:id sigue dentro del marco", async ({ page }) => {
+  await page.goto("/#/kb");
+  await page.getByTestId("nav-video").click();
+  await expect(page).toHaveURL(/#\/video$/);
+  await expect(page.getByTestId("nav-video")).toHaveAttribute("aria-current", "page");
+  await page.goto("/#/video/video001");
+  await expect(page.getByTestId("nav")).toBeVisible();
+  await expect(page.getByTestId("nav-video")).toHaveAttribute("aria-current", "page");
 });

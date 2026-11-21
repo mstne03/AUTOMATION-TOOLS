@@ -4,7 +4,8 @@
  *  plataforma: se generan en Windows, la máquina de Marc). Regenerarlas tras un cambio de diseño
  *  intencionado: `pnpm e2e visual --update-snapshots`. */
 import { expect, test, type Page } from "@playwright/test";
-import { simularRutas } from "./sidecar-falso";
+import { simularRutas, type Peticion } from "./sidecar-falso";
+import { limpiarVideo, proyectoDeCocina } from "./video-comun";
 
 const AHORA = new Date("2026-10-24T12:00:00Z");
 
@@ -44,13 +45,75 @@ const KB_ESTADO = {
   snapshot: { instalada: true, version: "2026-10-23", exportada: "2026-10-23T03:00:00Z", documentos: 120, chunks: 3400, anterior_disponible: false, url: "https://example.invalid/kb", ultima_comprobacion: "2026-10-24T11:00:00Z", ultimo_error: null },
 };
 
-const PANTALLAS: Array<{ nombre: string; ruta: string; listo: (p: Page) => Promise<void> }> = [
+const resumenVideo = (id: string, titulo: string, estado: string, duracion: number) => ({
+  id,
+  titulo,
+  perfil: "defecto",
+  duracion,
+  actualizado: "2026-10-23T10:00:00Z",
+  estado,
+});
+
+const PROYECTOS_VIDEO = [
+  resumenVideo("v0000001", "Tortilla perfecta", "listo", 48),
+  resumenVideo("v0000002", "Cinco errores al freír huevos", "renderizando", 62),
+  resumenVideo("v0000003", "Guion de la final", "borrador", 75),
+  resumenVideo("v0000004", "Receta con fallo de render", "error", 51),
+];
+
+/** Preview simulada del editor: una composición fija de 10 s (sin motor ni voz, para que la captura
+ *  sea estable). Mismo protocolo que la real: avisa con `listo` y responde a `seek`. */
+const PREVIEW_ORIGEN = "http://127.0.0.1:47810";
+const PREVIEW_HTML = `<!doctype html><meta charset="utf-8"><body style="margin:0;background:#1d2a44;color:#fff;font:700 120px sans-serif;display:grid;place-items:center;height:100vh">TORTILLA<script>
+addEventListener("message", (e) => { const m = e.data; if (m && m.tipo === "seek") parent.postMessage({ tipo: "seek-hecho", id: m.id, t: m.t }, "*"); });
+parent.postMessage({ tipo: "listo", duracion: 10 }, "*");
+</script>`;
+
+/** Crea un proyecto real (guion de cocina) y simula su preview; devuelve la ruta del editor y la
+ *  ruta de la preview, que se suma al resto de simulaciones (un `simularRutas` posterior taparía a este). */
+async function prepararEditor(page: Page): Promise<{ ruta: string; rutas: Record<string, unknown>; servirPreview: () => Promise<void> }> {
+  await limpiarVideo();
+  const id = await proyectoDeCocina();
+  return {
+    ruta: `/#/video/${id}`,
+    // Después de `simularRutas`: el último `page.route` registrado es el primero que se consulta.
+    servirPreview: () =>
+      page.route(/127\.0\.0\.1:47810\/p\/fixture\//, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html", headers: { "cache-control": "no-store" }, body: PREVIEW_HTML }),
+      ),
+    rutas: {
+      [`/video/proyectos/${id}/preview`]: (_u: URL, p: Peticion): [number, unknown] =>
+        p.metodo === "POST" ? [200, { url: `${PREVIEW_ORIGEN}/p/fixture/index.html`, duracion: 10, avisos: [], fondo: "css" }] : [200, {}],
+    },
+  };
+}
+
+const PANTALLAS: Array<{ nombre: string; ruta: string; preparar?: (p: Page) => Promise<{ ruta: string; rutas: Record<string, unknown>; servirPreview: () => Promise<void> }>; listo: (p: Page) => Promise<void> }> = [
   { nombre: "chat", ruta: "/#/chat", listo: async (p) => void (await p.getByTestId("chat-input").waitFor()) },
   { nombre: "publicar", ruta: "/#/publicar", listo: async (p) => void (await p.getByTestId("publicar-pasos").waitFor()) },
   { nombre: "guiones", ruta: "/#/guiones", listo: async (p) => void (await p.getByTestId("escribir-form").waitFor()) },
   { nombre: "canal", ruta: "/#/canal", listo: async (p) => void (await p.getByTestId("canal-videos").waitFor()) },
   { nombre: "kb", ruta: "/#/kb", listo: async (p) => void (await p.getByTestId("kb-snapshot").getByText("Versión").waitFor()) },
   { nombre: "ajustes", ruta: "/#/ajustes", listo: async (p) => void (await p.getByTestId("ajustes-nav-general").waitFor()) },
+  {
+    nombre: "ajustes-video",
+    ruta: "/#/ajustes",
+    listo: async (p) => {
+      await p.getByTestId("ajustes-video").evaluate((el) => el.scrollIntoView({ behavior: "instant", block: "start" }));
+      await p.getByTestId("ajustes-render-modo").waitFor();
+    },
+  },
+  { nombre: "video", ruta: "/#/video", listo: async (p) => void (await p.getByTestId("video-proyecto-estado-v0000004").waitFor()) },
+  {
+    nombre: "video-editor",
+    ruta: "",
+    preparar: prepararEditor,
+    listo: async (p) => {
+      await p.getByTestId("preview-marco").waitFor();
+      await p.getByTestId("preview-cargando").waitFor({ state: "detached" });
+      await p.getByTestId("editor-guardado").getByText("Guardado").waitFor();
+    },
+  },
   { nombre: "onboarding", ruta: "/#/onboarding", listo: async (p) => void (await p.getByTestId("onboarding-pasos").waitFor({ state: "attached" })) },
   { nombre: "catalogo", ruta: "/#/catalogo", listo: async (p) => void (await p.getByRole("heading", { name: "Catálogo de componentes" }).waitFor()) },
 ];
@@ -71,15 +134,20 @@ for (const tema of ["dark", "light"] as const) {
         test(pantalla.nombre, async ({ page }) => {
           await page.clock.install({ time: AHORA });
           await page.addInitScript((v) => localStorage.setItem("seo-studio.tema", v), tema);
+          const previa = pantalla.preparar ? await pantalla.preparar(page) : undefined;
           await simularRutas(page, {
+            ...previa?.rutas,
             "/settings": AJUSTES,
             "/youtube/status": ESTADO_YT,
             "/youtube/channel": CANAL,
             "/kb/estado": KB_ESTADO,
             "/kb/privada/fuentes": [],
             "/conversations": [],
+            "/video/proyectos": PROYECTOS_VIDEO,
+            "/video/navegador": { version: "148.0.1", tamano: 125829120, estado: "ausente", descargado: 0, error: null },
           });
-          await page.goto(pantalla.ruta);
+          await previa?.servirPreview();
+          await page.goto(previa?.ruta ?? pantalla.ruta);
           await pantalla.listo(page);
           await page.evaluate(() => document.fonts.ready);
           await expect(page).toHaveScreenshot(`${pantalla.nombre}-${tema}-${t.ancho}x${t.alto}.png`, { fullPage: false, maxDiffPixelRatio: 0.002 });

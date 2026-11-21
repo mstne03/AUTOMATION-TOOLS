@@ -95,9 +95,9 @@ describe("render:mock", () => {
       }
 
       if (fin.avisos.length) process.stderr.write(`Avisos del render:\n${fin.avisos.join("\n")}\n`);
-      const mp4 = path.join(RAIZ, `${ID}.mp4`);
+      const mp4 = path.join(RAIZ, ID, "video.mp4");
       expect(fs.existsSync(mp4)).toBe(true);
-      expect(fs.existsSync(path.join(RAIZ, `${ID}.renderizando.mp4`))).toBe(false);
+      expect(fs.existsSync(path.join(RAIZ, ID, `${ID}.renderizando.mp4`))).toBe(false);
       const info = await sondear(h!.ffprobe, mp4);
       expect(info.ancho).toBe(1080);
       expect(info.alto).toBe(1920);

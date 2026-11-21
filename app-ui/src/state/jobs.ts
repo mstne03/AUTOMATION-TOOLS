@@ -5,6 +5,7 @@ import { create } from "zustand";
 import type { Client } from "../api/client";
 import type { Job } from "../api/types";
 import { toast } from "../ui/Toaster";
+import { sinRutas } from "../video/render/sinRutas";
 
 export const jobActivo = (j: Job) => j.status === "queued" || j.status === "running";
 
@@ -13,8 +14,8 @@ export const useJobs = create<{ jobs: Record<string, Job> }>(() => ({ jobs: {} }
 /** Resultado visible al terminar un job (UI-12): aviso con éxito o con el error. */
 function avisarFin(antes: Job | undefined, ahora: Job) {
   if (!antes || !jobActivo(antes) || jobActivo(ahora)) return;
-  const que = ahora.kind === "upload" ? "La subida" : "La transcripción";
-  if (ahora.status === "failed") toast({ title: `${que} ha fallado`, description: ahora.error ?? undefined, tone: "error" });
+  const que = ahora.kind === "upload" ? "La subida" : ahora.kind === "video_render" ? "El render" : "La transcripción";
+  if (ahora.status === "failed") toast({ title: `${que} ha fallado`, description: ahora.error ? sinRutas(ahora.error) : undefined, tone: "error" });
   else toast({ title: `${que} ha terminado` });
 }
 

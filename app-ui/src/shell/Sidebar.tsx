@@ -1,6 +1,6 @@
 /** Barra lateral: logo, paleta, navegación, conversaciones, job activo, aviso de configuración y
  *  pie con el canal activo. Los testids nav / nav-* se conservan (docs/pantallas.md). */
-import { BookOpen, ChartLine, MessageSquare, Play, Plus, ScrollText, Search, Trash2, TriangleAlert, Upload, type LucideIcon } from "lucide-react";
+import { BookOpen, ChartLine, MessageSquare, Play, Plus, ScrollText, Search, Trash2, TriangleAlert, Upload, Video, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { useClient } from "../api/context";
@@ -16,6 +16,7 @@ const enlaces: Array<[string, string, LucideIcon]> = [
   ["chat", "Chat", MessageSquare],
   ["publicar", "Publicar", Upload],
   ["guiones", "Guiones", ScrollText],
+  ["video", "Vídeo", Video],
   ["canal", "Canal", ChartLine],
   ["kb", "Conocimiento", BookOpen],
 ];
@@ -28,10 +29,11 @@ const nombreFichero = (job: { args: Record<string, unknown> }) => {
 function JobActivo() {
   const job = useJobs((st) => Object.values(st.jobs).find(jobActivo));
   if (!job) return null;
-  const verbo = job.kind === "upload" ? "Subiendo" : "Transcribiendo";
+  const verbo = job.kind === "upload" ? "Subiendo" : job.kind === "video_render" ? "Renderizando" : "Transcribiendo";
+  const nombre = job.kind === "video_render" ? String(job.args.titulo ?? "") : nombreFichero(job);
   return (
     <div className={s.job} data-testid="nav-job" role="status">
-      <Progress label={`${verbo} ${nombreFichero(job)}`.trim()} value={job.status === "queued" ? undefined : job.progress} />
+      <Progress label={`${verbo} ${nombre}`.trim()} value={job.status === "queued" ? undefined : job.progress} />
     </div>
   );
 }

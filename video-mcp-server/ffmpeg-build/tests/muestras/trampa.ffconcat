@@ -1,0 +1,3 @@
+ffconcat version 1.0
+file '\\127.0.0.1\nada\x.wav'
+file '..\secreto.wav'

@@ -63,3 +63,49 @@ async def test_interrupted_jobs_marked_failed_on_restart(tmp_path):
     assert jobs2.get(job["id"])["status"] == "failed"
     assert "Interrumpido" in jobs2.get(job["id"])["error"]
     await jobs2.stop()
+
+
+async def test_carriles_un_render_no_bloquea_otros_trabajos(tmp_path):
+    import threading
+
+    suelta = threading.Event()
+
+    def render(**_):
+        suelta.wait(10)
+        return {"id": "video001"}
+
+    jobs = Jobs(tmp_path / "jobs.sqlite", {"video_render": render, "lento": _lento},
+                carriles={"video_render": "video"}, internos={"video_render"})
+    jobs.start()
+    try:
+        largo = jobs.enqueue("video_render", {}, interno=True)
+        otro = await jobs.wait(jobs.enqueue("lento", {"pasos": 2})["id"])
+        assert otro["status"] == "done"  # el carril por defecto sigue
+        assert jobs.get(largo["id"])["status"] in ("queued", "running")
+        suelta.set()
+        assert (await jobs.wait(largo["id"]))["status"] == "done"
+    finally:
+        suelta.set()
+        await jobs.stop()
+
+
+async def test_internos_solo_con_interno_true(tmp_path):
+    jobs = Jobs(tmp_path / "jobs.sqlite", {"video_render": _lento}, carriles={"video_render": "video"}, internos={"video_render"})
+    with pytest.raises(ValueError, match="interno"):
+        jobs.enqueue("video_render", {"pasos": 1})
+    assert jobs.enqueue("video_render", {"pasos": 1}, interno=True)["kind"] == "video_render"
+    await jobs.stop()
+
+
+async def test_error_publico_se_guarda_tal_cual(tmp_path):
+    from app_backend.jobs import ErrorPublico
+
+    def falla(**_):
+        raise ErrorPublico("Mensaje legible.")
+
+    jobs = Jobs(tmp_path / "jobs.sqlite", {"falla": falla})
+    jobs.start()
+    try:
+        assert (await jobs.wait(jobs.enqueue("falla", {})["id"]))["error"] == "Mensaje legible."
+    finally:
+        await jobs.stop()

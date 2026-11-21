@@ -1,0 +1,14 @@
+.modos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+.deshabilitado {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@media (max-width: 1000px) {
+  .modos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
