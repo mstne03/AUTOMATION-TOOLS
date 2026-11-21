@@ -13,8 +13,11 @@ Se pasa por `FFMPEG_DIR`; el del PATH (full build de WinGet) no se usa. El build
 
 **W3.2 (2026-11-19), parte de código cerrada:** el SHA-256 del build propio que da CI
 ([ejecución 44585754745](https://github.com/mstne03/AUTOMATION-TOOLS/actions/runs/44585754745), a y b
-idénticos) coincide con la construcción de testigo de Marc y es el fijado en `prepare-video-engine.sh`
-(`ffmpeg.exe` `f8a83b58…6d85`, `ffprobe.exe` `d22d908e…e01`). `release.yml` lo toma de la release
+idénticos) coincide con la construcción de testigo de Marc
+(`ffmpeg.exe` `f8a83b58…6d85`, `ffprobe.exe` `d22d908e…e01`). **2026-11-21:** en `prepare-video-engine.sh`
+lo sustituye la reconstrucción local con `mjpeg` y `settb` (`7a3eb8ed…e24e`, `4f71455e…b28b`, #42), sin la
+que ningún clip de usuario renderizaba; falta confirmarla con una ejecución de CI de `ffmpeg-lgpl.yml`
+antes de una release. `release.yml` lo toma de la release
 `ffmpeg-lgpl-<rev>` (`vars.FFMPEG_LGPL_TAG`) con `FFMPEG_LGPL_DIR`, y el script rechaza `libmp3lame` en el
 ffmpeg y en el `dist/` empaquetados. Queda: prueba de Marc de `h264_nvenc` y `h264_mf` con ese build en un
 render real, la variable `REPO_FUENTE` y publicar la release desde `main` (código fuente correspondiente).

@@ -250,6 +250,21 @@ ya no acepta un fallo del build como «sin GPU». Puerta W3.2: 1 (`musica.ts` en
 da exactamente estos `SHA256SUMS` (a y b idénticos, sin `SIN_MF`); 4 cumplido (`prepare-video-engine.sh`).
 Falta la URL del asset (paso 9): la release necesita `REPO_FUENTE` y `publicar` desde `main`.
 
+### Reconstrucción con `mjpeg` y `settb` (2026-11-21, máquina de Marc)
+
+HyperFrames extrae los fotogramas de cada clip de usuario a JPG con `settb` (prueba manual de T21):
+sin ellos, todo render con una capa de clip fallaba. `construir.sh` desde cero y `verificar-binario.sh`
+entero en verde, incluida la prueba nueva de extracción. Sustituye a los hashes de arriba en
+`prepare-video-engine.sh`:
+
+```
+7a3eb8edd56c6cac4e0fbcb7f60a0e096e8f0542526d2dbd9f867eec6215e24e  ffmpeg.exe
+4f71455eaccabd31fc04559c3f1db446ef3f442d8521031d0beb13f1c825b28b  ffprobe.exe
+```
+
+Pendiente: una ejecución de CI de `ffmpeg-lgpl.yml` (a y b) que dé exactamente estos `SHA256SUMS`, y la
+release con su fuente antes de distribuir. Hasta entonces, solo piloto local.
+
 ### Descargas que pedirá la Tarea 10
 
 | # | Qué | Origen | Tamaño aprox. | Permiso |
