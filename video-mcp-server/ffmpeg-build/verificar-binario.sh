@@ -99,6 +99,16 @@ prores() {
     fp -select_streams v:0 -show_entries stream=codec_name,profile -of csv=p=0 "$T/intermedio.mov" | grep -E '^prores,4444'
 }
 comprobar tubería "image2pipe PNG → ProRes 4444 .mov" prores
+# Extracción de fotogramas de un clip de usuario como la hace HyperFrames 0.8.206 (extractVideoFramesRange,
+# salida MP4): settb/setpts/fps, setparams, la conversión a BT.601 de rango completo y JPG con mjpeg.
+extraccion() {
+  mkdir -p "$T/ext" &&
+    ff -noaccurate_seek -ss 0 -i "$M/h264.mp4" -t 0.5 \
+      -vf 'settb=AVTB,setpts=if(isnan(FR)\,PTS\,(0+round((PTS*TB+0-0)*FR)/FR-0)/TB),settb=intb/2,setpts=PTS-lte(TB\,0.001),fps=30:start_time=0:round=up,setparams=colorspace=bt709,setparams=color_primaries=bt709:color_trc=iec61966-2-1,scale=flags=neighbor+accurate_rnd,format=gbrp,scale=out_color_matrix=bt601:out_range=pc:flags=neighbor,format=yuv420p' \
+      -q:v 2 "$T/ext/frame_%06d.jpg" &&
+    [ "$(od -An -tx1 -N 2 "$T/ext/frame_000001.jpg" | tr -d ' ')" = ffd8 ]
+}
+comprobar tubería "extracción de un clip a JPG como HyperFrames (settb + mjpeg)" extraccion
 final=$M/h264.mp4
 if [ "$SIN_MF" = 1 ]; then
   RESUMEN+=("NO VERIFICADO: h264_mf (SIN_MF=1): la prueba manual de Marc es bloqueante de W3.2")

@@ -33,7 +33,9 @@ construcción si un cambio vuelve a dejar uno.
 ## Qué lleva y qué no
 
 Codificadores: `prores_ks` (intermedio 4444), `h264_mf`, `h264_nvenc`, `h264_amf`, `aac`, `png`,
-`pcm_s16le`, `rawvideo`. Decodifica H.264, HEVC, VP9, AV1 (dav1d), JPEG, PNG, WebP, ProRes, AAC,
+`mjpeg`, `pcm_s16le`, `rawvideo`. `mjpeg` y el filtro `settb` (2026-11-21, prueba manual de T21) los
+pide HyperFrames al extraer a JPG los fotogramas de un clip de usuario; sin ellos, cualquier render con
+una capa de clip fallaba. Los dos son nativos de FFmpeg y LGPL. Decodifica H.264, HEVC, VP9, AV1 (dav1d), JPEG, PNG, WebP, ProRes, AAC,
 MP3, FLAC, Vorbis, Opus y PCM. Protocolos: solo `file`, `pipe` y `fd` (desde 7.0 la CLI
 traduce `-` a `fd:`; ver `componentes.conf` y `9290b8a`). Detalle y motivos en
 `componentes.conf`. Fuera, con su decisión:
