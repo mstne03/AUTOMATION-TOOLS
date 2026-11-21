@@ -42,7 +42,10 @@ nombres() { # nombres <tipo> → lo que el binario dice tener de ese tipo, uno p
 listado_exacto() { # listado_exacto <tipo> → igual a FF_LISTAS[tipo] ∪ autoseleccionados de ese tipo
   local tipo=$1 esperado real sobran faltan
   # shellcheck disable=SC2086 # la lista son palabras sueltas
-  esperado=$( { printf '%s\n' ${FF_LISTAS[$tipo]:-} | sed 's/^image_\(.*_pipe\)$/\1/'; awk -v t="$tipo" '$1 == t {print $2}' "$AQUI/autoseleccionados.txt"; } | sed '/^$/d' | sort -u)
+  # configure y -muxers/-demuxers nombran distinto: image_png_pipe → png_pipe, pcm_f32le → f32le.
+  local formato='s/^image_\(.*_pipe\)$/\1/'
+  [[ "$tipo" == *muxer ]] && formato+=';s/^pcm_//'
+  esperado=$( { printf '%s\n' ${FF_LISTAS[$tipo]:-} | sed "$formato"; awk -v t="$tipo" '$1 == t {print $2}' "$AQUI/autoseleccionados.txt"; } | sed '/^$/d' | sort -u)
   real=$(nombres "$tipo")
   sobran=$(comm -13 <(echo "$esperado") <(echo "$real") | paste -sd' ' -)
   faltan=$(comm -23 <(echo "$esperado") <(echo "$real") | paste -sd' ' -)
@@ -109,6 +112,22 @@ extraccion() {
     [ "$(od -An -tx1 -N 2 "$T/ext/frame_000001.jpg" | tr -d ' ')" = ffd8 ]
 }
 comprobar tubería "extracción de un clip a JPG como HyperFrames (settb + mjpeg)" extraccion
+# Audio de HyperFrames: mezcla a WAV float (mixAudioTracksFlat), silencio (generateSilence), AAC por
+# segmentos ADTS remultiplexado con setts (encodeAac) y decodificación a f32le crudo (`hyperframes audio`).
+mezcla() {
+  printf '[0:a]volume=1,apad,atrim=0:2[a0];[a0]amix=inputs=1:duration=longest:dropout_transition=0:normalize=0[mixed];[mixed]volume=1,apad,asetpts=N/SR/TB,atrim=0:2[out]' >"$T/graph.txt" &&
+    ff -i "$M/musica.wav" -filter_complex_script "$T/graph.txt" -map '[out]' -acodec pcm_f32le -ar 48000 -t 2 "$T/mezcla.wav" &&
+    [ "$(fp -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$T/mezcla.wav")" = pcm_f32le ]
+}
+comprobar tubería "mezcla de audio a WAV pcm_f32le como HyperFrames (amix)" mezcla
+comprobar tubería "pista de silencio con anullsrc (generateSilence)" ff -f lavfi -i anullsrc=r=48000:cl=stereo -t 1 -acodec pcm_s16le "$T/silencio.wav"
+aac_segmentos() {
+  ff -cpuflags 0 -i "$T/mezcla.wav" -af aresample=48000,atrim=start_sample=0 -acodec aac -b:a 192k -f adts "$T/seg.aac" &&
+    ff -itsoffset -0.021333 -f aac -i "$T/seg.aac" -c copy \
+      -bsf:a "setts=duration='if(gte((PTS+DURATION)*TB,2),round(2/TB-PTS),DURATION)'" "$T/audio.m4a"
+}
+comprobar tubería "AAC por segmentos ADTS + setts (encodeAac)" aac_segmentos
+comprobar tubería "decodificación a f32le crudo (hyperframes audio)" bash -c "'$FF' -hide_banner -nostdin -v error -i '$M/musica.wav' -map 0:a:0 -ac 1 -ar 22050 -f f32le -acodec pcm_f32le - | head -c 4 | wc -c | grep -qx 4"
 final=$M/h264.mp4
 if [ "$SIN_MF" = 1 ]; then
   RESUMEN+=("NO VERIFICADO: h264_mf (SIN_MF=1): la prueba manual de Marc es bloqueante de W3.2")

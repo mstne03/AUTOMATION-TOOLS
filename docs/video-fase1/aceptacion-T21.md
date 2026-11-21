@@ -16,7 +16,8 @@ Se pasa por `FFMPEG_DIR`; el del PATH (full build de WinGet) no se usa. El build
 idénticos) coincide con la construcción de testigo de Marc
 (`ffmpeg.exe` `f8a83b58…6d85`, `ffprobe.exe` `d22d908e…e01`). **2026-11-21:** en `prepare-video-engine.sh`
 lo sustituye la reconstrucción local con `mjpeg` y `settb` (`7a3eb8ed…e24e`, `4f71455e…b28b`, #42), sin la
-que ningún clip de usuario renderizaba; falta confirmarla con una ejecución de CI de `ffmpeg-lgpl.yml`
+que ningún clip de usuario renderizaba. **2026-11-22:** la sustituye la que añade el audio de HyperFrames
+(`46771c06…748d`, `e367eb8d…30e4`), sin la que ningún vídeo con voz o música renderizaba; falta confirmarla con una ejecución de CI de `ffmpeg-lgpl.yml`
 antes de una release. `release.yml` lo toma de la release
 `ffmpeg-lgpl-<rev>` (`vars.FFMPEG_LGPL_TAG`) con `FFMPEG_LGPL_DIR`, y el script rechaza `libmp3lame` en el
 ffmpeg y en el `dist/` empaquetados. Queda: prueba de Marc de `h264_nvenc` y `h264_mf` con ese build en un
