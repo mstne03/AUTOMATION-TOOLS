@@ -18,7 +18,7 @@ escenario reproducible: el **fondo WebGPU `aurora` muestra una fase distinta tra
 
 | Criterio | Resultado | Estado |
 |---|---|---|
-| ≥ 30 fps con fondo WebGPU | 59–60 fps (Chrome/RTX 4060) y 133–135 fps (Radeon 780M, incl. WebView2). **Solo hay medición de WebView2 en la Radeon; en la RTX no** (ver nota) | cumple en lo medido; sin WebView2/RTX |
+| ≥ 30 fps con fondo WebGPU | 59–60 fps (Chrome/RTX 4060), 133–135 fps (Radeon 780M, incl. WebView2) y 57,7–59 fps (WebView2/RTX, M2) | cumple |
 | Seek < 200 ms | mediana 14 ms (WebView2), máx. 21 ms; hasta 43 ms en la ruta NVIDIA | cumple |
 | Deriva < 1 fotograma (33 ms) en 50 s | deriva (pendiente) −6…+8 ms en 50 s; **desfase instantáneo** timeline−`audio.currentTime` hasta 46–53 ms (media 20–31 ms) | deriva pequeña, pero el desfase instantáneo supera 33 ms: **no concluyente** (ver matiz) |
 | Fotogramas visualmente iguales al MP4 | iguales con la página recién cargada o tras reproducir 4 s (SSIM 0,93–0,98); **fallan tras reproducir 50 s** (SSIM 0,60–0,86 en 10 s y 25 s) | **no cumple** |
@@ -30,6 +30,27 @@ Chrome 155.0.8059.85 (misma versión mayor de Chromium), ambos con ventana visib
 realmente presentados ni tiempo de GPU. El WebView2 corrió en la Radeon 780M (elección de Windows) y **no existe
 medición del WebView2 en la RTX 4060**: «≥ 30 fps» no está demostrado para el hardware de Marc con la RTX en WebView2;
 hay que repetirlo con la preferencia gráfica fijada.
+
+## Medición M2 (2026-11-21): WebView2 con la RTX 4060
+
+Hecha por Marc antes de borrar el spike (W3.5), en `pnpm tauri dev` sobre `feat/21-aceptacion` (506f2a9), con
+`app-ui.exe` y `msedgewebview2.exe` en «Alto rendimiento». WebView2 157.0.4341.60; adaptador WebGPU del iframe
+`vendor: "nvidia"`, `architecture: "lovelace"`. Composición `aurora` a escala 0,4, botón «Medir», dos ejecuciones.
+
+| | Ejecución 1 | Ejecución 2 | Criterio |
+|---|---|---|---|
+| fps (peor intervalo) | 57,7 (99,8 ms) | 59 (33,4 ms) | ≥ 30: cumple |
+| Seek: mediana / máx. hasta pintar | 48 / 62 ms | 45 / 63 ms | < 200 ms: cumple |
+| Desfase timeline − audio: medio; deriva en 50 s | 7,9 ms; +26,7 ms | 33,4 ms estable (29,6–36,6); −3 ms | deriva < 33 ms: cumple |
+
+- En la ejecución 1 audio y timeline se pararon juntos ~1,25 s hacia el segundo 20 (pico de 636 ms en una muestra,
+  final 20 ms); no se repitió en la ejecución 2. Tropiezo de reproducción, no desincronización.
+- **Fallo de fase del shader con la RTX:** tras reproducir los 50 s, seek a 10, 25 y 45 s con el fondo correcto a
+  ojo en todos. No se reprodujo (sin comparación SSIM con el MP4).
+- Para medir hubo que adaptar el spike en local, sin commit: el id `footy999` ya no es válido (`video999`); la
+  cabecera `sandbox; default-src 'none'` de la API (`CabeceraCSP`) bloqueaba `/spike/preview/`; y la `<meta>` CSP
+  del motor usa `'self'`, que en un iframe sandbox de origen opaco no coincide con nada (la preview real lo sustituye
+  por el origen exacto en `preview.reescribir_html`). La voz es un tono de 220 Hz, no ElevenLabs.
 
 ## Decisión para Marc: el fallo de fase del shader (fase 1)
 
