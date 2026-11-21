@@ -1,6 +1,7 @@
 // T7: capas de foto y clip sobre las escenas. Piezas sin GSAP, sin innerHTML y sin leer tiempos del DOM; los datos de la pieza son
 // enums y números validados por el plan; el nombre del usuario no entra en la composición; la composición no pide nada a la red.
 // Los dos tests que renderizan (seek contra render, SSIM ≥ 0,99) necesitan un Chrome verificado y están marcados `skip` (pendientes-T7.md).
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { planificarComposicion, urlsDeRed, type CapaPlan, type PlanComposicion } from "../src/composicion.js";
 import { EsquemaProyecto, type Proyecto } from "../src/esquema.js";
 import { montarProyecto, type PreparadoProyecto } from "../src/montaje.js";
+import { HYPERFRAMES_BIN } from "../src/musica.js";
 import { archivosVideo } from "../src/paths.js";
 import { cargarTema } from "../src/composicion.js";
 import { entradaDe, lineaDe, proyectoBruto, proyectoN } from "./ayudas-n.js";
@@ -200,6 +202,25 @@ describe("montaje con capa desde el proyecto", () => {
     expect(fs.existsSync(path.join(destino, "assets", "capa1.mp4"))).toBe(true);
     expect(fs.existsSync(path.join(destino, "assets", "capa1-fondo.png"))).toBe(true);
   });
+
+  // El lint estático de HyperFrames es el mismo que ejecuta `check` antes del render, sin navegador. Con un <video>
+  // temporizado dentro de un contenedor temporizado (video_nested_in_timed_element) el render real fallaba siempre.
+  it.each([
+    ["foto", 1080, 1920, false],
+    ["clip vertical", 1080, 1920, false],
+    ["clip horizontal", 1920, 1080, true],
+  ] as const)("lint_sin_errores: la composición con capa de %s pasa el lint de HyperFrames", (nombre, ancho, alto, conFondo) => {
+    const destino = path.join(BASE, `salida-lint-${nombre.replace(" ", "-")}`);
+    montarProyecto(preparado(nombre === "foto" ? "foto" : "clip", ancho, alto, conFondo), destino, false);
+    const r = spawnSync(process.execPath, [HYPERFRAMES_BIN, "lint", destino, "--json"], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: { ...process.env, CI: "1", HYPERFRAMES_NO_TELEMETRY: "1", DO_NOT_TRACK: "1" },
+    });
+    const salida = r.stdout ?? "";
+    const json = JSON.parse(salida.slice(salida.indexOf("{"))) as { findings: { severity: string; code: string }[] };
+    expect(json.findings.filter((f) => f.severity === "error")).toEqual([]);
+  }, 90_000);
 
   it("un recurso que es un hardlink a un fichero ajeno no entra en la composición (I6)", () => {
     const prep = preparado("foto");
