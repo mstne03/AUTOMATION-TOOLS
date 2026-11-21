@@ -107,7 +107,9 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 
 ## Pasos manuales de Marc
 
-- **M2:** WebGPU en el iframe de WebView2 con la RTX 4060 (CA4 con WebGPU).
+- **M2 (hecha, 2026-11-21):** WebGPU en el iframe de WebView2 157 con la RTX 4060 (adaptador `nvidia`/`lovelace`):
+  57,7 y 59 fps; seek mediana 46–48 ms, máx. 67 ms; sin deriva; fondo `aurora` correcto en todos los seeks
+  tras reproducir entero. Detalle en `video-mcp-server/spikes/INFORME-preview.md` («Medición M2»).
 - **M-5:** medir los sockets en escucha con la app real durante un render.
 - **Clips H.264:** importar y renderizar clips reales (`h264_mf` y `h264_nvenc`).
 - **CA8 sin GPU:** equipo real sin GPU; comprobar que se elige `h264_mf` y que la reserva se ve.
@@ -119,8 +121,8 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 
 1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado;
    código hecho, falta la prueba nvenc/mf de Marc y la release con el código fuente)
-   y W3.5 (borrado del spike).
-2. M-4 cerrada, M-5 medida y M2 hecha.
+   y W3.5 (borrado del spike: **hecho**, SEO-107).
+2. M-4 cerrada, M-5 medida y M2 hecha (M2: **hecha**).
 3. R2-1 y R2-2 arreglados (hecho) y la importación probada con la app instalada (Rust real, no E2E simulados).
 4. Decisión escrita sobre WebRTC en la preview y sonda de red con la app real.
 5. Build instalado a mano por Marc; sin release a `main`.

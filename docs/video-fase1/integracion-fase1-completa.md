@@ -160,7 +160,7 @@ de escena de T18»: T18 ya está integrada, así que hay que activarlo en T21. `
 3. Las pruebas de aceptación del plan (Task 21): `fidelidad-preview`, `aceptacion`, `rendimiento-180s`,
    `render:aceptacion`, `render:mock`, `render:sandbox`, `smoke_test.py`, capturas `video` y
    `video-editor`, y repetir la tabla de pruebas negativas y la R2 de punta a punta.
-4. W3.2 (ffmpeg LGPL en el bundle) y W3.5 (borrado del spike).
+4. W3.2 (ffmpeg LGPL en el bundle). ~~W3.5 (borrado del spike)~~: **hecho** (SEO-107).
 5. Pruebas manuales de Marc: M2 (WebGPU en WebView2), equipo sin GPU, WebRTC y OneDrive; después el
    piloto con `VIDEO_ENGINE=1`.
 6. No se ha abierto PR ni fusionado a `ds/v1`/`main`: pendiente del sí de Marc.
