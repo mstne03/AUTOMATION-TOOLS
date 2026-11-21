@@ -4,6 +4,8 @@
   CFR). Un clip horizontal se ve entero sobre un fondo desenfocado: el fondo es un fotograma fijo del clip (PNG, {{FONDO_HTML}}) con
   CSS `filter: blur()`, porque `boxblur` y `gblur` no están en el ffmpeg LGPL (M-D7); el fondo no se mueve.
   El <video> lo maneja HyperFrames por data-start/data-duration (mudo, sin audio propio); el movimiento va en el contenedor.
+  El contenedor -escena NO lleva tiempos (a diferencia de capa-foto): un <video> temporizado dentro de otro elemento temporizado
+  saca fotogramas con un desfase distinto del de su visibilidad, y `hyperframes check` lo rechaza (video_nested_in_timed_element).
 -->
 <html lang="en">
   <head>
@@ -22,11 +24,11 @@
         #{{ID}}.enc-paneo #{{ID}}-video { transform: scale(1.18); }
         #{{ID}}.enc-paneo.horizontal #{{ID}}-video { transform: none; }
       </style>
-      <div id="{{ID}}-escena" class="clip" data-start="0" data-duration="{{DURACION}}" data-track-index="0" data-layout-allow-overflow style="position: absolute; inset: 0; overflow: hidden">
+      <div id="{{ID}}-escena" data-layout-allow-overflow style="position: absolute; inset: 0; overflow: hidden">
         <div id="{{ID}}-fundido" class="capa">
           <div id="{{ID}}-mov" class="mov">
             {{FONDO_HTML}}
-            <video id="{{ID}}-video" class="clip" src="assets/{{MEDIO}}" muted playsinline data-start="0" data-duration="{{DURACION}}" data-track-index="1"></video>
+            <video id="{{ID}}-video" class="clip" src="assets/{{MEDIO}}" muted playsinline data-start="0" data-duration="{{DURACION}}" data-track-index="0"></video>
           </div>
         </div>
       </div>
