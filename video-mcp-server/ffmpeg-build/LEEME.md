@@ -254,8 +254,8 @@ Falta la URL del asset (paso 9): la release necesita `REPO_FUENTE` y `publicar` 
 
 HyperFrames extrae los fotogramas de cada clip de usuario a JPG con `settb` (prueba manual de T21):
 sin ellos, todo render con una capa de clip fallaba. `construir.sh` desde cero y `verificar-binario.sh`
-entero en verde, incluida la prueba nueva de extracción. Sustituye a los hashes de arriba en
-`prepare-video-engine.sh`:
+entero en verde, incluida la prueba nueva de extracción. Sustituyó a los hashes de arriba en
+`prepare-video-engine.sh` (y a él, la reconstrucción de abajo):
 
 ```
 7a3eb8edd56c6cac4e0fbcb7f60a0e096e8f0542526d2dbd9f867eec6215e24e  ffmpeg.exe
@@ -264,6 +264,23 @@ entero en verde, incluida la prueba nueva de extracción. Sustituye a los hashes
 
 Pendiente: una ejecución de CI de `ffmpeg-lgpl.yml` (a y b) que dé exactamente estos `SHA256SUMS`, y la
 release con su fuente antes de distribuir. Hasta entonces, solo piloto local.
+
+### Reconstrucción con el audio de HyperFrames (2026-11-22)
+
+Con la de arriba, todo render con voz o música fallaba en la mezcla (`audio_processing_failed`,
+«Unknown encoder 'pcm_f32le'»): HyperFrames 0.8.206 mezcla a WAV float, codifica el AAC por segmentos
+ADTS, los remultiplexa con `setts` y escribe `audio.m4a`. Se añaden el codificador y el muxer
+`pcm_f32le`, los muxers `adts` e `ipod`, el demuxer `aac`, el bsf `setts` y el filtro `anullsrc`, con
+cuatro pruebas nuevas en `verificar-binario.sh`. `construir.sh --sin-descarga` sobre las fuentes ya
+verificadas, `verificar-binario.sh` entero en verde y un render completo de 115 s (clip, voz, música)
+con la CLI de HyperFrames. Sustituye a los hashes anteriores en `prepare-video-engine.sh`:
+
+```
+46771c06d373197a44144bb6a58b3cb989a5152a99bbd6af0ad07d06adbc748d  ffmpeg.exe
+e367eb8d3e9a12c4a55043de48092007f06ddf5fb4f773c2aa855784c30930e4  ffprobe.exe
+```
+
+Mismo pendiente: confirmarlos con una ejecución de CI de `ffmpeg-lgpl.yml` (a y b) antes de una release.
 
 ### Descargas que pedirá la Tarea 10
 
