@@ -500,10 +500,18 @@ export interface ResultadoCheck {
 }
 
 /** `hyperframes check --json`: los errores paran el render; los avisos se agrupan por regla. */
-export async function comprobarComposicion(dir: string, gpu: boolean, alLinea?: (l: string) => void): Promise<ResultadoCheck> {
+export async function comprobarComposicion(
+  dir: string,
+  gpu: boolean,
+  alLinea?: (l: string) => void,
+  duracion?: number,
+): Promise<ResultadoCheck> {
   // R2-L1: `--no-proxy` cierra `?hf-proxy`, que lanzaría ffprobe/ffmpeg fuera de `ejecutar()` sobre un `video/*`.
   const args = [HYPERFRAMES_BIN, "check", dir, "--json", "--no-contrast", "--no-proxy"];
   if (gpu) args.push("--browser-gpu");
+  // `--range` con la duración entera muestrea el mismo vídeo y apaga la pasada «craft» (consejos de
+  // diseño, solo avisos): 599 muestras en 115 s, 271 s → 76 s antes de empezar el render (T21).
+  if (duracion && duracion > 0) args.push(`--range=0,${duracion}`);
   // `ejecutar` fija CI=1 (sin él `check` deja un proceso "caliente" 5 minutos con la carpeta abierta) y
   // el cwd en hf-home, fuera de la composición.
   const r = await ejecutar(process.execPath, args, { timeoutMs: TIMEOUT_CHECK_MS });
@@ -665,7 +673,7 @@ async function ejecutarJobEn(job: Job, prep: Preparado | PreparadoProyecto, comp
   job.avisos.push(...montaje.avisos);
 
   job.fase = "check";
-  const check = await comprobarComposicion(composicion, montaje.usaWebgpu, (l) => anotar(job, l));
+  const check = await comprobarComposicion(composicion, montaje.usaWebgpu, (l) => anotar(job, l), montaje.duracion);
   job.avisos.push(...check.avisos);
   if (check.errores.length) {
     throw new Error(`hyperframes check encontró ${check.errores.length} error(es): ${check.errores.slice(0, 5).join(" | ")}`);

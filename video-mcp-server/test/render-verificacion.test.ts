@@ -49,6 +49,14 @@ describe("comprobarComposicion", () => {
     expect(JSON.parse(fs.readFileSync(F.salida + ".argv", "utf8"))).toContain("--no-proxy");
   });
 
+  it("con duración pasa --range=0,<duración> (apaga la pasada craft); sin ella, no", async () => {
+    fs.writeFileSync(F.salida, JSON.stringify({ texto: `{"ok":true}`, codigo: 0 }));
+    await comprobarComposicion(path.join(F.dir, "comp"), false, undefined, 114.816);
+    expect(JSON.parse(fs.readFileSync(F.salida + ".argv", "utf8"))).toContain("--range=0,114.816");
+    await check(`{"ok":true}`, 0);
+    expect(JSON.parse(fs.readFileSync(F.salida + ".argv", "utf8")).some((a: string) => a.startsWith("--range"))).toBe(false);
+  });
+
   it.each<[string, string, number, RegExp]>([
     ["ok:false con error: conserva el motivo", `{"ok":false,"error":"motivo"}`, 1, /motivo/],
     ["hallazgo de error: línea legible (Review Focus 3)", `{"ok":false,"runtime":{"findings":[{"severity":"error","code":"x","message":"y"}]}}`, 1, /^error x: y$/],
