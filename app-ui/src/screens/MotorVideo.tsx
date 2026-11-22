@@ -20,7 +20,7 @@ const NO_INSTALADO = /no está instalado/i;
 const ETIQUETA = { ausente: "No descargado", descargando: "Descargando…", verificando: "Verificando…", extrayendo: "Instalando…", listo: "Listo", error: "Error" } as const;
 
 const MODOS: Array<[RenderModo, string, string]> = [
-  ["auto", "Automático", "Dos pasadas; funciona en cualquier equipo"],
+  ["auto", "Automático", "Rápido con la GPU; si no hay, Compatible"],
   ["rapido", "Rápido", "Una sola pasada con la GPU"],
   ["compatible", "Compatible", "Dos pasadas; funciona en cualquier equipo"],
 ];

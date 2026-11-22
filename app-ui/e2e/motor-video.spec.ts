@@ -219,7 +219,7 @@ test.describe("Ajustes › Motor de vídeo", () => {
     await preparar(page);
     await ir(page);
     await expect(v(page, "ajustes-render-modo-auto")).toHaveAttribute("aria-checked", "true");
-    await expect(v(page, "ajustes-render-modo-auto")).toContainText("Dos pasadas; funciona en cualquier equipo");
+    await expect(v(page, "ajustes-render-modo-auto")).toContainText("Rápido con la GPU; si no hay, Compatible");
     await v(page, "ajustes-render-modo-compatible").click();
     await expect(page.getByRole("status").filter({ hasText: "Modo de render guardado" }).first()).toBeVisible();
     expect(await page.evaluate(() => localStorage.getItem("seo-studio.render-modo"))).toBe("compatible");

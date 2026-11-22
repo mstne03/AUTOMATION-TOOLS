@@ -369,8 +369,9 @@ con un codificador de GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`); sin ninguno la
   disco temporal (el intermedio se borra al terminar) y algo menos de calidad que `libx264` a
   igual bitrate; se compensa con bitrate alto.
 - **Selección:** ajuste del usuario «Modo de render» con tres valores: *Automático* (por
-  defecto; en la fase 1 equivale a Compatible hasta medir el bitrate con fotos reales, M-D6;
-  después, Rápido si hay GPU y si no Compatible), *Rápido* (deshabilitado con explicación si no
+  defecto: Rápido si hay GPU y si no Compatible, M-D6 revisada el 2026-11-22: el intermedio con
+  alfa de Compatible fuerza la captura PNG a disco, 41 min y 7,3 GB para 115 s frente a 6,5 min en
+  Rápido; Rápido va a 12 Mbit/s, el mismo objetivo que la segunda pasada), *Rápido* (deshabilitado con explicación si no
   hay GPU) y *Compatible*. El job registra qué modo y codificador usó. Si Rápido falla por el
   codificador, el job reintenta en Compatible una vez y lo indica. *(Selector a petición de
   Marc; valores y reintento, decisión mía.)*
@@ -548,7 +549,7 @@ las decisiones de la fase 1:
 | M-D2 | D8 (fase 1), Fases (fase 1 y 3) |
 | M-D3 | D7: botón de escuchar con muestra generada, nunca `preview_url` (I14) |
 | M-D4 | Aplazada: sin enmienda; el respaldo de mutex va en T12 y M-4 sigue abierta hasta entonces |
-| M-D6 | D11: Automático = Compatible en la fase 1 |
+| M-D6 | D11: Automático = Compatible en la fase 1; revisada el 2026-11-22: Automático = Rápido con GPU |
 | M-D7 | D9: fondo desenfocado con CSS `filter: blur()` |
 | M-D8 | D4: `tunel` fuera del esquema del modelo en la fase 1 |
 | R0 | I2 (b), I7, I8, riesgos residuales y W1.3 (c): hallazgos R0-1, R0-2, R0-6, R0-7 y R0-13 |

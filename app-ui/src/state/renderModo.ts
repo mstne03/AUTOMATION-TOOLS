@@ -1,6 +1,6 @@
 /** Modo de render (Automático / Rápido / Compatible). La preferencia va en localStorage (try/catch:
  *  puede estar bloqueado) y se aplica al render: `POST /video/proyectos/{id}/render { modo }`. En la
- *  fase 1 Automático equivale a Compatible (SPEC-video D11, M-D6); lo resuelve el motor. No es
+ *  motor resuelve Automático: Rápido si hay GPU y si no Compatible (SPEC-video D11, M-D6). No es
  *  confiable: quien lo consuma valida el enum. */
 import { create } from "zustand";
 import type { CapacidadesVideo } from "../api/types";

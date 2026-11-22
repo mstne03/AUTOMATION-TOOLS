@@ -39,8 +39,16 @@ export class ErrorTiempo extends Error {}
 export type CodificadorH264 = "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_mf";
 export const CODIFICADORES: readonly CodificadorH264[] = ["h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"];
 
-/** Modo de Automático: Compatible (codificador predecible) hasta que un parche fije el de Rápido. */
-export const MODO_AUTOMATICO: "rapido" | "compatible" = "compatible";
+/**
+ * Modo de Automático: Rápido (M-D6 revisada el 2026-11-22). Compatible pide un intermedio con alfa que obliga a
+ * HyperFrames a capturar cada fotograma como PNG a disco: 41 min y 7,3 GB para 115 s, frente a 6,5 min
+ * en Rápido. El codificador de Rápido lo elige HyperFrames; `verificarMp4` lo comprueba y avisa si no
+ * es el preferido, y un fallo de Rápido repite en Compatible.
+ */
+export const MODO_AUTOMATICO: "rapido" | "compatible" = "rapido";
+
+/** Bitrate del MP4 de Rápido: el mismo objetivo que la segunda pasada de Compatible (`-b:v 12M`). */
+export const BITRATE_RAPIDO = "12M";
 
 /** Argumentos provisionales de la segunda pasada (INFORME-codificacion.md); pendientes de medir con fotos reales. */
 export const ARGS_CODIFICADOR: Record<CodificadorH264, string[]> = {
@@ -573,7 +581,7 @@ async function renderCli(c: ContextoRender, salida: string, formato: "mp4" | "mo
   c.job.fase = "render";
   c.job.progreso = 0;
   const args = [HYPERFRAMES_BIN, "render", c.composicion, "-o", salida, "--fps", "30", "--format", formato];
-  if (formato === "mp4") args.push("--quality", "delivery");
+  if (formato === "mp4") args.push("--quality", "delivery", "--video-bitrate", BITRATE_RAPIDO);
   if (c.montaje.usaWebgpu) args.push("--browser-gpu");
   const r = await ejecutar(process.execPath, args, { onLinea: (l) => anotar(c.job, l), timeoutMs: c.timeoutMs });
   if (r.timeout) throw new ErrorTiempo(`La CLI de HyperFrames superó el tiempo máximo de render (${duracionLegible(c.timeoutMs)}).`);

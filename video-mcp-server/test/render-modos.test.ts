@@ -226,10 +226,11 @@ describe("decisiones puras", () => {
     expect(Object.keys(ARGS_CODIFICADOR).sort()).toEqual([...CODIFICADORES].sort());
   });
 
-  it("Automático es Compatible por defecto (codificador predecible)", () => {
-    expect(MODO_AUTOMATICO).toBe("compatible");
+  it("Automático es Rápido con GPU y cae en Compatible sin ella (M-D6 revisada)", () => {
+    expect(MODO_AUTOMATICO).toBe("rapido");
     expect(elegirModo("auto", [])).toBe("compatible");
-    expect(elegirModo("auto", ["h264_nvenc", "h264_mf"])).toBe("compatible");
+    expect(elegirModo("auto", ["h264_mf"])).toBe("compatible");
+    expect(elegirModo("auto", ["h264_nvenc", "h264_mf"])).toBe("rapido");
   });
 
   it("Rápido solo con un codificador de GPU (h264_mf no cuenta)", () => {
@@ -377,8 +378,8 @@ describe.skipIf(!h || process.platform !== "win32")("job de render con la CLI fa
     delete process.env.VIDEO_TIMEOUT_RENDER_S;
   });
 
-  it("Compatible (por defecto) registra modo, intermedio y codificador, y borra el intermedio", async () => {
-    const j = await esperarJob((await encolarRender(IDS[0], o())).job_id, 200);
+  it("Compatible registra modo, intermedio y codificador, y borra el intermedio", async () => {
+    const j = await esperarJob((await encolarRender(IDS[0], o("compatible"))).job_id, 200);
     expect(j.error).toBeUndefined();
     expect(j.estado).toBe("terminado");
     expect(j.modo).toBe("compatible");
@@ -400,6 +401,10 @@ describe.skipIf(!h || process.platform !== "win32")("job de render con la CLI fa
     expect(j.estado).toBe("terminado");
     const formatos = renders().map((r) => r[r.indexOf("--format") + 1]);
     expect(formatos).toEqual(["mp4", "mov"]);
+    // Rápido fija el bitrate de la segunda pasada; el intermedio de Compatible no lo lleva.
+    const [mp4, mov] = renders();
+    expect(mp4[mp4.indexOf("--video-bitrate") + 1]).toBe("12M");
+    expect(mov).not.toContain("--video-bitrate");
     expect(j.modo).toBe("compatible");
     expect(j.reserva).toMatch(/Rápido falló/);
     expect(j.avisos.some((a) => /Rápido falló/.test(a))).toBe(true);
