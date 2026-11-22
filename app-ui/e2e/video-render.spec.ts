@@ -132,6 +132,21 @@ test.describe("Render", () => {
     expect(est.renders).toHaveLength(2);
   });
 
+  test("el fondo del diálogo tapa la columna fija de la línea de tiempo", async ({ page }) => {
+    await preparar(page, id);
+    const etiqueta = page.getByTestId("timeline").getByText("Escenas", { exact: true });
+    const caja = (await etiqueta.boundingBox())!;
+    await abrir(page);
+    // La etiqueta es sticky con z-index: si el fondo no la tapa, se ve nítida y sin sombra sobre el modal.
+    const encima = await page.evaluate(([x, y]) => {
+      // La etiqueta lleva pointer-events: none y elementFromPoint se la saltaría: se reactiva para medir.
+      for (const e of document.querySelectorAll<HTMLElement>("[data-testid='timeline'] *")) e.style.pointerEvents = "auto";
+      const el = document.elementFromPoint(x, y);
+      return el?.closest("[data-testid='timeline']") ? "timeline" : "fondo";
+    }, [caja.x + caja.width / 2, caja.y + caja.height / 2]);
+    expect(encima).toBe("fondo");
+  });
+
   test("cerrar y reabrir el diálogo con el render en curso retoma el progreso", async ({ page }) => {
     const est = await preparar(page, id);
     await abrir(page);
