@@ -147,7 +147,7 @@ describe("render_bloqueado_sin_voz", () => {
 });
 
 describe("modo de render", () => {
-  it("envía el modo guardado; Automático va como «auto» (equivale a Compatible, M-D6)", async () => {
+  it("envía el modo guardado; Automático va como «auto» (lo resuelve el motor, M-D6)", async () => {
     const { client } = montar();
     await abrir();
     await lanzar();

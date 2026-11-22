@@ -278,7 +278,7 @@ describe.runIf(ACTIVO)("render real con CfT y ffmpeg LGPL", () => {
     const s = muestreador();
     try {
       const t0 = performance.now();
-      const job = await encolarRender("video030", o());
+      const job = await encolarRender("video030", o("compatible"));
       const fases = seguirFases(job.job_id);
       const j = await esperarJob(job.job_id, 500);
       fases.parar();

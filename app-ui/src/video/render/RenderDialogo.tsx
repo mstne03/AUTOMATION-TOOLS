@@ -22,7 +22,7 @@ import { sinRutas } from "./sinRutas";
 const BLOQUEOS_VOZ: ReadonlySet<string> = new Set(["voz_pendiente", "sin_voz"]);
 
 const DESCRIPCION = {
-  auto: "Modo Automático: dos pasadas; funciona en cualquier equipo.",
+  auto: "Modo Automático: rápido con la GPU; si no hay, Compatible.",
   rapido: "Modo Rápido: una sola pasada con la GPU.",
   compatible: "Modo Compatible: dos pasadas; funciona en cualquier equipo.",
 } as const;

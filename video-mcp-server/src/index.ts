@@ -108,7 +108,7 @@ server.registerTool(
     inputSchema: {
       id: ID,
       musica: z.boolean().optional().default(true).describe("Incluir la música del guion si la hay."),
-      modo: z.enum(["auto", "rapido", "compatible"]).optional().default("auto").describe("D11: Automático (hoy Compatible), Rápido (GPU, con reserva a Compatible) o Compatible."),
+      modo: z.enum(["auto", "rapido", "compatible"]).optional().default("auto").describe("D11: Automático (Rápido si hay GPU; si no, Compatible), Rápido (GPU, con reserva a Compatible) o Compatible."),
     },
   },
   (a) => envolver("video_renderizar", () => h.renderizar(config, a)),

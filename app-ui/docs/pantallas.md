@@ -211,7 +211,7 @@ toast ("Modelo guardado", "Carpeta añadida"…, `role=status`); si falla, toast
   - `ajustes-video-sin-motor`: «El módulo de vídeo no está instalado en esta versión.» si el POST o
     `/video/capacidades` dan 503 «no está instalado»; no hay botón de descarga.
   - `ajustes-render-modo` (radiogroup «Modo de render»): `ajustes-render-modo-auto` (Automático,
-    por defecto: «Dos pasadas; funciona en cualquier equipo»: hoy equivale a Compatible),
+    por defecto: «Rápido con la GPU; si no hay, Compatible»; lo resuelve el motor, M-D6),
     `ajustes-render-modo-rapido` («Una sola pasada con la GPU») y `ajustes-render-modo-compatible`
     («Dos pasadas; funciona en cualquier equipo»). «Rápido» está deshabilitado salvo que
     `capacidades.codificadores` incluya alguno distinto de `h264_mf` (software, M7), con
