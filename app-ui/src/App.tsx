@@ -4,14 +4,17 @@ import { createHashRouter, Navigate, RouterProvider } from "react-router";
 import { createClient, type Client } from "./api/client";
 import { ClientContext } from "./api/context";
 import { useSettings } from "./api/queries";
+import { vincularCliente } from "./state/editor";
 import { ChatScreen } from "./chat/ChatScreen";
 
 import { CanalScreen } from "./screens/CanalScreen";
+import { EditorVideoScreen } from "./screens/EditorVideoScreen";
 import { GuionesScreen } from "./screens/GuionesScreen";
 import { KbScreen } from "./screens/KbScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { PublicarScreen } from "./screens/PublicarScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { VideoScreen } from "./screens/VideoScreen";
 import { AppShell } from "./shell/AppShell";
 import { sidecarInfo } from "./sidecar";
 import { Estado, Toaster } from "./ui";
@@ -19,17 +22,12 @@ import { Estado, Toaster } from "./ui";
 // Catálogo de componentes: solo en desarrollo (import dinámico dentro de la rama DEV, que el build elimina).
 const Catalogo = import.meta.env.DEV ? lazy(() => import("./screens/CatalogoScreen").then((m) => ({ default: m.CatalogoScreen }))) : null;
 
-// Spike D6 (desechable): preview de la composición de vídeo en un iframe aislado. Solo en desarrollo.
-const PreviewSpike = import.meta.env.DEV ? lazy(() => import("./spikes/PreviewSpike").then((m) => ({ default: m.PreviewSpike }))) : null;
-
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 // Hash router: en Tauri la página se sirve como fichero, sin servidor que reescriba rutas.
 const router = createHashRouter([
   // El asistente de bienvenida va a ancho completo, fuera de la barra lateral.
   { path: "onboarding", element: <OnboardingScreen /> },
-  // Spike D6, también fuera del marco: la captura de fotogramas necesita la preview sin barra lateral encima.
-  ...(PreviewSpike ? [{ path: "spike-preview", element: <Suspense fallback={null}><PreviewSpike /></Suspense> }] : []),
   {
     element: <AppShell />,
     children: [
@@ -37,6 +35,8 @@ const router = createHashRouter([
       { path: "chat", element: <ChatScreen /> },
       { path: "publicar", element: <PublicarScreen /> },
       { path: "guiones", element: <GuionesScreen /> },
+      { path: "video", element: <VideoScreen /> },
+      { path: "video/:id", element: <EditorVideoScreen /> },
       { path: "canal", element: <CanalScreen /> },
       { path: "kb", element: <KbScreen /> },
       { path: "ajustes", element: <SettingsScreen /> },
@@ -60,7 +60,11 @@ export default function App() {
 
   useEffect(() => {
     sidecarInfo()
-      .then((info) => setClient(createClient(info.port, info.token)))
+      .then((info) => {
+        const c = createClient(info.port, info.token);
+        vincularCliente(c);
+        setClient(c);
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
 

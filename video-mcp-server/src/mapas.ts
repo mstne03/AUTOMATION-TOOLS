@@ -189,7 +189,8 @@ export function resolverZona(region: Region, texto: string): { zona?: Zona; avis
   const directa = atlas.zonas.find((z) => z.claves.includes(q));
   if (directa) return { zona: directa };
   if (region !== "espana") {
-    const alias = ALIAS_PAISES[q];
+    // Object.hasOwn: `constructor` o `toString` no son alias (el objeto literal los heredaría).
+    const alias = Object.hasOwn(ALIAS_PAISES, q) ? ALIAS_PAISES[q] : undefined;
     if (alias) {
       const zona = atlas.zonas.find((z) => z.nombre === alias.nombre);
       if (zona) return { zona, aviso: alias.aviso ? `"${texto}": ${alias.aviso}` : undefined };

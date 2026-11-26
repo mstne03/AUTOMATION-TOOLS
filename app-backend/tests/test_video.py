@@ -26,6 +26,7 @@ from app_backend.video import (
 TOKEN = "token-de-prueba"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 MOTOR_FALSO = Path(__file__).with_name("motor_falso.py")
+MOTOR_QUE_SALE = Path(__file__).with_name("motor_que_sale.py")
 CLAVE = "xi-clave-secreta-de-prueba"
 
 _DIST_REAL = Path(__file__).resolve().parents[2] / "video-mcp-server" / "dist" / "index.js"
@@ -109,6 +110,38 @@ async def test_motor_muere_y_se_relanza(motor):
         await motor.llamar("morir")
     assert (await motor.llamar("pid")).texto != antes
     assert not psutil_pid_vivo(int(antes))
+
+
+async def test_motor_muerto_cierra_la_sesion_sin_otra_llamada(tmp_path, monkeypatch, caplog):
+    """El Job Object se cierra al morir el motor, sin esperar a la siguiente llamada; y se avisa una sola vez."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    salir = tmp_path / "salir"
+    m = MotorVideo(
+        [sys.executable, str(MOTOR_QUE_SALE), str(salir)], MOTOR_QUE_SALE.parent, lambda: entorno_motor(StoreFalso())
+    )
+    try:
+        antes = (await m.llamar("pid")).texto
+        s = m._sesion
+        assert s is not None and s.tarea is not None
+        with caplog.at_level(logging.WARNING, logger="app_backend.video"):
+            salir.write_text("x")
+            # Ninguna llamada más: la propia tarea tiene que darse cuenta y cerrar la sesión.
+            await asyncio.wait_for(asyncio.shield(s.tarea), 2)
+        assert s.tarea.done() and s.parar.is_set()
+        avisos = [r for r in caplog.records if "terminó" in r.getMessage()]
+        assert len(avisos) == 1, [r.getMessage() for r in caplog.records]
+        # La siguiente llamada relanza un motor nuevo (el falso vuelve a esperar el fichero: se quita antes).
+        salir.unlink()
+        assert (await m.llamar("pid")).texto != antes
+    finally:
+        await m.cerrar()
+
+
+async def test_cierre_normal_no_registra_aviso(motor, caplog):
+    await motor.llamar("pid")
+    with caplog.at_level(logging.WARNING, logger="app_backend.video"):
+        await motor.cerrar()
+    assert [r.getMessage() for r in caplog.records if "terminó" in r.getMessage()] == []
 
 
 async def test_timeout_de_llamada(motor):
@@ -198,15 +231,14 @@ def test_entorno_motor():
     assert "ELEVENLABS_API_KEY" not in entorno_motor(StoreFalso({config.ELEVENLABS_KEY: ""}))
 
 
-def _bundle(d: Path, *, node=True, ffmpeg=True, navegador=True) -> Path:
-    """Esqueleto de `video-engine/` con ficheros vacíos (solo cuenta que existan)."""
+def _bundle(d: Path, *, node=True, ffmpeg=True) -> Path:
+    """Esqueleto de `video-engine/` con ficheros vacíos (solo cuenta que existan). Sin navegador: el
+    CfT no va en el instalador (SEO-108; lo cubre tests/test_navegador.py)."""
     piezas = []
     if node:
         piezas.append("node/node.exe")
     if ffmpeg:
         piezas += ["ffmpeg/ffmpeg.exe", "ffmpeg/ffprobe.exe"]
-    if navegador:
-        piezas.append("browser/chrome-headless-shell-win64/chrome-headless-shell.exe")
     d.mkdir(parents=True, exist_ok=True)
     for p in piezas:
         (d / p).parent.mkdir(parents=True, exist_ok=True)
@@ -218,11 +250,12 @@ def test_entorno_congelado_siempre_con_las_piezas_del_bundle(tmp_path, monkeypat
     d = _bundle(tmp_path / "video-engine")
     monkeypatch.setattr(config, "FROZEN", True)
     monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    # Congelado sin CfT descargado no arranca (lo cubre test_navegador.py): aquí, uno «instalado».
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
+    (tmp_path / "navegador" / config.NAVEGADOR_VERSION).mkdir(parents=True)
+    monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
     env = entorno_motor(StoreFalso())
     assert env["FFMPEG_DIR"] == str(d / "ffmpeg")
-    assert env["HYPERFRAMES_BROWSER_PATH"] == str(
-        d / "browser" / "chrome-headless-shell-win64" / "chrome-headless-shell.exe"
-    )
 
 
 def test_entorno_congelado_sin_motor_es_modulo_no_instalado(tmp_path, monkeypatch):
@@ -235,9 +268,7 @@ def test_entorno_congelado_sin_motor_es_modulo_no_instalado(tmp_path, monkeypatc
         entorno_motor(StoreFalso())
 
 
-@pytest.mark.parametrize(
-    ("falta", "texto"), [({"ffmpeg": False}, "ffmpeg"), ({"navegador": False}, "navegador")]
-)
+@pytest.mark.parametrize(("falta", "texto"), [({"ffmpeg": False}, "ffmpeg")])
 def test_entorno_congelado_sin_una_pieza_pide_reinstalar(tmp_path, monkeypatch, falta, texto):
     d = _bundle(tmp_path / "video-engine", **falta)
     monkeypatch.setattr(config, "FROZEN", True)
@@ -262,7 +293,7 @@ async def test_ruta_capacidades_503_si_el_modulo_no_esta_instalado(tmp_path, fak
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
         r = await c.get("/video/capacidades", headers=AUTH)
     assert r.status_code == 503
-    assert r.json()["detail"] == MENSAJE_NO_INSTALADO
+    assert r.json()["detail"] == {"mensaje": MENSAJE_NO_INSTALADO, "codigo": "no_disponible"}
 
 
 async def test_cambiar_o_borrar_la_clave_reinicia_el_motor(tmp_path, fake_anthropic, monkeypatch):
@@ -303,6 +334,103 @@ async def test_cambiar_o_borrar_la_clave_reinicia_el_motor(tmp_path, fake_anthro
             assert motor.pid == pid
         finally:
             await motor.cerrar()
+
+
+# ---------------------------------------------------------------- canal aparte para el render
+
+
+def _app_con_motores(tmp_path, fake_anthropic):
+    return create_app(
+        TOKEN,
+        client_factory=fake_anthropic([]).factory,
+        jobs_path=tmp_path / "jobs.sqlite",
+        kb_auto_update=False,
+        conversaciones_dir=tmp_path / "conversaciones",
+    )
+
+
+async def test_lifespan_crea_dos_motores_perezosos_y_cierra_los_dos(tmp_path, fake_anthropic, monkeypatch):
+    app = _app_con_motores(tmp_path, fake_anthropic)
+    cerrados = []
+    async with app.router.lifespan_context(app):
+        motores = (app.state.motor, app.state.motor_render)
+        assert isinstance(motores[1], MotorVideo) and motores[0] is not motores[1]
+        assert [m.pid for m in motores] == [None, None]
+        for nombre, m in zip(("motor", "render"), motores, strict=True):
+            original = m.cerrar
+
+            async def cerrar(nombre=nombre, original=original):
+                cerrados.append(nombre)
+                await original()
+
+            monkeypatch.setattr(m, "cerrar", cerrar)
+    assert sorted(cerrados) == ["motor", "render"]
+
+
+async def test_dos_canales_son_procesos_distintos_y_matar_uno_no_afecta_al_otro(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    uno, dos = _motor_falso(StoreFalso()), _motor_falso(StoreFalso())
+    try:
+        assert (uno.pid, dos.pid) == (None, None)
+        await uno.llamar("eco", {"texto": "a"})
+        await dos.llamar("eco", {"texto": "b"})
+        assert uno.pid != dos.pid
+        pid = uno.pid
+        with pytest.raises(MotorNoDisponible):
+            await uno.llamar("morir")
+        assert not psutil_pid_vivo(pid)
+        assert (await dos.llamar("eco", {"texto": "sigo"})).texto == "sigo"
+    finally:
+        await uno.cerrar()
+        await dos.cerrar()
+
+
+def test_entorno_del_render_no_lleva_la_clave(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    store = StoreFalso({config.ELEVENLABS_KEY: CLAVE})
+    assert entorno_motor(store)["ELEVENLABS_API_KEY"] == CLAVE
+    assert "ELEVENLABS_API_KEY" not in entorno_motor(store, con_clave=False)
+
+
+@pytest.mark.parametrize(
+    ("tool", "canal"),
+    [
+        ("video_renderizar", "motor_render"),
+        ("video_estado_render", "motor_render"),
+        ("video_estado", "motor"),  # ya no existe en integrado (T11): no es del canal de render
+        ("video_capacidades", "motor"),
+        ("video_vista_previa", "motor"),
+        ("video_generar_voz", "motor"),  # necesita la clave: nunca por el canal sin ella
+    ],
+)
+def test_cada_tool_va_por_su_canal(tool, canal):
+    estado = type("Estado", (), {"motor": "motor", "motor_render": "motor_render"})()
+    assert video.motor_de(estado, tool) == canal
+
+
+async def test_cambiar_la_clave_para_motor_y_no_el_render(tmp_path, fake_anthropic, monkeypatch):
+    """Cambiar la clave no puede matar un render en curso: el canal de render no la lleva."""
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("APP_BACKEND_VIDEO_CMD", raising=False)
+    app = _app_con_motores(tmp_path, fake_anthropic)
+    transporte = httpx.ASGITransport(app=app)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=transporte, base_url="http://test") as c:
+        from app_backend.main import yt_auth
+
+        app.state.motor = _motor_falso(yt_auth.store)
+        app.state.motor_render = _motor_falso(yt_auth.store)
+        motor, render = app.state.motor, app.state.motor_render
+        try:
+            await motor.llamar("eco", {"texto": "a"})
+            await render.llamar("eco", {"texto": "b"})
+            pid_render = render.pid
+            r = await c.put("/settings", json={"elevenlabs_api_key": "xi-otra"}, headers=AUTH)
+            assert r.status_code == 200
+            assert motor.pid is None
+            assert render.pid == pid_render and psutil_pid_vivo(pid_render)
+        finally:
+            await motor.cerrar()
+            await render.cerrar()
 
 
 def test_comando_motor_desarrollo(monkeypatch):
@@ -387,7 +515,7 @@ async def test_ruta_capacidades_503_si_no_arranca(client_con_motor_roto):
     assert (await client_con_motor_roto.get("/video/capacidades")).status_code == 401
     r = await client_con_motor_roto.get("/video/capacidades", headers=AUTH)
     assert r.status_code == 503
-    assert "motor de vídeo" in r.json()["detail"]
+    assert "motor de vídeo" in r.json()["detail"]["mensaje"] and r.json()["detail"]["codigo"] == "no_disponible"
 
 
 @pytest.fixture
@@ -401,12 +529,29 @@ async def motor_real(monkeypatch):
 
 
 @pytest.mark.skipif(not MOTOR_REAL_COMPILADO, reason="npm run build en video-mcp-server")
-async def test_motor_real_lista_las_12_tools(motor_real):
+async def test_motor_real_lista_las_11_tools(motor_real):
     caps = await motor_real.llamar("video_capacidades", {"reprobar": False})
     assert caps.datos["hyperframes"] == "0.8.206"
     assert caps.texto
     nombres = await motor_real.herramientas()
-    assert len(nombres) == 12 and all(n.startswith("video_") for n in nombres)
+    # Integrado (VIDEO_ENGINE_EMBEDDED=1): T4 quita las 5 tools del formato anterior (guion.md, voz suelta, estado,
+    # listado por carpeta y música por ruta) y el catálogo (SEO-110), y añade las 9 del almacén de guiones y
+    # proyectos. Quedan 15; se compara el conjunto exacto y no la cuenta, para que una tool sustituida no pase.
+    # T5 añade las 6 de la voz por frases (única excepción al carril M: solo la expectativa; los canales y la
+    # aprobación de estas tools son de T13/T14): 21.
+    # T8 añade las 3 del perfil visual (misma excepción, solo la expectativa): 24.
+    # T6 añade video_montar_preview y video_barrer_procesos: 26. T7 añade las 4 de recursos y música: 30.
+    esperadas = {
+        "video_guion_esquema", "video_guion_guardar", "video_guion_listar", "video_guion_leer", "video_guion_borrar",
+        "video_proyecto_crear", "video_proyecto_listar", "video_proyecto_leer", "video_proyecto_guardar",
+        "video_renderizar", "video_estado_render", "video_fotograma", "video_vista_previa", "video_ayuda",
+        "video_capacidades",
+        "video_voz_coste", "video_voz_generar", "video_voz_forma", "video_voz_quitar_silencios", "video_voces", "video_voz_muestra",
+        "video_perfiles_listar", "video_perfil_guardar", "video_perfil_duplicar",
+        "video_montar_preview", "video_barrer_procesos",  # T6: montaje de la preview y barrido de procesos (R0-6)
+        "video_recurso_importar", "video_recurso_borrar", "video_musica_listar", "video_musica_importar",  # T7: recursos normalizados y música
+    }  # fmt: skip
+    assert set(nombres) == esperadas and len(nombres) == 30
 
 
 async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anthropic):
@@ -440,3 +585,30 @@ async def test_ruta_capacidades_da_tiempo_a_la_prueba_de_gpu(tmp_path, fake_anth
     assert [(t, a) for t, a, _ in llamadas] == [("video_capacidades", {"reprobar": False})]
     # Peor caso del motor: 240 s de render + 30 s de fotograma + 60 s de sondas en paralelo.
     assert llamadas[0][2] == video.TIMEOUT_CAPACIDADES and video.TIMEOUT_CAPACIDADES > 330
+
+
+def test_canal_de_render_sin_video_estado():
+    assert video.TOOLS_CANAL_RENDER == frozenset({"video_renderizar", "video_estado_render"})
+
+
+def test_entorno_reenvia_tts_de_pruebas_solo_si_no_esta_congelado(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIDEO_PRUEBAS_TTS_URL", "http://127.0.0.1:9999")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    monkeypatch.setenv("VIDEO_E2E", "1")
+    monkeypatch.setenv("FFMPEG_DIR", str(tmp_path / "ffmpeg-dev"))
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", tmp_path / "sin-bundle")
+    env = entorno_motor(StoreFalso())
+    assert env["VIDEO_PRUEBAS_TTS_URL"] == "http://127.0.0.1:9999"
+    assert env["ELEVENLABS_VOICE_ID"] == "21m00Tcm4TlvDq8ikWAM"
+    # E2E con motor real (T17): sin VIDEO_E2E el motor integrado ignora la URL de pruebas, y sin
+    # FFMPEG_DIR no tiene ffmpeg (no mira el PATH).
+    assert env["VIDEO_E2E"] == "1" and env["FFMPEG_DIR"] == str(tmp_path / "ffmpeg-dev")
+    d = _bundle(tmp_path / "video-engine")
+    monkeypatch.setattr(config, "FROZEN", True)
+    monkeypatch.setattr(config, "VIDEO_ENGINE_DIR", d)
+    monkeypatch.setattr(config, "NAVEGADOR_DIR", tmp_path / "navegador")
+    (tmp_path / "navegador" / config.NAVEGADOR_VERSION).mkdir(parents=True)
+    monkeypatch.setattr(video.navegador, "verificar", lambda carpeta: carpeta)
+    env = entorno_motor(StoreFalso())
+    assert "VIDEO_PRUEBAS_TTS_URL" not in env and "ELEVENLABS_VOICE_ID" not in env
+    assert "VIDEO_E2E" not in env and env["FFMPEG_DIR"] == str(d / "ffmpeg")  # instalado: solo el del bundle

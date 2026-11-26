@@ -118,3 +118,23 @@ class FakeAnthropic:
 @pytest.fixture
 def fake_anthropic():
     return FakeAnthropic
+
+
+@pytest.fixture(autouse=True)
+def _almacen_de_secretos_aislado():
+    """Cada test empieza y acaba sin claves en el almacén de la sesión de pytest (revisión T11, Info 8).
+
+    El almacén es un fichero en el temporal de la sesión y los tests de `PUT /settings` guardan claves en él: sin esto
+    la clave de uno la ve el siguiente (y un `test_real_*` podría llamar a ElevenLabs con una clave de prueba).
+    """
+    from app_backend import config
+    from app_backend.main import yt_auth
+
+    def limpiar() -> None:
+        for clave in (config.ELEVENLABS_KEY, config.ANTHROPIC_KEY):
+            if yt_auth.store.get(clave) is not None:
+                yt_auth.store.delete(clave)
+
+    limpiar()
+    yield
+    limpiar()

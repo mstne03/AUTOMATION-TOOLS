@@ -1,12 +1,15 @@
 // Composición v2: raíz + subcomposiciones en _composicion\ (plan v2, §3). Todo el texto del guion se escapa;
 // los datos de animación van como JSON en <script type="application/json">.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { SERVER_ROOT } from "./raiz.js";
 import type { Guion } from "./guion.js";
 import { COLA_FINAL, type ResultadoAlineacion } from "./alineacion.js";
 import {
   ESCENAS_SOBRE_FONDO,
+  ESTILOS_SUBTITULOS,
   FONDOS_WEBGPU,
   type Escena,
   type EscenaBarras,
@@ -14,15 +17,37 @@ import {
   type EscenaCifra,
   type EscenaMapa,
   type EscenaTitulo3d,
+  type OpcionesV2,
 } from "./formato.js";
 import { trazarMapa } from "./mapas.js";
-import type { ImagenEncontrada } from "./paths.js";
+// Tope de un recurso del proyecto: el de un clip (500 MB, I15). No se importa de recursos.ts para no cerrar un ciclo con montaje.ts.
+const TOPE_COPIA_BYTES = 500 * 1024 * 1024;
+import { borrarArbol, copiarRecurso, type ImagenEncontrada } from "./paths.js";
 
 export const PLANTILLA_DIR = path.join(SERVER_ROOT, "plantilla");
 export const PIEZAS_DIR = path.join(PLANTILLA_DIR, "piezas");
 export const NODE_MODULES = path.join(SERVER_ROOT, "node_modules");
-export const GSAP_JS = path.join(NODE_MODULES, "gsap", "dist", "gsap.min.js");
 export const SHADERS_JS = path.join(PLANTILLA_DIR, "vendor", "shaders.iife.js");
+/** Motor de tiempo WAAPI de las piezas (SEO-111). */
+export const HF_TIEMPO_JS = path.join(PLANTILLA_DIR, "vendor", "hf-tiempo.js");
+/** Duración máxima del vídeo (voz) que acepta la composición, en segundos. */
+export const DURACION_MAXIMA = 180;
+const ID_PIEZA_RE = /^[a-z][a-z0-9-]*$/;
+
+// Capas fijas por encima de cualquier escena (hasta 90, en 11..100): con la escena n en 10 + n, nada las alcanza.
+const MAX_ESCENAS = 90;
+const Z_ESCENA = 10;
+const Z_BUCLE = 199;
+const Z_CAPAS = 200;
+// Capas de recursos (T7): «encima» sobre cualquier escena (que están en 11..100) y bajo el bucle; «detrás» entre el fondo
+// (z 10, antes en el DOM) y las escenas, en su propia pista para no solapar con el fondo.
+const Z_CAPA_ENCIMA = 150;
+const Z_CAPA_DETRAS = 10;
+const TRACK_CAPA_DETRAS = 9;
+const Z_GANCHO = 210;
+const Z_ETIQUETA = 211;
+const Z_SUBTITULOS = 220;
+const Z_FLASH = 230;
 
 const TRANSICION = 0.3;
 const SOLAPE = TRANSICION / 2;
@@ -40,29 +65,62 @@ const DIRECCIONES: [number, number][] = [
 // "nebula" usa FractalNoise: el shader Nebula del catálogo es un efecto de forma (una esfera de cristal), no un fondo.
 const SHADERS: Record<string, string> = { aurora: "Aurora", plasma: "Plasma", nebula: "FractalNoise", mesh: "MeshGradient" };
 
-export interface Tema {
-  nombre?: string;
-  colores: { fondo: string; texto: string; acento: string; contorno?: string; secundario?: string };
-  fuentes: Record<"titulos" | "subtitulos", { familia: string; archivo: string; peso: number }> & {
-    mono?: { familia: string; archivo: string; peso: number };
-  };
-  tamanos: { gancho: number; ganchoMinimo: number; subtitulo: number; subtituloMinimo: number };
-  subtitulos?: { mayusculas?: boolean };
-  degradado?: { opacidad?: number };
-  paletaTunel?: string[];
+export const COLOR_RE = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const Color = z.string().regex(COLOR_RE);
+// Lista cerrada: una familia solo existe con la cara que trae plantilla/fuentes/.
+const cara = <F extends string, A extends string, P extends number>(familia: F, archivo: A, peso: P) =>
+  z.strictObject({ familia: z.literal(familia), archivo: z.literal(archivo), peso: z.literal(peso) });
+const Fuente = z.union([
+  cara("Anton", "anton-latin-400-normal.woff2", 400),
+  cara("Inter Tight", "inter-tight-latin-800-normal.woff2", 800),
+  cara("JetBrains Mono", "jetbrains-mono-latin-700-normal.woff2", 700),
+]);
+/** Archivo y peso de cada familia de la lista cerrada (los que trae plantilla/fuentes/). */
+export const CARAS_FUENTE = {
+  Anton: { archivo: "anton-latin-400-normal.woff2", peso: 400 },
+  "Inter Tight": { archivo: "inter-tight-latin-800-normal.woff2", peso: 800 },
+  "JetBrains Mono": { archivo: "jetbrains-mono-latin-700-normal.woff2", peso: 700 },
+} as const;
+const Tamano = z.number().int().min(8).max(400);
+const TEMA = z.strictObject({
+  nombre: z.string().max(200).optional(),
+  colores: z.strictObject({ fondo: Color, texto: Color, acento: Color, contorno: Color.optional(), secundario: Color.optional() }),
+  fuentes: z.strictObject({ titulos: Fuente, subtitulos: Fuente, mono: Fuente.optional() }),
+  tamanos: z
+    .strictObject({ gancho: Tamano, ganchoMinimo: Tamano, subtitulo: Tamano, subtituloMinimo: Tamano })
+    .refine((t) => t.ganchoMinimo <= t.gancho, { path: ["ganchoMinimo"] })
+    .refine((t) => t.subtituloMinimo <= t.subtitulo, { path: ["subtituloMinimo"] }),
+  subtitulos: z.strictObject({ mayusculas: z.boolean().optional() }).optional(),
+  degradado: z.strictObject({ opacidad: z.number().min(0).max(1).optional() }).optional(),
+  paletaTunel: z.array(Color).min(1).max(64).optional(),
+});
+
+export type Tema = z.infer<typeof TEMA>;
+
+/** I1: el tema se rechaza entero al cargar. El mensaje solo lleva las claves: un valor malo puede ser cualquier cosa. */
+export function validarTema(v: unknown): Tema {
+  const r = TEMA.safeParse(v);
+  if (!r.success) throw new Error(`Tema no válido: ${[...new Set(r.error.issues.map((i) => i.path.join(".") || "(raíz)"))].join(", ")}`);
+  return r.data;
 }
 
 export function cargarTema(dir = PLANTILLA_DIR): Tema {
-  return JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")) as Tema;
+  return validarTema(JSON.parse(fs.readFileSync(path.join(dir, "tema.json"), "utf8")));
 }
 
 export function escaparHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-/** JSON seguro para incrustar dentro de un <script>. */
+/**
+ * JSON seguro para incrustar dentro de un <script>. Un número no finito lanza (JSON lo convertiría en `null` y la
+ * pieza se animaría con basura sin error visible: I1, I11).
+ */
 export function jsonParaScript(v: unknown): string {
-  return JSON.stringify(v)
+  return JSON.stringify(v, (clave, valor: unknown) => {
+    if (typeof valor === "number" && !Number.isFinite(valor)) throw new Error(`Número no finito en los datos de la composición (clave «${clave}»): ${valor}`);
+    return valor;
+  })
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026")
@@ -70,40 +128,42 @@ export function jsonParaScript(v: unknown): string {
     .replace(new RegExp(" ", "g"), "\\u2029");
 }
 
-const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
-function color(v: string | undefined, porDefecto: string): string {
-  return v && COLOR_RE.test(v) ? v : porDefecto;
-}
-function familiaCss(f: string): string {
-  return f.replace(/[^\p{L}\p{N} _-]/gu, "");
-}
-function archivoFuente(f: string): string {
-  const base = path.basename(f);
-  if (!/^[\w.-]+\.(woff2?|ttf|otf)$/i.test(base)) throw new Error(`Nombre de fuente no válido en tema.json: ${f}`);
-  return base;
-}
-
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 
-/** El mayor tamaño en px con el que `texto` cabe en una caja de ancho×alto (Anton, ~0,5 em por carácter). */
-export function tamanoGancho(texto: string, base: number, minimo: number, ancho = 900, alto = 470): number {
-  for (let s = base; s > minimo; s -= 4) {
-    const porLinea = Math.max(1, Math.floor(ancho / (s * 0.5)));
-    let lineas = 1;
-    let actual = 0;
-    for (const w of texto.split(/\s+/)) {
-      if (w.length > porLinea) {
-        actual = Infinity;
-        break;
-      }
-      const largo = actual ? actual + 1 + w.length : w.length;
-      if (largo > porLinea && actual) {
-        lineas++;
-        actual = w.length;
-      } else actual = largo;
-    }
-    if (actual !== Infinity && lineas * s * 1.04 <= alto) return s;
+/**
+ * Id y tiempos de una pieza (I1): id por regex, inicio y duración números finitos, y dentro del vídeo de `D` s.
+ * Devuelve los tiempos redondeados que van al host y a {{INICIO}}/{{DURACION}}.
+ */
+export function comprobarTiemposPieza(id: string, inicio: number, duracion: number, D: number): { i: number; d: number } {
+  if (!ID_PIEZA_RE.test(id)) throw new Error(`Id de pieza no válido: ${id}`);
+  if (typeof inicio !== "number" || typeof duracion !== "number" || !Number.isFinite(inicio) || !Number.isFinite(duracion)) {
+    throw new Error(`Tiempo no finito en la pieza ${id}: inicio=${inicio}, duración=${duracion}.`);
   }
+  const i = r3(inicio);
+  const d = r3(duracion);
+  if (i < 0 || d <= 0 || i + d > D + 0.001) throw new Error(`Tiempo fuera de rango en la pieza ${id}: inicio=${i}, duración=${d}, vídeo=${D} s.`);
+  return { i, d };
+}
+
+/** ¿Cabe `texto` a `s` px en una caja de ancho×alto? (Anton, ~0,5 em por carácter; una palabra más larga que la línea no cabe). */
+export function cabeGancho(texto: string, s: number, ancho = 900, alto = 470): boolean {
+  const porLinea = Math.max(1, Math.floor(ancho / (s * 0.5)));
+  let lineas = 1;
+  let actual = 0;
+  for (const w of texto.split(/\s+/)) {
+    if (w.length > porLinea) return false;
+    const largo = actual ? actual + 1 + w.length : w.length;
+    if (largo > porLinea && actual) {
+      lineas++;
+      actual = w.length;
+    } else actual = largo;
+  }
+  return lineas * s * 1.04 <= alto;
+}
+
+/** El mayor tamaño en px con el que `texto` cabe en una caja de ancho×alto; si ni en el mínimo cabe, el mínimo (el plan avisa). */
+export function tamanoGancho(texto: string, base: number, minimo: number, ancho = 900, alto = 470): number {
+  for (let s = base; s > minimo; s -= 4) if (cabeGancho(texto, s, ancho, alto)) return s;
   return minimo;
 }
 
@@ -113,18 +173,80 @@ export function tamanoFrase(texto: string, base: number, minimo: number, ancho =
 
 // ---------- Plan de la composición ----------
 
-export interface EntradaComposicion {
-  guion: Guion;
+/** Una escena del plan: una escena gráfica (`base`) o, si no la hay, una foto (`imagen`). */
+export interface EscenaPlan {
+  base?: Escena;
+  imagen?: ImagenEncontrada;
+  /** Recurso del usuario (ya normalizado) sobre esta escena (T7). */
+  capa?: CapaPlan;
+}
+
+/**
+ * Capa de una foto o un clip del usuario (T7). `origen` y `fondo` son ficheros ya normalizados por `recursos.ts`; `entrada` y `salida`
+ * van en segundos desde el corte de su escena. El nombre del usuario no llega aquí: la composición solo conoce `capa<n>.<ext>`.
+ */
+export interface CapaPlan {
+  clase: "foto" | "clip";
+  origen: string;
+  ext: "png" | "mp4";
+  /** Fotograma fijo de un clip horizontal, para el fondo desenfocado (M-D7). */
+  fondo?: string;
+  ancho: number;
+  alto: number;
+  modo: "encima" | "detras";
+  encuadre: "marco" | "zoom" | "paneo";
+  entrada: number;
+  salida: number;
+}
+
+/** Opciones del vídeo ya normalizadas. `destellos` son índices de escena desde 0. */
+export interface OpcionesPlan {
+  fondo: OpcionesV2["fondo"];
+  look: OpcionesV2["look"];
+  subtitulos: OpcionesV2["subtitulos"];
+  etiqueta?: string;
+  fecha?: { dia: string; hora: string };
+  destellos: number[];
+  /** Índice en `palabras.palabras` de la palabra del golpe. */
+  golpe?: { indice: number };
+  /** Índices de las palabras con énfasis. */
+  enfasis: number[];
+}
+
+export interface EntradaPlan {
+  titulo: string;
+  gancho: string;
+  /** Una por segmento de `palabras`, en orden. */
+  escenas: EscenaPlan[];
+  opciones: OpcionesPlan;
   palabras: ResultadoAlineacion;
-  /** Índice n-1: imagen del bloque n (o undefined si ese bloque es una escena sin foto). */
-  imagenes: (ImagenEncontrada | undefined)[];
   tema: Tema;
-  /** Música ya preparada en assets/musica.mp3. */
+  /** Música ya preparada en assets/musica.wav. */
   musica?: { volumen: number; automatizacion: string };
-  /** `mostrarDesde` de cada bloque tras los cortes al ritmo (si no, los de palabras.json). */
+  /** `mostrarDesde` de cada escena tras los cortes al ritmo (si no, los de `palabras`). */
   cortes?: number[];
   /** Hay WebGPU para los fondos con shader. */
   gpu: boolean;
+}
+
+/** Adaptador del guion de 6 bloques a `EntradaPlan`. ponytail: red de los tests de piezas, se borra en la fase 2. */
+export function desdeGuionV2(g: Guion, imagenes: (ImagenEncontrada | undefined)[]): Pick<EntradaPlan, "titulo" | "gancho" | "escenas" | "opciones"> {
+  const o = g.opciones;
+  return {
+    titulo: g.titulo,
+    gancho: g.gancho,
+    escenas: g.bloques.map((b, k) => ({ base: o.escenas[b.n], imagen: imagenes[k] })),
+    opciones: {
+      fondo: o.fondo,
+      look: o.look,
+      subtitulos: o.subtitulos,
+      etiqueta: o.etiqueta,
+      fecha: o.fecha,
+      destellos: o.destellos.map((n) => n - 1),
+      golpe: o.golpe ? { indice: o.golpe.indice } : undefined,
+      enfasis: o.enfasis,
+    },
+  };
 }
 
 export interface PlanComposicion {
@@ -132,7 +254,7 @@ export interface PlanComposicion {
   /** Archivos de texto a escribir, por ruta relativa a _composicion\. */
   archivos: Record<string, string>;
   /** Archivos a copiar: origen absoluto → ruta relativa. */
-  copias: { origen: string; destino: string }[];
+  copias: { origen: string; destino: string; /** recurso del usuario: se copia con copiarRecurso (abre una vez, sin enlaces) */ recurso?: true }[];
   avisos: string[];
   usaWebgpu: boolean;
   estiloSubtitulos: string;
@@ -143,59 +265,52 @@ function pieza(nombre: string, valores: Record<string, string | number>): string
   return plantilla.replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) => (k in valores ? String(valores[k]) : m));
 }
 
-function envolturaJs(id: string, e: { fundido: number; punch: boolean; golpes: number[] }): string {
-  return `(function (tl, id, e) {
-            if (e.fundido > 0) tl.fromTo("#" + id + "-fundido", { opacity: 0 }, { opacity: 1, duration: e.fundido, ease: "none" }, 0);
-            if (e.punch) tl.fromTo("#" + id + "-punch", { scale: 1.07 }, { scale: 1, duration: 0.45, ease: "expo.out" }, 0);
-            var f = 1 / 30, p = [[0, 0], [22, -14], [-16, 10], [8, -4], [0, 0]];
-            e.golpes.forEach(function (t) {
-              for (var i = 0; i < 4; i++) tl.fromTo("#" + id + "-golpe", { x: p[i][0], y: p[i][1] }, { x: p[i + 1][0], y: p[i + 1][1], duration: f, ease: "none", immediateRender: false }, t + i * f);
-            });
-          })(tl, ${JSON.stringify(id)}, ${jsonParaScript(e)});`;
-}
-
-export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
-  const { guion, palabras: al, tema } = e;
-  const o = guion.opciones;
+export function planificarComposicion(e: EntradaPlan): PlanComposicion {
+  const al = e.palabras;
+  const tema = validarTema(e.tema); // cubre también o.tema; el valor devuelto, nunca e.tema.
+  const o = e.opciones;
+  const escenas = e.escenas;
+  const N = escenas.length;
   const avisos: string[] = [];
+  if (N > MAX_ESCENAS) throw new Error(`El plan tiene ${N} escenas y el máximo son ${MAX_ESCENAS}.`);
+  if (!(ESTILOS_SUBTITULOS as readonly string[]).includes(o.subtitulos)) throw new Error("Estilo de subtítulos no válido.");
+  if (N < 1 || al.segmentos.length !== N) throw new Error(`La voz tiene ${al.segmentos.length} segmentos y el plan ${N} escenas: tienen que coincidir.`);
+  for (const w of al.palabras) if (!Number.isFinite(w.inicio) || !Number.isFinite(w.fin)) throw new Error("Tiempo no finito en las palabras de la voz.");
+  for (const d of o.destellos) if (!Number.isInteger(d) || d < 0 || d >= N) throw new Error(`Destello fuera de rango: la escena ${d} no existe (hay ${N}).`);
   const D = r3(al.duracionAudio + COLA_FINAL);
+  if (typeof al.duracionAudio !== "number" || !Number.isFinite(D)) throw new Error(`Tiempo no finito: la voz dura ${al.duracionAudio} s.`);
+  if (D > DURACION_MAXIMA + COLA_FINAL) throw new Error(`La voz dura ${al.duracionAudio} s y el máximo es ${DURACION_MAXIMA} s.`);
   const archivos: Record<string, string> = {};
   const copias: PlanComposicion["copias"] = [];
-  const colores = {
-    fondo: color(tema.colores.fondo, "#0B0F0C"),
-    texto: color(tema.colores.texto, "#F4F1E8"),
-    acento: color(tema.colores.acento, "#E8B931"),
-    contorno: color(tema.colores.contorno, "#000000"),
-    secundario: color(tema.colores.secundario, "#1F7A3A"),
-  };
+  const colores = { ...tema.colores, contorno: tema.colores.contorno ?? "#000000", secundario: tema.colores.secundario ?? "#1F7A3A" };
   const f = tema.fuentes;
   const fuentesCss = (["titulos", "subtitulos", "mono"] as const)
     .filter((k) => f[k])
     .map(
       (k) =>
-        `@font-face { font-family: "${familiaCss(f[k]!.familia)}"; src: url("assets/fonts/${archivoFuente(f[k]!.archivo)}") format("woff2"); font-weight: ${Number(f[k]!.peso) || 400}; font-style: normal; font-display: block; }`,
+        `@font-face { font-family: "${f[k]!.familia}"; src: url("assets/fonts/${f[k]!.archivo}") format("woff2"); font-weight: ${f[k]!.peso}; font-style: normal; font-display: block; }`,
     )
     .join("\n        ");
   for (const k of ["titulos", "subtitulos", "mono"] as const) {
-    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", archivoFuente(f[k]!.archivo)), destino: `assets/fonts/${archivoFuente(f[k]!.archivo)}` });
+    if (f[k]) copias.push({ origen: path.join(PLANTILLA_DIR, "fuentes", f[k]!.archivo), destino: `assets/fonts/${f[k]!.archivo}` });
   }
-  copias.push({ origen: GSAP_JS, destino: "assets/gsap.min.js" });
+  copias.push({ origen: HF_TIEMPO_JS, destino: "assets/hf-tiempo.js" });
 
   // ---- Ventanas de cada bloque ----
   const desde = al.segmentos.map((s, k) => (e.cortes?.[k] !== undefined ? e.cortes[k] : s.mostrarDesde));
   desde[0] = 0;
-  const escenas = o.escenas;
-  const usaFondo = (n: number) => {
-    const esc = escenas[n];
+  const usaFondo = (k: number) => {
+    const esc = escenas[k]?.base;
     return !!esc && (ESCENAS_SOBRE_FONDO as readonly string[]).includes(esc.tipo);
   };
   const ventanas = desde.map((d0, k) => {
     const n = k + 1;
+    const ultima = k === N - 1;
     const inicio = k === 0 ? 0 : r3(Math.max(0, d0 - SOLAPE));
-    let fin = k === 5 ? D : r3(Math.min(D, desde[k + 1] + SOLAPE));
-    // Si el bloque siguiente va sobre el fondo, este acaba justo en el corte (el fondo no tapa nada).
-    if (k < 5 && usaFondo(n + 1)) fin = r3(desde[k + 1]);
-    return { n, inicio, fin, duracion: r3(Math.max(0.1, fin - inicio)), corte: r3(d0), visible: r3((k === 5 ? al.duracionAudio : desde[k + 1]) - d0) };
+    let fin = ultima ? D : r3(Math.min(D, desde[k + 1] + SOLAPE));
+    // Si la escena siguiente va sobre el fondo, esta acaba justo en el corte (el fondo no tapa nada).
+    if (!ultima && usaFondo(k + 1)) fin = r3(desde[k + 1]);
+    return { n, inicio, fin, duracion: r3(Math.max(0.1, fin - inicio)), corte: r3(d0), visible: r3((ultima ? al.duracionAudio : desde[k + 1]) - d0) };
   });
 
   // Golpe: instante de la palabra y bloque al que pertenece.
@@ -208,14 +323,27 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   }
 
   const hosts: string[] = [];
-  const host = (id: string, src: string, inicio: number, duracion: number, z: number, extra = "", alto = 1920, top = 0) =>
+  // Cada host y su pieza salen de aquí: el {{INICIO}}/{{DURACION}} de la pieza es por construcción el
+  // data-start/data-duration del host (SEO-111). Tiempos calculados por el motor y validados (I1).
+  const anadirPieza = (
+    id: string,
+    plantilla: string,
+    inicio: number,
+    duracion: number,
+    valores: Record<string, string | number>,
+    h: { z: number; track?: number; extra?: string; alto?: number; top?: number },
+  ) => {
+    const { i, d } = comprobarTiemposPieza(id, inicio, duracion, D);
+    const { z, track = z, extra = "", alto = 1920, top = 0 } = h;
     hosts.push(
-      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${src}" data-start="${r3(inicio)}" data-duration="${r3(duracion)}" data-track-index="${z}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
+      `      <div id="h-${id}" data-composition-id="${id}" data-composition-src="compositions/${id}.html" data-start="${i}" data-duration="${d}" data-track-index="${track}" data-width="1080" data-height="${alto}"${extra} style="position: absolute; left: 0; top: ${top}px; width: 1080px; height: ${alto}px; z-index: ${z}"></div>`,
     );
+    archivos[`compositions/${id}.html`] = pieza(plantilla, { ...valores, ID: id, INICIO: i, DURACION: d });
+  };
 
   // ---- Fondo (un único host bajo los bloques) ----
   let usaWebgpu = false;
-  if ([1, 2, 3, 4, 5, 6].some(usaFondo)) {
+  if (escenas.some((_, k) => usaFondo(k))) {
     const conShader = (FONDOS_WEBGPU as readonly string[]).includes(o.fondo);
     if (conShader && e.gpu) {
       usaWebgpu = true;
@@ -227,106 +355,173 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
             : o.fondo === "mesh"
               ? { colorA: colores.fondo, colorB: colores.acento }
               : { colorA: colores.fondo, colorB: colores.secundario, contrast: 0.7, speed: 0.25 };
-      archivos["compositions/fondo.html"] = pieza("fondo-shader.html", { ID: "fondo", DURACION: D, SHADER: SHADERS[o.fondo], PROPS: escaparHtml(JSON.stringify(props)) });
       copias.push({ origen: SHADERS_JS, destino: "assets/vendor/shaders.iife.js" });
-      host("fondo", "fondo.html", 0, D, 10, " data-no-timeline");
+      anadirPieza(
+        "fondo",
+        "fondo-shader.html",
+        0,
+        D,
+        { SHADER: SHADERS[o.fondo], PROPS: escaparHtml(JSON.stringify(props)) },
+        { z: 10, extra: " data-no-timeline" },
+      );
     } else {
       if (conShader) avisos.push(`No hay WebGPU en esta máquina: \`fondo: ${o.fondo}\` se sustituye por un degradado animado con los colores del tema.`);
       const animado = o.fondo !== "ninguno";
-      archivos["compositions/fondo.html"] = pieza("fondo-css.html", {
-        ID: "fondo",
-        DURACION: D,
-        COLOR_A: colores.acento,
-        COLOR_B: colores.secundario,
-        ANIMADO: animado ? "true" : "false",
-        OCULTO: animado ? "" : "display: none",
-      });
-      host("fondo", "fondo.html", 0, D, 10);
+      anadirPieza(
+        "fondo",
+        "fondo-css.html",
+        0,
+        D,
+        { COLOR_A: colores.acento, COLOR_B: colores.secundario, ANIMADO: animado ? "true" : "false", OCULTO: animado ? "" : "display: none" },
+        { z: 10 },
+      );
     }
+  }
+
+  // ---- Capas de recursos (T7) ----
+  // Entrada y salida son relativas al corte de la escena y se acotan a lo que la escena se ve. Los datos de la pieza salen de aquí
+  // (enums y números validados), no del usuario; el nombre original no entra en la composición.
+  const capaDe = (k: number) => {
+    const c = escenas[k].capa;
+    if (!c) return;
+    const n = k + 1;
+    if (c.clase !== "foto" && c.clase !== "clip") throw new Error(`Clase de capa no válida en la escena ${n}.`);
+    if (c.modo !== "encima" && c.modo !== "detras") throw new Error(`Modo de capa no válido en la escena ${n}.`);
+    if (!["marco", "zoom", "paneo"].includes(c.encuadre)) throw new Error(`Encuadre de capa no válido en la escena ${n}.`);
+    if (c.ext !== (c.clase === "foto" ? "png" : "mp4")) throw new Error(`La extensión de la capa de la escena ${n} no es la de su clase.`);
+    if (c.modo === "detras" && !usaFondo(k)) throw new Error(`La capa «detrás» de la escena ${n} solo vale sobre una escena con fondo.`);
+    for (const x of [c.entrada, c.salida, c.ancho, c.alto]) if (typeof x !== "number" || !Number.isFinite(x)) throw new Error(`Número no finito en la capa de la escena ${n}.`);
+    if (c.entrada < 0 || !(c.ancho > 0) || !(c.alto > 0)) throw new Error(`Tiempo o tamaño fuera de rango en la capa de la escena ${n}.`);
+    const v = ventanas[k];
+    const fin = Math.min(c.salida, v.visible);
+    if (!(fin - c.entrada >= 0.1)) {
+      avisos.push(`La capa de la escena ${n} queda fuera de lo que dura la escena y no se muestra.`);
+      return;
+    }
+    if (c.salida > v.visible) avisos.push(`La capa de la escena ${n} se acorta a lo que dura la escena (${v.visible} s).`);
+    const medio = `capa${n}.${c.ext}`;
+    copias.push({ origen: c.origen, destino: `assets/${medio}`, recurso: true });
+    let fondo = "";
+    if (c.fondo) {
+      fondo = `capa${n}-fondo.png`;
+      copias.push({ origen: c.fondo, destino: `assets/${fondo}`, recurso: true });
+    }
+    const fondoHtml = fondo ? `<img id="capa-esc${n}-fondo" class="fondo" src="assets/${escaparHtml(fondo)}" alt="" />` : "";
+    const datos = jsonParaScript({ encuadre: c.encuadre, horizontal: c.ancho > c.alto, conFondo: !!fondo });
+    anadirPieza(
+      `capa-esc${n}`,
+      c.clase === "foto" ? "capa-foto.html" : "capa-clip.html",
+      v.corte + c.entrada,
+      fin - c.entrada,
+      { MEDIO: escaparHtml(medio), FONDO_HTML: fondoHtml, DATOS: datos },
+      c.modo === "detras" ? { z: Z_CAPA_DETRAS, track: TRACK_CAPA_DETRAS } : { z: Z_CAPA_ENCIMA },
+    );
+  };
+  // Primero las de detrás (y las de modo no válido, que `capaDe` rechaza): quedan en el DOM justo tras el fondo.
+  escenas.forEach((_, k) => escenas[k].capa && escenas[k].capa!.modo !== "encima" && capaDe(k));
+
+  // ---- Fin del gancho ----
+  // El gancho y la etiqueta ocupan la mitad superior, igual que el texto de las escenas: no pueden pisarse.
+  // Si una escena (bloque 2 en adelante) empieza antes de que acabe el gancho, el gancho termina en su corte.
+  let finGancho = Math.min(GANCHO_DURACION, D);
+  for (const v of ventanas.slice(1)) {
+    if (escenas[v.n - 1].base && v.corte < finGancho) {
+      finGancho = r3(Math.max(0.9, v.corte));
+      break;
+    }
+  }
+  // Si el bloque 1 es una escena, su contenido entra cuando el gancho ya se ha ido (antes, `content_overlap` en
+  // `hyperframes check`). Le deja al menos 1 s visible; si el bloque es más corto, el gancho se acorta (≥ 0,9 s).
+  // ponytail: con un bloque 1 de menos de ~2 s el gancho y la escena aún se rozan; el `check` lo frena con su error.
+  let entradaEscena1 = 0.1;
+  // Un tiempo no finito no se toca aquí: lo rechaza `anadirPieza` con su mensaje (SEO-111).
+  if (escenas[0]?.base && Number.isFinite(ventanas[0].duracion)) {
+    entradaEscena1 = r3(Math.max(0.1, Math.min(finGancho + 0.15, ventanas[0].duracion - 1)));
+    if (entradaEscena1 - 0.15 < finGancho) finGancho = r3(Math.max(0.9, entradaEscena1 - 0.15));
   }
 
   // ---- Bloques ----
   let usa3d = false;
   let usaTunel = false;
   for (const v of ventanas) {
-    const id = `bloque${v.n}`;
+    const id = `esc${v.n}`;
     const k = v.n - 1;
-    const empieza = k === 0 ? 0.1 : SOLAPE;
-    const esc: Escena | undefined = escenas[v.n];
+    const empieza = k === 0 ? entradaEscena1 : SOLAPE;
+    const esc: Escena | undefined = escenas[k].base;
     // Golpe en una cifra: el número aterriza en esa palabra; si la palabra abre el bloque no da tiempo a contar,
     // así que aterriza 0,55 s después de la entrada y el temblor y el destello se mueven con él.
     if (golpe && golpe.n === v.n && esc?.tipo === "cifra") {
       golpe.t = r3(v.inicio + Math.max(golpe.t - v.inicio, empieza + 0.55));
     }
     const env = { fundido: k === 0 ? 0 : TRANSICION, punch: k > 0, golpes: golpe && golpe.n === v.n ? [r3(golpe.t - v.inicio)] : [] };
-    let html: string;
+    let p: PiezaPlan;
     if (!esc) {
-      const img = e.imagenes[k];
-      if (!img) throw new Error(`Falta la imagen del bloque ${v.n}.`);
+      const img = escenas[k].imagen;
+      if (!img) throw new Error(`Falta la imagen de la escena ${v.n}.`);
       const archivo = `img${v.n}${img.extension}`;
       copias.push({ origen: img.ruta, destino: `assets/${archivo}` });
       const [dx, dy] = DIRECCIONES[k % DIRECCIONES.length];
-      html = pieza("bloque-foto.html", {
-        ID: id,
-        DURACION: v.duracion,
-        IMG: escaparHtml(archivo),
-        DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }),
-      });
+      p = ["bloque-foto.html", { IMG: escaparHtml(archivo), DATOS: jsonParaScript({ duracion: v.duracion, dx, dy, movimiento: true, ...env }) }];
     } else {
-      const comun = { ID: id, DURACION: v.duracion, FUENTES: fuentesCss, ENVOLTURA: envolturaJs(id, env) };
+      const comun = { ID: id, FUENTES: fuentesCss, ENVOLTURA_DATOS: jsonParaScript(env) };
       switch (esc.tipo) {
         case "cifra":
-          html = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
+          p = piezaCifra(esc, comun, v, empieza, env.golpes[0]);
           break;
         case "cartel":
-          html = piezaCartel(esc, comun, empieza);
+          p = piezaCartel(esc, comun, empieza);
           break;
         case "barras":
-          html = piezaBarras(esc, comun, v, empieza, colores);
+          p = piezaBarras(esc, comun, v, empieza, colores);
           break;
         case "mapa":
-          html = piezaMapa(esc, comun, empieza, colores);
+          p = piezaMapa(esc, comun, empieza, colores);
           break;
         case "titulo3d":
           usa3d = true;
-          html = pieza("escena-titulo3d.html", {
-            ...comun,
-            DATOS: jsonParaScript({ texto: (esc as EscenaTitulo3d).texto, acento: colores.acento, duracion: v.duracion, empieza }),
-          });
+          p = [
+            "escena-titulo3d.html",
+            { ...comun, DATOS: jsonParaScript({ texto: (esc as EscenaTitulo3d).texto, acento: colores.acento, duracion: v.duracion, empieza }) },
+          ];
           break;
         case "tunel": {
           usaTunel = true;
-          const fotos = e.imagenes
-            .map((img, i) => (img ? `assets/img${i + 1}${img.extension}` : undefined))
+          const fotos = escenas
+            .map((s, i) => (s.imagen ? `assets/img${i + 1}${s.imagen.extension}` : undefined))
             .filter((x): x is string => !!x);
-          e.imagenes.forEach((img, i) => img && copias.push({ origen: img.ruta, destino: `assets/img${i + 1}${img.extension}` }));
-          const paleta = (tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto]).filter((c) => COLOR_RE.test(c));
-          html = pieza("escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento });
+          escenas.forEach((s, i) => s.imagen && copias.push({ origen: s.imagen.ruta, destino: `assets/img${i + 1}${s.imagen.extension}` }));
+          const paleta = tema.paletaTunel ?? [colores.acento, colores.secundario, colores.texto];
+          p = ["escena-tunel.html", { ...comun, IMAGENES: escaparHtml(fotos.join(",")), PALETA: paleta.join(","), ACENTO: colores.acento }];
           break;
         }
       }
     }
-    archivos[`compositions/${id}.html`] = html;
-    host(id, `${id}.html`, v.inicio, v.duracion, 10 + v.n);
+    anadirPieza(id, p[0], v.inicio, v.duracion, p[1], { z: Z_ESCENA + v.n });
   }
 
+  escenas.forEach((_, k) => escenas[k].capa?.modo === "encima" && capaDe(k));
+
   // Reencuadre final de la imagen 1 para que el short haga bucle (solo si el bloque 1 es una foto).
-  const img1 = e.imagenes[0];
-  if (!escenas[1] && img1) {
+  const img1 = escenas[0].base ? undefined : escenas[0].imagen;
+  if (img1) {
     const archivo = `img1-bucle${img1.extension}`;
     copias.push({ origen: img1.ruta, destino: `assets/${archivo}` });
-    archivos["compositions/bucle.html"] = pieza("bloque-foto.html", {
-      ID: "bucle",
-      DURACION: COLA_FINAL,
-      IMG: escaparHtml(archivo),
-      DATOS: jsonParaScript({ duracion: COLA_FINAL, dx: 0, dy: 0, movimiento: false, fundido: TRANSICION, punch: false, golpes: [] }),
-    });
-    host("bucle", "bucle.html", D - COLA_FINAL, COLA_FINAL, 17);
+    anadirPieza(
+      "bucle",
+      "bloque-foto.html",
+      D - COLA_FINAL,
+      COLA_FINAL,
+      {
+        IMG: escaparHtml(archivo),
+        DATOS: jsonParaScript({ duracion: COLA_FINAL, dx: 0, dy: 0, movimiento: false, fundido: TRANSICION, punch: false, golpes: [] }),
+      },
+      { z: Z_BUCLE },
+    );
   }
 
   // ---- Capas: degradado, viñeta, destellos y look ----
-  const bloquesLuz = o.look === "pelicula" ? [1, 2, 3, 4, 5, 6] : o.destellos;
-  const destellos = bloquesLuz.map((n, i) => ({ id: `capas-luz${n}`, t: ventanas[n - 1].corte, duracion: i % 2 === 0 ? 1.8 : 1.7 }));
+  const escenasConLuz = o.look === "pelicula" ? escenas.map((_, k) => k) : o.destellos;
+  const destellos = escenasConLuz.map((k, i) => ({ id: `capas-luz${k + 1}`, t: ventanas[k].corte, duracion: i % 2 === 0 ? 1.8 : 1.7 }));
   const luzHtml = destellos
     .map(
       (d) =>
@@ -348,26 +543,23 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   } else if (o.look === "pelicula") {
     lookHtml = `      <div id="capas-grano" class="clip lleno" data-start="0" data-duration="${D}" data-track-index="3" data-layout-ignore data-layout-allow-occlusion><div class="textura"></div></div>`;
   }
-  archivos["compositions/capas.html"] = pieza("capas.html", {
-    DURACION: D,
-    FUENTES: fuentesCss,
-    VINETA: o.look === "pelicula" ? 0.75 : 0.62,
-    BLOQUES_LUZ: luzHtml,
-    LOOK: lookHtml,
-    DATOS: jsonParaScript({ duracion: D, destellos }),
-  });
-  host("capas", "capas.html", 0, D, 40);
+  anadirPieza(
+    "capas",
+    "capas.html",
+    0,
+    D,
+    {
+      FUENTES: fuentesCss,
+      VINETA: o.look === "pelicula" ? 0.75 : 0.62,
+      BLOQUES_LUZ: luzHtml,
+      LOOK: lookHtml,
+      DATOS: jsonParaScript({ duracion: D, destellos }),
+    },
+    { z: Z_CAPAS },
+  );
 
   // ---- Gancho y etiqueta ----
-  // El gancho y la etiqueta ocupan la mitad superior, igual que el texto de las escenas: no pueden pisarse.
-  // Si una escena (bloque 2 en adelante) empieza antes de que acabe el gancho, el gancho termina en su corte.
-  let finGancho = Math.min(GANCHO_DURACION, D);
-  for (const v of ventanas.slice(1)) {
-    if (escenas[v.n] && v.corte < finGancho) {
-      finGancho = r3(Math.max(0.9, v.corte));
-      break;
-    }
-  }
+  // (`finGancho` y la entrada de la escena del bloque 1 se calculan antes de los bloques.)
   const bloqueEn = (t: number) => {
     let k = 0;
     for (let i = 0; i < ventanas.length; i++) if (ventanas[i].corte <= t) k = i;
@@ -378,9 +570,9 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   if (o.etiqueta) {
     const inicio = r3(finGancho + 0.05);
     let fin = Math.min(inicio + ETIQUETA_DURACION, D - 0.5);
-    const siguienteEscena = ventanas.find((v) => escenas[v.n] && v.corte > inicio);
+    const siguienteEscena = ventanas.find((v) => escenas[v.n - 1].base && v.corte > inicio);
     if (siguienteEscena) fin = Math.min(fin, siguienteEscena.corte);
-    if (!escenas[bloqueEn(inicio).n] && fin - inicio >= 0.8) {
+    if (!escenas[bloqueEn(inicio).n - 1].base && fin - inicio >= 0.8) {
       etiqueta = { inicio, fin: r3(fin), top: 300 };
     } else if (finGancho - 0.6 >= 0.8) {
       etiqueta = { inicio: 0.6, fin: finGancho, top: 860 };
@@ -389,25 +581,33 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       avisos.push("La etiqueta no se muestra: el bloque 2 es una escena y empieza demasiado pronto. Alarga el bloque 1 o quita la escena del bloque 2.");
     }
   }
-  const palabrasGancho = guion.gancho.split(/\s+/).filter(Boolean);
-  archivos["compositions/gancho.html"] = pieza("gancho.html", {
-    DURACION: finGancho,
-    FUENTES: fuentesCss,
-    TAMANO: tamanoGancho(guion.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
-    PALABRAS: palabrasGancho
-      .map((w, i) => `<span class="palabra${i === palabrasGancho.length - 1 ? " acento" : ""}">${escaparHtml(w)}</span>`)
-      .join(""),
-  });
-  host("gancho", "gancho.html", 0, finGancho, 50, "", 620, 200);
-  if (o.etiqueta && etiqueta) {
-    const dur = r3(etiqueta.fin - etiqueta.inicio);
-    archivos["compositions/etiqueta.html"] = pieza("etiqueta.html", {
-      DURACION: dur,
+  if (!cabeGancho(e.gancho, tema.tamanos.ganchoMinimo, 972, 600)) {
+    avisos.push("El gancho no cabe ni al tamaño mínimo del tema (una palabra muy larga o demasiado texto): acórtalo o cambia el tema.");
+  }
+  const palabrasGancho = e.gancho.split(/\s+/).filter(Boolean);
+  anadirPieza(
+    "gancho",
+    "gancho.html",
+    0,
+    finGancho,
+    {
       FUENTES: fuentesCss,
-      TEXTO: escaparHtml(o.etiqueta),
-      TAMANO: Math.min(64, Math.floor(872 / (Math.max(o.etiqueta.length, 1) * 0.56))),
-    });
-    host("etiqueta", "etiqueta.html", etiqueta.inicio, dur, 51, "", 160, etiqueta.top);
+      TAMANO: tamanoGancho(e.gancho, tema.tamanos.gancho, tema.tamanos.ganchoMinimo, 972, 600),
+      PALABRAS: palabrasGancho
+        .map((w, i) => `<span class="palabra${i === palabrasGancho.length - 1 ? " acento" : ""}">${escaparHtml(w)}</span>`)
+        .join(""),
+    },
+    { z: Z_GANCHO, alto: 620, top: 200 },
+  );
+  if (o.etiqueta && etiqueta) {
+    anadirPieza(
+      "etiqueta",
+      "etiqueta.html",
+      etiqueta.inicio,
+      r3(etiqueta.fin - etiqueta.inicio),
+      { FUENTES: fuentesCss, TEXTO: escaparHtml(o.etiqueta), TAMANO: Math.min(64, Math.floor(872 / (Math.max(o.etiqueta.length, 1) * 0.56))) },
+      { z: Z_ETIQUETA, alto: 160, top: etiqueta.top },
+    );
   }
 
   // ---- Subtítulos ----
@@ -452,18 +652,23 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
       return `      <div id="${g.id}" class="clip grupo" data-start="${g.inicio}" data-duration="${g.duracion}" data-track-index="0"><div id="${g.id}-txt" class="txt" style="font-size: ${g.tamano}px">${spans}</div></div>`;
     })
     .join("\n");
-  archivos["compositions/subtitulos.html"] = pieza("subtitulos.html", {
-    DURACION: D,
-    ESTILO: estilo,
-    FUENTES: fuentesCss,
-    GRUPOS: gruposHtml,
-    DATOS: jsonParaScript({
-      estilo,
-      colores: { texto: colores.texto, acento: colores.acento },
-      grupos: grupos.map((g) => ({ id: g.id, inicio: g.inicio, palabras: g.palabras.map((p) => ({ id: p.id, inicio: p.inicio, fin: p.fin, enfasis: p.enfasis })) })),
-    }),
-  });
-  host("subtitulos", "subtitulos.html", 0, D, 60, ' data-track-kind="captions"');
+  anadirPieza(
+    "subtitulos",
+    "subtitulos.html",
+    0,
+    D,
+    {
+      ESTILO: estilo,
+      FUENTES: fuentesCss,
+      GRUPOS: gruposHtml,
+      DATOS: jsonParaScript({
+        estilo,
+        colores: { texto: colores.texto, acento: colores.acento },
+        grupos: grupos.map((g) => ({ id: g.id, inicio: g.inicio, palabras: g.palabras.map((p) => ({ id: p.id, inicio: p.inicio, fin: p.fin, enfasis: p.enfasis })) })),
+      }),
+    },
+    { z: Z_SUBTITULOS, extra: ' data-track-kind="captions"' },
+  );
 
   // ---- Destellos blancos: cambio de bloque y golpe ----
   const flash = ventanas.slice(1).map((v) => ({ t: v.corte, opacidad: 0.55, sube: 0.05, baja: 0.2 }));
@@ -471,8 +676,7 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   flash.sort((a, b) => a.t - b.t);
   // Dos destellos no pueden pisarse: si el golpe cae encima de un corte, gana el más fuerte.
   const flashSinSolape = flash.filter((x, i) => i === 0 || x.t >= flash[i - 1].t + flash[i - 1].sube + flash[i - 1].baja);
-  archivos["compositions/flash.html"] = pieza("flash.html", { DURACION: D, DATOS: jsonParaScript({ destellos: flashSinSolape }) });
-  host("flash", "flash.html", 0, D, 70);
+  anadirPieza("flash", "flash.html", 0, D, { DATOS: jsonParaScript({ destellos: flashSinSolape }) }, { z: Z_FLASH });
 
   // ---- Vendor 3D ----
   if (usa3d) {
@@ -489,11 +693,11 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
 
   // ---- Audio ----
   const audio = [
-    `      <audio id="voz" class="clip" src="assets/voz.mp3" data-start="0" data-duration="${r3(al.duracionAudio)}" data-track-index="30" data-volume="1"></audio>`,
+    `      <audio id="voz" class="clip" src="assets/voz.wav" data-start="0" data-duration="${r3(al.duracionAudio)}" data-track-index="30" data-volume="1"></audio>`,
   ];
   if (e.musica) {
     audio.push(
-      `      <audio id="musica" class="clip" src="assets/musica.mp3" data-start="0" data-duration="${D}" data-track-index="31" data-volume="${e.musica.volumen}" data-fade-in="0.5" data-fade-out="1" data-automation="${escaparHtml(e.musica.automatizacion)}"></audio>`,
+      `      <audio id="musica" class="clip" src="assets/musica.wav" data-start="0" data-duration="${D}" data-track-index="31" data-volume="${e.musica.volumen}" data-fade-in="0.5" data-fade-out="1" data-automation="${escaparHtml(e.musica.automatizacion)}"></audio>`,
     );
   }
 
@@ -502,12 +706,12 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
     `--texto: ${colores.texto};`,
     `--acento: ${colores.acento};`,
     `--contorno: ${colores.contorno};`,
-    `--fuente-titulos: "${familiaCss(f.titulos.familia)}", "League Gothic", sans-serif;`,
-    `--peso-titulos: ${Number(f.titulos.peso) || 400};`,
-    `--fuente-subtitulos: "${familiaCss(f.subtitulos.familia)}", "Inter", sans-serif;`,
-    `--peso-subtitulos: ${Number(f.subtitulos.peso) || 800};`,
+    `--fuente-titulos: "${f.titulos.familia}", sans-serif;`,
+    `--peso-titulos: ${f.titulos.peso};`,
+    `--fuente-subtitulos: "${f.subtitulos.familia}", sans-serif;`,
+    `--peso-subtitulos: ${f.subtitulos.peso};`,
     `--mayusculas: ${tema.subtitulos?.mayusculas === false ? "none" : "uppercase"};`,
-    `--degradado: ${Math.min(1, Math.max(0, tema.degradado?.opacidad ?? 0.78))};`,
+    `--degradado: ${tema.degradado?.opacidad ?? 0.78};`,
   ].join("\n        ");
   const importmap = usa3d
     ? `    <script type="importmap">{"imports":{"three":"./assets/vendor/three184/three.module.js","three/addons/":"./assets/vendor/three184/addons/"}}</script>`
@@ -515,43 +719,59 @@ export function planificarComposicion(e: EntradaComposicion): PlanComposicion {
   archivos["index.html"] = fs
     .readFileSync(path.join(PLANTILLA_DIR, "index.html"), "utf8")
     .replace(/\{\{([A-Z_]+)\}\}/g, (m, k: string) =>
-      ({ TITULO: escaparHtml(guion.titulo), IMPORTMAP: importmap, TEMA_CSS: temaCss, DURACION: String(D), HOSTS: hosts.join("\n"), AUDIO: audio.join("\n") })[k] ?? m,
+      ({ TITULO: escaparHtml(e.titulo), IMPORTMAP: importmap, TEMA_CSS: temaCss, DURACION: String(D), HOSTS: hosts.join("\n"), AUDIO: audio.join("\n") })[k] ?? m,
     );
 
+  // I2: la barrera de red, antes de escribir nada. Los patrones son los de `textoSeguro` (esquema.ts): un texto que el esquema
+  // rechazaría y llegase aquí a mano (Proyecto sin validar) se para igualmente. Sin el nombre del texto ni su valor.
+  for (const [rel, contenido] of Object.entries(archivos)) {
+    const red = hallazgosDeRed(contenido, rel);
+    if (red.length) throw new Error(`La composición llevaría ${red.length} recurso(s) de red en ${rel}: el render es local.`);
+  }
   return { duracion: D, archivos, copias, avisos, usaWebgpu, estiloSubtitulos: estilo };
 }
 
 // ---------- Piezas de escena ----------
 
-type Comun = { ID: string; DURACION: number; FUENTES: string; ENVOLTURA: string };
+type Comun = { ID: string; FUENTES: string; ENVOLTURA_DATOS: string };
+/** Plantilla de la pieza y sus valores; ID, INICIO y DURACION los pone anadirPieza. */
+type PiezaPlan = [string, Record<string, string | number>];
 type Ventana = { duracion: number; visible: number };
 
-function piezaCifra(esc: EscenaCifra, comun: Comun, v: Ventana, empieza: number, golpe?: number): string {
+function piezaCifra(esc: EscenaCifra, comun: Comun, v: Ventana, empieza: number, golpe?: number): PiezaPlan {
   const final = esc.prefijo + esc.valor.toLocaleString("en-US", { minimumFractionDigits: esc.decimales, maximumFractionDigits: esc.decimales }) + esc.sufijo;
   const tamano = Math.max(140, Math.min(380, Math.floor(900 / (Math.max(final.length, 1) * 0.5))));
   // La cuenta dura el 60 % del bloque; si el golpe cae en este bloque, aterriza justo en esa palabra.
   const cuenta = golpe !== undefined && golpe > empieza + 0.5 ? r3(golpe - (empieza + 0.1)) : r3(Math.max(0.4, v.visible * 0.6));
-  return pieza("escena-cifra.html", {
-    ...comun,
-    TAMANO: tamano,
-    INICIAL: escaparHtml(esc.prefijo + "0" + esc.sufijo),
-    ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
-    DATOS: jsonParaScript({ valor: esc.valor, prefijo: esc.prefijo, sufijo: esc.sufijo, decimales: esc.decimales, empieza: r3(empieza + 0.1), cuenta, aterriza: r3(empieza + 0.1 + cuenta) }),
-  });
+  return [
+    "escena-cifra.html",
+    {
+      ...comun,
+      TAMANO: tamano,
+      INICIAL: escaparHtml(esc.prefijo + "0" + esc.sufijo),
+      ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
+      DATOS: jsonParaScript({ valor: esc.valor, prefijo: esc.prefijo, sufijo: esc.sufijo, decimales: esc.decimales, empieza: r3(empieza + 0.1), cuenta, aterriza: r3(empieza + 0.1 + cuenta) }),
+    },
+  ];
 }
 
-function piezaCartel(esc: EscenaCartel, comun: Comun, empieza: number): string {
+function piezaCartel(esc: EscenaCartel, comun: Comun, empieza: number): PiezaPlan {
   const palabras = esc.texto.split(/\s+/).filter(Boolean);
-  return pieza("escena-cartel.html", {
-    ...comun,
-    TAMANO: tamanoGancho(esc.texto, 180, 80, 900, esc.subtexto ? 520 : 640),
-    PALABRAS: palabras.map((w, i) => `<span class="w${i === palabras.length - 1 ? " ultima" : ""}" data-layout-allow-occlusion>${escaparHtml(w)}</span>`).join(""),
-    SUBTEXTO: escaparHtml(esc.subtexto ?? ""),
-    DATOS: jsonParaScript({ empieza: r3(empieza) }),
-  });
+  return [
+    "escena-cartel.html",
+    {
+      ...comun,
+      TAMANO: tamanoGancho(esc.texto, 180, 80, 900, esc.subtexto ? 520 : 640),
+      PALABRAS: palabras
+        .map((w, i) => `<span class="w${i === palabras.length - 1 ? " ultima" : ""}" data-layout-allow-occlusion>${escaparHtml(w)}</span>`)
+        .join(""),
+      SUBTEXTO: escaparHtml(esc.subtexto ?? ""),
+      DATOS: jsonParaScript({ empieza: r3(empieza) }),
+    },
+  ];
 }
 
-function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: number, colores: { texto: string; acento: string }): string {
+function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: number, colores: { texto: string; acento: string }): PiezaPlan {
   const filas = esc.series
     .map(
       (s, j) =>
@@ -559,25 +779,28 @@ function piezaBarras(esc: EscenaBarras, comun: Comun, v: Ventana, empieza: numbe
     )
     .join("\n");
   const duracionPeriodo = r3(Math.max(0.3, (v.visible - 0.3) / esc.periodos.length));
-  return pieza("escena-barras.html", {
-    ...comun,
-    TITULO: escaparHtml(esc.titulo),
-    PRIMER_PERIODO: escaparHtml(esc.periodos[0] ?? ""),
-    FILAS: filas,
-    FUENTE: esc.fuente ? `Fuente: ${escaparHtml(esc.fuente)}` : "",
-    DATOS: jsonParaScript({
-      periodos: esc.periodos,
-      series: esc.series.map((s) => ({ nombre: s.nombre, valores: s.valores })),
-      prefijo: esc.prefijo,
-      sufijo: esc.sufijo,
-      duracionPeriodo,
-      empieza: r3(empieza + 0.2),
-      colores,
-    }),
-  });
+  return [
+    "escena-barras.html",
+    {
+      ...comun,
+      TITULO: escaparHtml(esc.titulo),
+      PRIMER_PERIODO: escaparHtml(esc.periodos[0] ?? ""),
+      FILAS: filas,
+      FUENTE: esc.fuente ? `Fuente: ${escaparHtml(esc.fuente)}` : "",
+      DATOS: jsonParaScript({
+        periodos: esc.periodos,
+        series: esc.series.map((s) => ({ nombre: s.nombre, valores: s.valores })),
+        prefijo: esc.prefijo,
+        sufijo: esc.sufijo,
+        duracionPeriodo,
+        empieza: r3(empieza + 0.2),
+        colores,
+      }),
+    },
+  ];
 }
 
-function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { texto: string; acento: string }): string {
+function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { texto: string; acento: string }): PiezaPlan {
   // El mapa ocupa de 300 a 920 px: por debajo va la etiqueta (930-1010) y no debe tapar ninguna zona.
   const m = trazarMapa(esc.region, esc.destacar, 1000, 620);
   const trazados = [
@@ -587,59 +810,145 @@ function piezaMapa(esc: EscenaMapa, comun: Comun, empieza: number, colores: { te
     ...m.extra.filter((x) => x.clase === "marco").map((x) => `                <path class="${x.clase}" d="${x.d}" />`),
   ].join("\n");
   const enciende = r3(empieza + 0.35);
-  return pieza("escena-mapa.html", {
-    ...comun,
-    ANCHO: m.ancho,
-    ALTO: m.alto,
-    TITULO: escaparHtml(esc.titulo ?? ""),
-    TRAZADOS: trazados,
-    ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
-    ETQ_VISIBLE: esc.etiqueta ? "" : "display: none",
-    CLASE_SVG: esc.region === "europa" ? "recorte" : "",
-    DATOS: jsonParaScript({
-      destacadas: m.destacadas.map((_, i) => `${comun.ID}-z${i}`),
-      enciende,
-      // La etiqueta entra con la primera zona encendida: en bloques cortos, si espera a todas, apenas se lee.
-      etiqueta: r3(enciende + 0.15),
-      colores,
-    }),
-  });
+  return [
+    "escena-mapa.html",
+    {
+      ...comun,
+      ANCHO: m.ancho,
+      ALTO: m.alto,
+      TITULO: escaparHtml(esc.titulo ?? ""),
+      TRAZADOS: trazados,
+      ETIQUETA: escaparHtml(esc.etiqueta ?? ""),
+      ETQ_VISIBLE: esc.etiqueta ? "" : "display: none",
+      CLASE_SVG: esc.region === "europa" ? "recorte" : "",
+      DATOS: jsonParaScript({
+        destacadas: m.destacadas.map((_, i) => `${comun.ID}-z${i}`),
+        enciende,
+        // La etiqueta entra con la primera zona encendida: en bloques cortos, si espera a todas, apenas se lee.
+        etiqueta: r3(enciende + 0.15),
+        colores,
+      }),
+    },
+  ];
 }
 
 // ---------- Escritura ----------
 
 /** Escribe _composicion\ desde cero con el plan ya calculado. */
 export function escribirPlan(destino: string, plan: PlanComposicion): void {
+  // Ninguna ruta relativa sale de `destino` (R1 de T3, L-1): se comprueban todas antes de borrar o escribir nada.
+  const base = path.resolve(destino);
+  const dentro = (rel: string): string => {
+    const ruta = path.resolve(base, rel);
+    if (ruta !== base && !ruta.startsWith(base + path.sep)) throw new Error("El plan escribe fuera de la carpeta de la composición.");
+    return ruta;
+  };
+  const archivos = Object.entries(plan.archivos).map(([rel, contenido]) => [dentro(rel), contenido] as const);
+  const copias = plan.copias.map((c) => [dentro(c.destino), c.origen, c.recurso === true] as const);
   // En Windows un Chrome que acaba de cerrarse puede tener la carpeta abierta unos instantes.
-  fs.rmSync(destino, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
-  for (const [rel, contenido] of Object.entries(plan.archivos)) {
-    const ruta = path.join(destino, rel);
+  borrarArbol(destino);
+  for (const [ruta, contenido] of archivos) {
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
     fs.writeFileSync(ruta, contenido, "utf8");
   }
   const hechas = new Set<string>();
-  for (const c of plan.copias) {
-    if (hechas.has(c.destino)) continue;
-    hechas.add(c.destino);
-    const ruta = path.join(destino, c.destino);
+  for (const [ruta, origen, recurso] of copias) {
+    if (hechas.has(ruta)) continue;
+    hechas.add(ruta);
     fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    fs.copyFileSync(c.origen, ruta);
+    // copiarRecurso abre una sola vez (fichero normal, un solo enlace, bajo el tope): sin ventana entre la comprobación y la copia (L-3).
+    if (recurso) copiarRecurso(origen, ruta, TOPE_COPIA_BYTES);
+    else fs.copyFileSync(origen, ruta); // fuentes, vendor e imágenes de escena: los pone este motor
   }
 }
 
-/** Busca URLs de red en la composición generada (no debe quedar ninguna). */
+/**
+ * Vendor copiado tal cual (ruta relativa → SHA-256): traen URLs de documentación. Si cambia un byte, se escanea entero.
+ * Al subir three, HyperFrames o las fuentes, el test de urls-de-red.test.ts avisa de que hay que recalcularlo.
+ */
+export const VENDOR_FIJADO: Record<string, string> = {
+  "assets/vendor/shaders.iife.js": "012b904bcf2621aa8dd99e1959ba71ddc1de86b9958d5ac9f48a40ff94cef776",
+  "assets/vendor/three184/three.module.js": "61134198639a10885daf893fb29669ca26386e2a4cde76e8399f51e329f741f2",
+  "assets/vendor/three184/three.core.js": "368dc78835287709a48939e8eb9a7a61d0732098bdf916e56840d458aae9ccf3",
+  "assets/vendor/three184/addons/loaders/FontLoader.js": "a8d78ab85e596ef6c274023ee165520000f010011553dbfafe5c966387aca3d8",
+  "assets/vendor/three184/addons/geometries/TextGeometry.js": "edf69c1cd6087c84d020156d1adbb29b40b098e4cbe8da4c0c36bbadc58dceac",
+  "assets/vendor/three147.min.js": "f34446bf875b5fb0dcd93819ffe1d9e182d46634ee855f5d904c6c4ac7cdbc95",
+  "assets/fonts/Geist-Bold.typeface.json": "e42c3305dcef66919fb1f2cf96101173c593abbd78eaed155025071b3fe6f621",
+};
+const W3_PERMITIDAS = new Set(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xlink"]);
+const ENTIDADES: Record<string, string> = {
+  colon: ":", sol: "/", bsol: "\\", lpar: "(", period: ".", num: "#", quest: "?", amp: "&", comma: ",", lbrack: "[", lsqb: "[", equals: "=", semi: ";", Tab: "\t", NewLine: "\n",
+};
+// Esquema de red seguido de cualquier carácter que no corte la URL: cubre `http://x`, `http:\\x`, `http:intranet` y
+// `http:` + usuario largo + `@evil.com`. Sin cuantificadores anidados ni tope de host: lineal en la entrada.
+// Solo dígitos tras `:` (`http:2`, `ws:80`) es un puerto o una razón, no una URL: hace falta algo más detrás.
+const ESQUEMA_RE = /\b(?:https?|wss?):(?=\d*[^\s"'<>)\d])/gi;
+const FILE_RE = /\bfile:(?:[\\/]|[a-z]:)/gi;
+// Sin esquema: en marcado y CSS, tras inicio, control o espacio, comilla, acento grave, `(`, `=`, `,` o `;`.
+const HOST_MARCADO_RE = /(?<=^|[\x00-\x20"'`(=,;])[\\/]{2,}[^\s"'<>)\\/]/gim;
+// En JS y JSON `//` abre también un comentario: solo cuenta dentro de una cadena o justo tras `(`.
+const HOST_JS_RE = /(?<=["'`(])[\\/]{2,}[^\s"'<>)\\/]/gi;
+
+function caracter(n: number): string {
+  return n > 0 && n <= 0x10ffff && (n < 0xd800 || n > 0xdfff) ? String.fromCodePoint(n) : "�";
+}
+
+/** Una sola pasada, como el navegador: `&amp;#104;` queda en `&#104;`. */
+function sinEntidades(t: string): string {
+  return t.replace(/&#[xX]([0-9a-fA-F]+);?|&#([0-9]+);?|&([a-zA-Z]+);|&amp/g, (m, hex?: string, dec?: string, nombre?: string) => {
+    if (hex) return caracter(parseInt(hex, 16));
+    if (dec) return caracter(parseInt(dec, 10));
+    return nombre ? (Object.hasOwn(ENTIDADES, nombre) ? ENTIDADES[nombre] : m) : "&";
+  });
+}
+
+function sinEscapesCss(t: string): string {
+  return t.replace(/\\(?:([0-9a-f]{1,6})[ \t\r\n\f]?|([^\r\n\f]))/gi, (_, hex?: string, c?: string) => (hex ? caracter(parseInt(hex, 16)) : c!));
+}
+
+export function hallazgosDeRed(texto: string, nombre: string): string[] {
+  const hallados = new Set<string>();
+  const anotar = (t: string, re: RegExp) => {
+    for (const m of t.matchAll(re)) {
+      const ficha = /[^\s"'<>)]{0,201}/y; // tope: solo se guardan 200 y así `http:http:…` no es cuadrático.
+      ficha.lastIndex = m.index;
+      const url = ficha.exec(t)![0];
+      if (!W3_PERMITIDAS.has(url.toLowerCase())) hallados.add(url.slice(0, 200));
+    }
+  };
+  const marcado = /\.(html|svg)$/i.test(nombre);
+  const base = marcado ? sinEntidades(texto) : texto;
+  const variantes = marcado || /\.css$/i.test(nombre) ? [base, sinEscapesCss(base)] : [base];
+  for (const v of variantes) {
+    // El navegador quita tabuladores y saltos de la URL; borrarlos sin más pegaría palabras, así que se miran las dos.
+    const pegada = v.replace(/[\t\n\r]/g, "");
+    for (const t of [v, pegada]) {
+      anotar(t, ESQUEMA_RE);
+      anotar(t, FILE_RE);
+      if (/speculationrules/i.test(t)) hallados.add("speculationrules");
+    }
+    if (marcado || /\.css$/i.test(nombre)) for (const t of [v, pegada]) anotar(t, HOST_MARCADO_RE);
+    else anotar(v, HOST_JS_RE); // pegada no: une un comentario `//x` con la línea anterior.
+  }
+  return [...hallados];
+}
+
+/**
+ * Busca URLs de red en la composición generada (no debe quedar ninguna, I2 c).
+ * ponytail: aviso temprano, no barrera. No ve concatenación ni escapes en JS (ver urls-de-red.test.ts); eso lo imponen
+ * I2 (a) y (b). Un fichero de texto con otra extensión o en UTF-16 tampoco se lee: las copias las decide este motor.
+ */
 export function urlsDeRed(destino: string): string[] {
   const encontradas: string[] = [];
   const recorrer = (dir: string) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const ruta = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (e.name !== "vendor" && !e.name.startsWith(".")) recorrer(ruta);
-      } else if (/\.(html|css)$/i.test(e.name)) {
-        const t = fs.readFileSync(ruta, "utf8");
-        for (const m of t.matchAll(/https?:\/\/[^\s"'<>)]+/g)) {
-          if (!m[0].startsWith("http://www.w3.org/")) encontradas.push(`${path.relative(destino, ruta)}: ${m[0]}`);
-        }
+      if (e.isDirectory()) recorrer(ruta);
+      else if (/\.(html|css|js|mjs|json|svg)$/i.test(e.name)) {
+        const rel = path.relative(destino, ruta).split(path.sep).join("/");
+        const bytes = fs.readFileSync(ruta);
+        if (VENDOR_FIJADO[rel] === crypto.createHash("sha256").update(bytes).digest("hex")) continue;
+        for (const h of hallazgosDeRed(bytes.toString("utf8"), e.name)) encontradas.push(`${rel}: ${h}`);
       }
     }
   };

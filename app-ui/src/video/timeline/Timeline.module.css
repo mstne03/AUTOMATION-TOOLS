@@ -1,0 +1,296 @@
+/* Cinco pistas sobre una escala común (40 px por segundo). La columna de etiquetas queda fija a la
+   izquierda; el resto se desplaza con la zona de 240 px del marco. Solo tokens. */
+.raiz {
+  --etiqueta: 176px;
+  --alto-fila: 44px;
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  /* La barra se ve también en reposo (la global es transparente hasta el hover): que la zona de
+     240 px tiene más pistas debajo tiene que ser evidente. */
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-12);
+}
+.raiz:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+/* Al menos tan ancha como la zona: con un vídeo corto las pistas siguen hasta el borde derecho. */
+.rejilla {
+  position: relative;
+  width: calc(var(--etiqueta) + var(--ancho-timeline));
+  min-width: 100%;
+  min-height: 100%;
+}
+.fila {
+  display: grid;
+  grid-template-columns: var(--etiqueta) minmax(var(--ancho-timeline), 1fr);
+  min-height: var(--alto-fila);
+  border-bottom: 1px solid var(--color-divider);
+}
+.etiqueta {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-divider);
+  color: var(--color-muted);
+  font-weight: 600;
+}
+.etiquetaLinea {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.carril {
+  position: relative;
+  min-width: 0;
+}
+.pista {
+  position: relative;
+  height: var(--alto-fila);
+}
+.pistaAlta {
+  position: relative;
+  min-height: var(--alto-fila);
+}
+.coste {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.aviso {
+  margin: 0;
+  color: var(--color-risk-write-fg);
+  font-weight: 400;
+}
+.aviso a {
+  color: var(--color-accent-link);
+}
+.controles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-weight: 400;
+}
+.campo,
+.campoCheck {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--color-text-soft);
+}
+.campo > span {
+  min-width: 56px;
+}
+.campoCheck input {
+  accent-color: var(--color-accent);
+}
+
+/* Regla y cabezal */
+.regla {
+  position: relative;
+  height: var(--alto-fila);
+  cursor: col-resize;
+  background: var(--color-surface);
+  touch-action: none;
+}
+.regla:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+.marca {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: var(--space-4) 0 0 var(--space-4);
+  border-left: 1px solid var(--color-border-strong);
+  color: var(--color-subtle);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.capaCabezal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--etiqueta);
+  width: var(--ancho-timeline);
+  z-index: 3;
+  pointer-events: none;
+}
+.cabezal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--color-accent-link);
+}
+
+/* Clips */
+.clip {
+  position: absolute;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 0 var(--space-6);
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: none;
+}
+.clip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+  z-index: 2;
+}
+.activo {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+.arrastrando {
+  z-index: 2;
+  opacity: 0.85;
+  cursor: grabbing;
+}
+.num {
+  flex: none;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.texto {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clipRecurso {
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success-fg);
+}
+.clipMusica {
+  background: var(--color-risk-read-bg);
+  border-color: var(--color-risk-read-border);
+  color: var(--color-risk-read-fg);
+  cursor: default;
+}
+.clipSubtitulo {
+  top: var(--space-6);
+  bottom: auto;
+  height: 28px;
+}
+.clipVoz {
+  container: clip-voz / inline-size;
+  background: transparent;
+  cursor: default;
+  justify-content: space-between;
+}
+.pendiente {
+  border-style: dashed;
+  border-color: var(--color-risk-write-border);
+}
+/* La píldora nunca se recorta: entera si cabe; si no, un punto de 10 px; en un clip mínimo, nada
+   (el borde discontinuo y el aria-label del clip siguen diciendo «Pendiente»). */
+.chipPend {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+}
+.chipPendTexto {
+  display: none;
+}
+@container clip-voz (min-width: 80px) {
+  .chipPend {
+    width: auto;
+    height: auto;
+    padding: var(--space-3) var(--space-10);
+  }
+  .chipPendTexto {
+    display: inline;
+  }
+}
+@container clip-voz (max-width: 9px) {
+  .chipPend {
+    display: none;
+  }
+}
+/* Los botones se ven enteros o no se ven: los que no caben pasan a una segunda línea oculta. */
+.accionesClip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  height: var(--size-control-30);
+  margin-left: auto;
+  overflow: hidden;
+}
+.borde {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--space-6);
+  background: var(--color-border-strong);
+  cursor: ew-resize;
+}
+.onda {
+  position: absolute;
+  top: var(--space-4);
+  left: 0;
+  pointer-events: none;
+}
+.ondaTrazo {
+  stroke: var(--color-accent);
+  stroke-width: 1;
+  fill: none;
+  opacity: 0.6;
+}
+
+/* Edición de la línea de subtítulos seleccionada */
+.edicion {
+  position: sticky;
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  width: min(560px, 100%);
+  padding: var(--space-6);
+  background: var(--color-surface-overlay);
+  border-top: 1px solid var(--color-divider);
+}
+.campoTexto {
+  flex: 1;
+  min-width: 160px;
+  padding: var(--space-4) var(--space-8);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+}
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-risk-destructive-text);
+}
+.confirmar p {
+  margin: 0 0 var(--space-8);
+}

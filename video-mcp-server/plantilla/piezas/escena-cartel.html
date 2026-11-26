@@ -40,14 +40,12 @@
         (function () {
           var id = "{{ID}}";
           var d = JSON.parse(document.getElementById(id + "-datos").textContent);
-          var tl = gsap.timeline({ paused: true });
-          {{ENVOLTURA}}
-          document.querySelectorAll("#" + id + " .w").forEach(function (w, i) {
-            tl.fromTo(w, { opacity: 0, filter: "blur(6px)", y: 24 }, { opacity: 1, filter: "blur(0px)", y: 0, duration: 0.35, ease: "power3.out" }, d.empieza + i * 0.067);
+          var hf = HF.contexto("{{ID}}", {{INICIO}});
+          hf.envoltura({{ENVOLTURA_DATOS}});
+          document.querySelectorAll("#" + id + "-txt .w").forEach(function (w, i) {
+            hf.tween(w, { opacity: 0, filter: "blur(6px)", y: 24 }, { opacity: 1, filter: "blur(0px)", y: 0 }, d.empieza + i * 0.067, 0.35, "power3.out");
           });
-          tl.fromTo("#" + id + "-sub", { opacity: 0, y: 16 }, { opacity: 0.85, y: 0, duration: 0.4, ease: "power2.out" }, d.empieza + 0.4);
-          window.__timelines = window.__timelines || {};
-          window.__timelines[id] = tl;
+          hf.tween("#" + id + "-sub", { opacity: 0, y: 16 }, { opacity: 0.85, y: 0 }, d.empieza + 0.4, 0.4, "power2.out");
         })();
       </script>
     </div>

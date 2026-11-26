@@ -9,11 +9,13 @@ import type {
   KbResultado,
   CanalPanel,
   Approval,
+  CapacidadesVideo,
   ChatEvent,
   ConversacionDetalle,
   ConversacionResumen,
   Job,
   JobKind,
+  NavegadorEstado,
   Settings,
   SettingsPatch,
   SettingsTrasProyecto,
@@ -21,12 +23,28 @@ import type {
   ToolInfo,
   YouTubeAuthOut,
   YouTubeStatus,
+  AvisoVideo,
+  CosteVoz,
+  CuerpoMuestra,
+  CuerpoQuitarSilencios,
+  CuerpoVoz,
+  FormaVoz,
+  GuionVideoResumen,
+  ModoRender,
+  PerfilVideo,
+  PistaMusica,
+  PreviewVideo,
+  ProyectoVideoResumen,
+  VozVideo,
 } from "./types";
+import type { Proyecto } from "../video/modelo";
 
 export class ApiError extends Error {
   constructor(
     public status: number,
     public detail: string,
+    /** Código estable de `detail: { mensaje, codigo }`; la UI decide por él, nunca por el texto. */
+    public codigo?: string,
   ) {
     super(detail);
   }
@@ -64,9 +82,46 @@ export interface Client {
   getSettings(): Promise<Settings>;
   putSettings(patch: SettingsPatch): Promise<Settings>;
   validateAnthropicKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
+  /** Sin coste: comprueba la clave con `GET /v1/voices` de ElevenLabs. Nunca devuelve la clave. */
+  validateElevenlabsKey(apiKey?: string): Promise<{ valida: boolean; detalle: string | null }>;
   /** 409 si es de otro proyecto y hay canales autorizados: repetir con `replace` tras confirmar. */
   importClientSecret(body: { path?: string; json_text?: string; replace?: boolean }): Promise<SettingsTrasProyecto>;
   removeClientSecret(): Promise<SettingsTrasProyecto>;
+  videoNavegador(): Promise<NavegadorEstado>;
+  /** Inicia la descarga (202). 409 si ya hay una en curso; 503 si el módulo de vídeo no está instalado. */
+  videoNavegadorDescarga(): Promise<NavegadorEstado>;
+  videoCapacidades(): Promise<CapacidadesVideo>;
+  videoGuionEsquema(): Promise<Texto>;
+  videoGuiones(): Promise<GuionVideoResumen[]>;
+  /** 413 (cuerpo grande), 422 (esquema, con `problemas` en el detalle). */
+  videoGuionCrear(guion: unknown): Promise<{ id: string; avisos: AvisoVideo[] }>;
+  videoGuion(gid: string): Promise<unknown>;
+  videoGuionBorrar(gid: string): Promise<Record<string, never>>;
+  videoProyectos(): Promise<ProyectoVideoResumen[]>;
+  videoProyectoCrear(guionId: string, perfilId: string): Promise<{ id: string }>;
+  videoProyecto(id: string): Promise<Proyecto>;
+  /** 409: la revisión enviada no es la actual. */
+  videoProyectoGuardar(id: string, cuerpo: { revision: number; proyecto: Proyecto }): Promise<{ revision: number; avisos: AvisoVideo[] }>;
+  videoProyectoBorrar(id: string): Promise<Record<string, never>>;
+  videoPreviewAbrir(id: string, webgpu: boolean): Promise<PreviewVideo>;
+  videoPreviewCerrar(id: string): Promise<Record<string, never>>;
+  /** POST: el plan depende de `frases`. Nunca gasta; la cifra y el `plan` son los que luego se confirman. */
+  videoVozCoste(id: string, frases?: string[]): Promise<CosteVoz>;
+  videoVozForma(id: string): Promise<FormaVoz>;
+  videoVozGenerar(id: string, cuerpo: CuerpoVoz): Promise<Record<string, unknown>>;
+  /** No gasta y el motor guarda el proyecto: después hay que recargarlo del servidor. */
+  videoVozQuitarSilencios(id: string, cuerpo: CuerpoQuitarSilencios): Promise<{ revision: number; recorte: { inicio: number; fin: number } }>;
+  /** El recurso se identifica por `bandejaId` (32 hex que devuelve el comando nativo), nunca por ruta. */
+  videoRecursoAnadir(id: string, bandejaId: string, clase: "foto" | "clip"): Promise<Record<string, unknown>>;
+  videoRecursoBorrar(id: string, rid: string): Promise<Record<string, unknown>>;
+  videoRender(id: string, modo: ModoRender): Promise<Job>;
+  videoPerfiles(): Promise<PerfilVideo[]>;
+  videoPerfilDuplicar(pid: string): Promise<PerfilVideo>;
+  videoPerfilGuardar(pid: string, perfil: PerfilVideo): Promise<PerfilVideo>;
+  videoVoces(): Promise<VozVideo[]>;
+  videoVozMuestra(voiceId: string, cuerpo: CuerpoMuestra): Promise<Record<string, unknown>>;
+  videoMusica(): Promise<PistaMusica[]>;
+  videoMusicaImportar(bandejaId: string): Promise<PistaMusica>;
 }
 
 export function createClient(port: number, token: string, fetchFn: typeof fetch = fetch): Client {
@@ -75,8 +130,18 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
 
   async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetchFn(base + path, { ...init, headers: { ...headers, ...init.headers } });
-    if (!res.ok) throw new ApiError(res.status, await detalle(res));
+    if (!res.ok) {
+      const { mensaje, codigo } = await detalleCodigo(res);
+      throw new ApiError(res.status, mensaje, codigo);
+    }
     return (await res.json()) as T;
+  }
+  /** Listas que el backend devuelve en sobre (`{ perfiles: [...] }`): lo que no sea una lista es un error. */
+  async function lista<T>(path: string, clave: string): Promise<T[]> {
+    const d = await req<Record<string, unknown>>(path);
+    const l = d && typeof d === "object" && !Array.isArray(d) ? d[clave] : undefined;
+    if (!Array.isArray(l)) throw new ApiError(502, "Respuesta inesperada del servidor.", "error_motor");
+    return l as T[];
   }
   const q = (params: Record<string, string | number | undefined>) => {
     const sp = new URLSearchParams();
@@ -131,19 +196,69 @@ export function createClient(port: number, token: string, fetchFn: typeof fetch 
     getSettings: () => req("/settings"),
     putSettings: (patch) => req("/settings", { method: "PUT", body: JSON.stringify(patch) }),
     validateAnthropicKey: (apiKey) => req("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
+    validateElevenlabsKey: (apiKey) => req("/settings/validate-elevenlabs-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
     importClientSecret: (body) =>
       req("/settings/client-secret", { method: "POST", body: JSON.stringify(body) }),
     removeClientSecret: () => req("/settings/client-secret", { method: "DELETE" }),
+    videoNavegador: () => req("/video/navegador"),
+    videoNavegadorDescarga: () => req("/video/navegador/descarga", { method: "POST" }),
+    videoCapacidades: () => req("/video/capacidades"),
+    videoGuionEsquema: () => req("/video/guiones/esquema"),
+    videoGuiones: () => req("/video/guiones"),
+    videoGuionCrear: (guion) => req("/video/guiones", { method: "POST", body: JSON.stringify({ guion }) }),
+    videoGuion: (gid) => req(`/video/guiones/${encodeURIComponent(gid)}`),
+    videoGuionBorrar: (gid) => req(`/video/guiones/${encodeURIComponent(gid)}`, { method: "DELETE" }),
+    videoProyectos: () => req("/video/proyectos"),
+    videoProyectoCrear: (guionId, perfilId) =>
+      req("/video/proyectos", { method: "POST", body: JSON.stringify({ guion_id: guionId, perfil_id: perfilId }) }),
+    videoProyecto: (id) => req(`/video/proyectos/${encodeURIComponent(id)}`),
+    videoProyectoGuardar: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(cuerpo) }),
+    videoProyectoBorrar: (id) => req(`/video/proyectos/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    videoPreviewAbrir: (id, webgpu) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "POST", body: JSON.stringify({ webgpu }) }),
+    videoPreviewCerrar: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/preview`, { method: "DELETE" }),
+    videoVozCoste: (id, frases) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz/coste`, { method: "POST", body: JSON.stringify(frases ? { frases } : {}) }),
+    videoVozForma: (id) => req(`/video/proyectos/${encodeURIComponent(id)}/voz/forma`),
+    videoVozGenerar: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz`, { method: "POST", body: JSON.stringify(cuerpo) }),
+    videoVozQuitarSilencios: (id, cuerpo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/voz/quitar-silencios`, { method: "POST", body: JSON.stringify(cuerpo) }),
+    videoRecursoAnadir: (id, bandejaId, clase) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/recursos`, { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId, clase }) }),
+    videoRecursoBorrar: (id, rid) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/recursos/${encodeURIComponent(rid)}`, { method: "DELETE" }),
+    videoRender: (id, modo) =>
+      req(`/video/proyectos/${encodeURIComponent(id)}/render`, { method: "POST", body: JSON.stringify({ modo }) }),
+    videoPerfiles: () => lista("/video/perfiles", "perfiles"),
+    videoPerfilDuplicar: (pid) => req(`/video/perfiles/${encodeURIComponent(pid)}/duplicar`, { method: "POST" }),
+    // El backend responde `{ id }`: el perfil guardado es el enviado.
+    videoPerfilGuardar: (pid, perfil) =>
+      req(`/video/perfiles/${encodeURIComponent(pid)}`, { method: "PUT", body: JSON.stringify({ perfil }) }).then(() => perfil),
+    videoVoces: () => lista("/video/voces", "voces"),
+    videoVozMuestra: (voiceId, cuerpo) => req("/video/voces/muestra", { method: "POST", body: JSON.stringify({ voiceId, ...cuerpo }) }),
+    videoMusica: () => lista("/video/musica", "pistas"),
+    videoMusicaImportar: (bandejaId) => req("/video/musica", { method: "POST", body: JSON.stringify({ bandeja_id: bandejaId }) }),
   };
 }
 
-async function detalle(res: Response): Promise<string> {
+/** `detail` puede ser un texto o `{ mensaje, codigo }` (contrato de la voz: `docs/video-fase1/contrato-voz.md`). */
+async function detalleCodigo(res: Response): Promise<{ mensaje: string; codigo?: string }> {
   try {
     const j = (await res.json()) as { detail?: unknown };
-    if (typeof j.detail === "string") return j.detail;
-    if (j.detail) return JSON.stringify(j.detail);
+    if (typeof j.detail === "string") return { mensaje: j.detail };
+    if (j.detail && typeof j.detail === "object") {
+      const d = j.detail as { mensaje?: unknown; codigo?: unknown };
+      if (typeof d.mensaje === "string") return { mensaje: d.mensaje, codigo: typeof d.codigo === "string" ? d.codigo : undefined };
+    }
+    if (j.detail) return { mensaje: JSON.stringify(j.detail) };
   } catch {
     /* sin cuerpo JSON */
   }
-  return `HTTP ${res.status}`;
+  return { mensaje: `HTTP ${res.status}` };
+}
+
+async function detalle(res: Response): Promise<string> {
+  return (await detalleCodigo(res)).mensaje;
 }

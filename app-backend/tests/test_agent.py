@@ -155,3 +155,10 @@ async def test_api_error_becomes_error_event(fake_anthropic, tmp_path):
     evs = await _drain(events)
     assert evs[-1]["type"] == "error" and "InternalServerError" in evs[-1]["message"]
     await jobs.stop()
+
+
+def test_prompt_con_reglas_de_video():
+    from app_backend.agent import SYSTEM_PROMPT
+
+    assert "derechos de retransmisión" in SYSTEM_PROMPT
+    assert "escenas generadas" in SYSTEM_PROMPT

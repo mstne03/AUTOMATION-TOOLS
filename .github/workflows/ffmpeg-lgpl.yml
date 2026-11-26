@@ -1,0 +1,225 @@
+# ffmpeg LGPL propio y mínimo (W1.5 · SEO-115): construcción reproducible, verificación del binario
+# real y publicación con el código fuente correspondiente. Todo sale de video-mcp-server/ffmpeg-build.
+#
+#   pruebas     tests de los scripts, sin red ni Docker. Único job en `push` (solo main).
+#   construir   solo a mano: dos ejecuciones independientes (a, b), descarga verificada (SHA-256 +
+#               GPG con huella anclada) y compilación en un contenedor sin red.
+#   verificar   Windows: a y b idénticos bit a bit; listados exactos, licencia, PE, importaciones
+#               y pruebas funcionales sobre el .exe real.
+#   empaquetar  revalida las fuentes contra fuentes.lock; avisos y tarball del código fuente.
+#   publicar    solo a mano, desde main, con el environment `release` aprobado.
+#
+# Seguridad del propio workflow (I9, R0 H2/L2, R1):
+#   - permissions: {} en el workflow y en pruebas/verificar/empaquetar (su checkout es anónimo:
+#     requiere repositorio público, R7); construir pide `contents: read` y solo publicar escribe.
+#   - Acciones fijadas por SHA. Sin cachés de ningún tipo (actions/cache, caché de buildx): un
+#     caché lo puede escribir otro workflow y la construcción lo usaría sin verificarlo.
+#   - Entradas y variables solo por `env:`, nunca interpoladas en `run:`.
+#   - verificar-binario.sh corre sin GITHUB_ENV/OUTPUT/PATH: el binario probado no puede tocar el
+#     entorno de los pasos siguientes; el SHA-256 que se publica se calcula antes de ejecutarlo.
+#   - `publicar` no ejecuta nada del árbol: descarga los artefactos de ESTA ejecución, comprueba que
+#     son los bytes que verificaron `verificar` y `empaquetar`, atesta y crea la release.
+# Marcadores de la Tarea 10: la puerta de `construir` falla mientras quede alguno, antes de
+# descargar nada.
+name: ffmpeg-lgpl
+
+on:
+  workflow_dispatch:
+    inputs:
+      sin_mf:
+        description: "Omitir h264_mf (runner sin Media Foundation): queda NO VERIFICADO y la prueba manual de Marc pasa a bloquear W3.2"
+        type: boolean
+        default: false
+      publicar:
+        description: "Publicar la release (solo desde main y con el environment release aprobado)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - video-mcp-server/ffmpeg-build/**
+      - .github/workflows/ffmpeg-lgpl.yml
+
+permissions: {}
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: bash video-mcp-server/ffmpeg-build/tests/run.sh
+
+  construir:
+    needs: pruebas
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        ejecucion: [a, b]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Puerta - ningún marcador de la Tarea 10 (antes de cualquier descarga)
+        run: bash video-mcp-server/ffmpeg-build/comprobar-pendientes.sh
+      - name: Construir (descarga verificada y compilación sin red)
+        run: bash video-mcp-server/ffmpeg-build/construir.sh --fuentes "$RUNNER_TEMP/fuentes" --salida "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-${{ matrix.ejecucion }}
+          path: ${{ runner.temp }}/build
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.ejecucion == 'a'
+        with:
+          name: fuentes
+          path: ${{ runner.temp }}/fuentes
+          if-no-files-found: error
+
+  verificar:
+    needs: construir
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions: {}
+    outputs:
+      sha256: ${{ steps.sumas.outputs.sha256 }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-a
+          path: ${{ runner.temp }}/a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-b
+          path: ${{ runner.temp }}/b
+      # Antes de ejecutar nada del artefacto: lo que se publica es lo que se descargó.
+      - id: sumas
+        name: SHA-256 de lo descargado (antes de ejecutarlo)
+        run: echo "sha256=$(sha256sum "$RUNNER_TEMP/a/SHA256SUMS" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Reproducible - a y b idénticos bit a bit
+        run: bash video-mcp-server/ffmpeg-build/comparar-builds.sh "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
+      - name: Verificar el binario real (sin acceso a GITHUB_ENV/OUTPUT/PATH)
+        env:
+          SIN_MF: ${{ inputs.sin_mf && '1' || '0' }}
+        run: |
+          env -u GITHUB_ENV -u GITHUB_OUTPUT -u GITHUB_PATH -u GITHUB_STEP_SUMMARY \
+            bash video-mcp-server/ffmpeg-build/verificar-binario.sh "$RUNNER_TEMP/a" > "$RUNNER_TEMP/verificacion.txt" 2>&1 \
+            || { cat "$RUNNER_TEMP/verificacion.txt"; exit 1; }
+          cat "$RUNNER_TEMP/verificacion.txt"
+      - name: Resumen
+        if: always()
+        run: |
+          [ ! -f "$RUNNER_TEMP/verificacion.txt" ] || { echo '```'; cat "$RUNNER_TEMP/verificacion.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ ! -f "$RUNNER_TEMP/a/SHA256SUMS" ] || { echo '```'; cat "$RUNNER_TEMP/a/SHA256SUMS"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  empaquetar:
+    needs: verificar
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      sha256: ${{ steps.paquete.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-a
+          path: ${{ runner.temp }}/a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fuentes
+          path: ${{ runner.temp }}/fuentes
+      - id: paquete
+        name: Avisos y código fuente correspondiente (revalida las fuentes contra fuentes.lock)
+        env:
+          REPO_FUENTE: ${{ vars.REPO_FUENTE }}
+        run: |
+          [ -n "$REPO_FUENTE" ] || { echo "::error::Falta la variable REPO_FUENTE: repositorio público de la oferta de código fuente (R7)"; exit 1; }
+          rev="$(awk -F'\t' '$1 == "ffmpeg" {print $2}' video-mcp-server/ffmpeg-build/fuentes.lock)-${GITHUB_SHA::12}"
+          bash video-mcp-server/ffmpeg-build/recopilar-avisos.sh --repo "$REPO_FUENTE" --rev "$rev" \
+            "$RUNNER_TEMP/fuentes" "$RUNNER_TEMP/a" "$RUNNER_TEMP/publicacion"
+          bash video-mcp-server/ffmpeg-build/empaquetar-fuente.sh --rev "$rev" \
+            "$RUNNER_TEMP/fuentes" "$RUNNER_TEMP/publicacion" "$RUNNER_TEMP/publicacion"
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/publicacion/ffmpeg-fuente-correspondiente-$rev.tar.xz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: publicacion
+          path: ${{ runner.temp }}/publicacion
+          if-no-files-found: error
+
+  publicar:
+    needs: [verificar, empaquetar]
+    if: github.event_name == 'workflow_dispatch' && inputs.publicar && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # crear la release
+      id-token: write # atestación de procedencia
+      attestations: write
+    steps:
+      # Solo para comprobar la rama y leer la versión del lock: de este árbol no se ejecuta nada.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: rev
+        name: El commit debe estar en main y este debe ser el repositorio público de la oferta
+        env:
+          REPO_FUENTE: ${{ vars.REPO_FUENTE }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_SHA no está en main"; exit 1; }
+          [ "$REPO_FUENTE" = "$GITHUB_REPOSITORY" ] \
+            || { echo "::error::Solo se publica desde el repositorio público de la oferta (REPO_FUENTE, R7)"; exit 1; }
+          echo "rev=$(awk -F'\t' '$1 == "ffmpeg" {print $2}' video-mcp-server/ffmpeg-build/fuentes.lock)-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-a
+          path: ${{ runner.temp }}/dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: publicacion
+          path: ${{ runner.temp }}/dist
+      - name: Son los bytes que verificaron `verificar` y `empaquetar`
+        env:
+          ESPERADO: ${{ needs.verificar.outputs.sha256 }}
+          ESPERADO_FUENTE: ${{ needs.empaquetar.outputs.sha256 }}
+          REV: ${{ steps.rev.outputs.rev }}
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          real=$(sha256sum SHA256SUMS | cut -d' ' -f1)
+          [ "$real" = "$ESPERADO" ] || { echo "::error::SHA256SUMS $real ≠ verificado $ESPERADO"; exit 1; }
+          [ "$(awk '{print $2}' SHA256SUMS | sort | paste -sd' ' -)" = "ffmpeg.exe ffprobe.exe" ] \
+            || { echo "::error::SHA256SUMS debe listar exactamente ffmpeg.exe y ffprobe.exe"; exit 1; }
+          sha256sum -c SHA256SUMS
+          fuente=$(sha256sum "ffmpeg-fuente-correspondiente-$REV.tar.xz" | cut -d' ' -f1)
+          [ "$fuente" = "$ESPERADO_FUENTE" ] || { echo "::error::tarball de fuente $fuente ≠ empaquetado $ESPERADO_FUENTE"; exit 1; }
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            ${{ runner.temp }}/dist/ffmpeg.exe
+            ${{ runner.temp }}/dist/ffprobe.exe
+            ${{ runner.temp }}/dist/ffmpeg-fuente-correspondiente-*.tar.xz
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REV: ${{ steps.rev.outputs.rev }}
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          gh release create "ffmpeg-lgpl-$REV" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "ffmpeg LGPL $REV" --notes-file LEEME-FFMPEG.txt \
+            ffmpeg.exe ffprobe.exe SHA256SUMS LEEME-FFMPEG.txt LICENSES/* "ffmpeg-fuente-correspondiente-$REV.tar.xz"

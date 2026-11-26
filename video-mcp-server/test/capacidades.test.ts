@@ -55,6 +55,28 @@ describe("probarGpu", () => {
     expect(leerPruebaGpu()?.webgpu).toBe(true);
   });
 
+  it("Review Focus 4: sin navegador no memoriza el fallo; al descargarlo, vuelve a probar sin reiniciar", async () => {
+    const { hayWebgpu, leerPruebaGpu, ejecutar } = await cargar();
+    const { ErrorNavegador, FALTA_NAVEGADOR } = await import("../src/proceso.js");
+    ejecutar.mockRejectedValue(new ErrorNavegador(FALTA_NAVEGADOR));
+    expect(await hayWebgpu(H)).toBe(false);
+    expect(ejecutar).toHaveBeenCalledTimes(1);
+    expect(await hayWebgpu(H)).toBe(false);
+    expect(ejecutar, "tiene que reintentar: el fallo no se memoriza").toHaveBeenCalledTimes(2);
+    ejecutar.mockImplementation(renderOk(200));
+    expect(await hayWebgpu(H)).toBe(true);
+    expect(leerPruebaGpu()?.webgpu).toBe(true);
+  });
+
+  it("control: un fallo de otro tipo sí se memoriza en el proceso", async () => {
+    const { hayWebgpu, ejecutar } = await cargar();
+    ejecutar.mockRejectedValue(new Error("otra cosa"));
+    expect(await hayWebgpu(H)).toBe(false);
+    ejecutar.mockClear();
+    expect(await hayWebgpu(H)).toBe(false);
+    expect(ejecutar).not.toHaveBeenCalled();
+  });
+
   it("un fotograma ilegible tampoco se cachea", async () => {
     const { probarGpu, leerPruebaGpu, ejecutar } = await cargar();
     ejecutar.mockImplementation(async (cmd: string, args: string[]) => {
@@ -64,6 +86,17 @@ describe("probarGpu", () => {
     });
     expect((await probarGpu(H)).webgpu).toBe(false);
     expect(leerPruebaGpu()).toBeUndefined();
+  });
+
+  it("capacidades registra los codificadores H.264 que funcionan y su adaptador", async () => {
+    const { capacidades, ejecutar } = await cargar();
+    ejecutar.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.includes("-encoders")) return { code: 0, stdout: " V....D h264_nvenc  NVIDIA\n V....D h264_mf  MF\n", stderr: "" };
+      if (args.includes("-c:v")) return { code: args.includes("h264_mf") ? 0 : 1, stdout: "", stderr: "" };
+      return { code: 1, stdout: "", stderr: "" };
+    });
+    const c = await capacidades(H, false);
+    expect(c.codificadores).toEqual([{ codificador: "h264_mf", adaptador: "Media Foundation (Windows)" }]);
   });
 
   it("un render negro sí se cachea como webgpu=false", async () => {

@@ -25,14 +25,21 @@ setInterval(() => {}, 1000); // render: se cuelga
   process.env.VIDEO_HYPERFRAMES_BIN = script;
   process.env.VIDEO_TIMEOUT_RENDER_S = "2";
   process.env.VIDEO_FORZAR_SIN_GPU = "1";
+  // Sin navegador, ninguna CLI se lanza (I4): basta un fichero que exista (no hay manifiesto en desarrollo).
+  const navegador = nodePath.join(dir, "nav", "chrome-headless-shell.exe");
+  nodeFs.mkdirSync(nodePath.dirname(navegador));
+  nodeFs.writeFileSync(navegador, "exe");
+  process.env.HYPERFRAMES_BROWSER_PATH = navegador;
+  process.env.VIDEO_STATE_DIR = nodePath.join(dir, "estado");
   return { dir, script, registro };
 });
 
 import type { Config } from "../src/config.js";
 import { catalogo } from "../src/herramientas.js";
-import { ErrorVideo, imagenesValidadas } from "../src/paths.js";
+import { comprobarRecurso, copiarRecurso, ErrorVideo, imagenesValidadas } from "../src/paths.js";
 import { ejecutar, herramientasFfmpeg } from "../src/proceso.js";
-import { encolarRender, esperarJob } from "../src/render.js";
+import { encolarRender, esperarJob, prepararRender } from "../src/render.js";
+import { escribirPlan, type PlanComposicion } from "../src/composicion.js";
 import { parsearGuion } from "../src/guion.js";
 import { procesarAlineacion } from "../src/alineacion.js";
 
@@ -53,7 +60,6 @@ const cfg: Config = {
   elevenVoiceId: "voz123",
   elevenModelId: "eleven_multilingual_v2",
   videoRoot: RAIZ,
-  browserPath: undefined,
   musicaVolumen: 0.12,
   ffmpegDir: undefined,
 };
@@ -141,6 +147,145 @@ describe("imágenes", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "img1.jpg"), "x");
     expect(imagenesValidadas(dir).imagenes[0]?.nombre).toBe("img1.jpg");
+  });
+});
+
+describe("recursos del usuario abiertos una vez (I6)", () => {
+  const nuevo = (nombre: string) => {
+    const d = path.join(RAIZ, nombre);
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+  };
+  const fuera = () => {
+    const f = path.join(nuevo("fuera-hl"), `secreto-${Math.random().toString(36).slice(2)}.jpg`);
+    fs.writeFileSync(f, "secreto");
+    return f;
+  };
+
+  it("una imagen con hardlink se rechaza", () => {
+    const dir = nuevo("video020");
+    fs.linkSync(fuera(), path.join(dir, "img1.jpg"));
+    expect(() => imagenesValidadas(dir)).toThrow(/enlace/);
+  });
+
+  it("comprobarRecurso acepta un fichero normal y rechaza el hardlink con solo el nombre del fichero", () => {
+    const dir = nuevo("video021");
+    fs.writeFileSync(path.join(dir, "ok.jpg"), "x");
+    expect(() => comprobarRecurso(path.join(dir, "ok.jpg"))).not.toThrow();
+    fs.linkSync(fuera(), path.join(dir, "hl.jpg"));
+    expect(() => comprobarRecurso(path.join(dir, "hl.jpg"))).toThrow(ErrorVideo);
+    let mensaje = "";
+    try {
+      comprobarRecurso(path.join(dir, "hl.jpg"));
+    } catch (e) {
+      mensaje = (e as Error).message;
+    }
+    expect(mensaje).toContain("hl.jpg");
+    expect(mensaje).not.toContain(dir);
+    expect(() => comprobarRecurso(path.join(dir, "no-existe.jpg"))).toThrow(ErrorVideo);
+  });
+
+  it("copiarRecurso copia bytes idénticos de un fichero normal", () => {
+    const dir = nuevo("video022");
+    const o = path.join(dir, "o.bin");
+    const bytes = Buffer.from([0, 1, 2, 255, 254, 3]);
+    fs.writeFileSync(o, bytes);
+    copiarRecurso(o, path.join(dir, "d.bin"));
+    expect(fs.readFileSync(path.join(dir, "d.bin")).equals(bytes)).toBe(true);
+  });
+
+  it("copiarRecurso con hardlink lanza y no crea el destino", () => {
+    const dir = nuevo("video023");
+    const o = path.join(dir, "o.jpg");
+    fs.linkSync(fuera(), o);
+    expect(() => copiarRecurso(o, path.join(dir, "d.jpg"))).toThrow(/enlace/);
+    expect(fs.existsSync(path.join(dir, "d.jpg"))).toBe(false);
+  });
+
+  it("copiarRecurso no pisa un destino existente", () => {
+    const dir = nuevo("video024");
+    fs.writeFileSync(path.join(dir, "o.bin"), "nuevo");
+    fs.writeFileSync(path.join(dir, "d.bin"), "viejo");
+    expect(() => copiarRecurso(path.join(dir, "o.bin"), path.join(dir, "d.bin"))).toThrow();
+    expect(fs.readFileSync(path.join(dir, "d.bin"), "utf8")).toBe("viejo");
+  });
+
+  it("copiarRecurso lanza si el fichero cambia entre lstat y open", () => {
+    const dir = nuevo("video025");
+    const o = path.join(dir, "o.jpg");
+    fs.writeFileSync(o, "original");
+    const ajeno = fs.mkdtempSync(path.join(RAIZ, "ajeno-"));
+    fs.writeFileSync(path.join(ajeno, "otro.jpg"), "otro distinto");
+    const abrir = fs.openSync.bind(fs);
+    const espia = vi.spyOn(fs, "openSync").mockImplementationOnce(((ruta: fs.PathLike, ...resto: unknown[]) => {
+      // El atacante cambia el fichero justo antes de que se abra.
+      fs.rmSync(o);
+      fs.renameSync(path.join(ajeno, "otro.jpg"), o);
+      return (abrir as (...a: unknown[]) => number)(ruta, ...resto);
+    }) as typeof fs.openSync);
+    try {
+      expect(() => copiarRecurso(o, path.join(dir, "d.jpg"))).toThrow(/cambiado/);
+    } finally {
+      espia.mockRestore();
+    }
+    expect(fs.existsSync(path.join(dir, "d.jpg"))).toBe(false);
+  });
+
+  it("copiarRecurso rechaza un fichero por encima del tope", () => {
+    const dir = nuevo("video026");
+    const o = path.join(dir, "grande.bin");
+    fs.closeSync(fs.openSync(o, "w"));
+    fs.truncateSync(o, 51 * 1024 * 1024); // fichero disperso: no ocupa de verdad
+    expect(() => copiarRecurso(o, path.join(dir, "d.bin"))).toThrow(/MB/);
+  });
+
+  it("una carpeta de vídeo que es una junction hacia otra se rechaza", () => {
+    const real = nuevo("video027-real");
+    fs.writeFileSync(path.join(real, "img1.jpg"), "x");
+    const enlace = path.join(RAIZ, "video028");
+    try {
+      fs.symlinkSync(real, enlace, "junction");
+    } catch {
+      return; // sin permiso para crear enlaces: el entorno no puede probarlo
+    }
+    expect(() => imagenesValidadas(enlace)).toThrow(/enlace|junction/);
+  });
+
+  it("escribirPlan no falla con un fichero del motor con varios enlaces (pnpm enlaza node_modules)", () => {
+    const origen = path.join(nuevo("video029"), "fuente.woff2");
+    fs.writeFileSync(origen, "fuente");
+    fs.linkSync(origen, `${origen}.hl`);
+    const destino = path.join(RAIZ, "salida-plan");
+    const plan = { archivos: {}, copias: [{ origen: `${origen}.hl`, destino: "assets/fonts/fuente.woff2" }] } as unknown as PlanComposicion;
+    expect(() => escribirPlan(destino, plan)).not.toThrow();
+    expect(fs.readFileSync(path.join(destino, "assets", "fonts", "fuente.woff2"), "utf8")).toBe("fuente");
+  });
+
+  describe.skipIf(!herramientasFfmpeg(undefined))("música con hardlink en prepararRender", () => {
+    it("se rechaza con un error legible", async () => {
+      const id = "video030";
+      const dir = nuevo(id);
+      fs.writeFileSync(path.join(dir, "guion.md"), GUION.replace("---\n[1]", "musica: _musica/tema.mp3\n---\n[1]"));
+      for (let n = 1; n <= 6; n++) fs.writeFileSync(path.join(dir, `img${n}.jpg`), "x");
+      fs.writeFileSync(path.join(dir, "voz.mp3"), "x");
+      const guion = parsearGuion(fs.readFileSync(path.join(dir, "guion.md"), "utf8"));
+      const chars = [...guion.narracion];
+      const palabras = procesarAlineacion({
+        narracion: guion.narracion,
+        bloques: guion.bloques,
+        alineacion: {
+          characters: chars,
+          character_start_times_seconds: chars.map((_, i) => i * 0.05),
+          character_end_times_seconds: chars.map((_, i) => (i + 1) * 0.05),
+        },
+        duracionAudio: 6,
+        hashNarracion: guion.hash,
+      });
+      fs.writeFileSync(path.join(dir, "palabras.json"), JSON.stringify(palabras));
+      const musica = path.join(nuevo("_musica"), "tema.mp3");
+      fs.linkSync(fuera(), musica);
+      await expect(prepararRender(id, { raiz: RAIZ, musica: true, musicaVolumen: 0.12 })).rejects.toThrow(/enlace duro/);
+    });
   });
 });
 

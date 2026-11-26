@@ -1,3 +1,8 @@
+NOTE: shaders.iife.js in this directory is NOT byte-identical to the upstream bundle. One statement of the
+renderSyntheticFrame glue (the serial render queue) was replaced by a "last request wins" variant (SEO-114).
+The diff is in shaders.iife.patch; the upstream SHA-256 is recorded in catalogo/hyperframes.lock.json.
+The copyright notices below are kept unchanged.
+
 ================================================================
 shaders 4.0.0
 ================================================================

@@ -1,0 +1,59 @@
+.pantalla {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  max-width: 880px;
+}
+.h1 {
+  margin: 0;
+  font-size: var(--text-24);
+  line-height: var(--text-24-lh);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.lista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fila {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+.cuerpo {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.titulo {
+  overflow: hidden;
+  color: var(--color-text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.titulo:hover {
+  text-decoration: underline;
+}
+.meta {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aviso {
+  margin: 0;
+  color: var(--color-muted);
+}

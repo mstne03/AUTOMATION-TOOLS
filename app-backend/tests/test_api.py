@@ -252,3 +252,21 @@ async def test_alta_de_canal_interrumpida_se_cancela_y_deja_el_perfil_anterior(c
         r = await asyncio.wait_for(alta, timeout=10)
     assert r.status_code == 400 and r.json()["detail"] == "Autorización cancelada."
     assert yt_auth.profile == previo
+
+
+async def test_borrar_clave_anthropic_borra_el_fichero(client, monkeypatch):
+    """Borrar la clave la quita del disco (FileSecretStore), no solo de la respuesta.
+
+    ANTHROPIC_API_KEY del entorno es el respaldo documentado (`config.anthropic_api_key`): con ella puesta
+    `has_anthropic_key` sigue a true tras el borrado, por eso el sidecar de los E2E no la fija.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fichero = config.STATE_DIR / f"{config.ANTHROPIC_KEY}.json"
+    await client.put("/settings", headers=AUTH, json={"anthropic_api_key": "sk-ant-borrar-en-disco"})
+    assert fichero.read_text(encoding="utf-8") == "sk-ant-borrar-en-disco"
+    assert (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"] is True
+    await client.put("/settings", headers=AUTH, json={"anthropic_api_key": ""})
+    assert not fichero.exists()
+    assert (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"] is False
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-entorno")
+    assert (await client.get("/settings", headers=AUTH)).json()["has_anthropic_key"] is True

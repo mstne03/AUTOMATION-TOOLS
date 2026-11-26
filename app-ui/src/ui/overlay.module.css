@@ -12,15 +12,19 @@
   }
 }
 
+/* z-index explícito: sin él, cualquier elemento posicionado con z-index de la página (la columna
+ * sticky del timeline, z 4) se pinta por encima del fondo. Mismo nivel que .panel. */
 .fondo {
   position: fixed;
   inset: 0;
+  z-index: 10;
   background: var(--color-overlay);
   animation: aparecer var(--motion-base) var(--motion-ease);
 }
 
 .dialogo {
   position: fixed;
+  z-index: 10;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
