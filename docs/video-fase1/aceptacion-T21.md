@@ -121,6 +121,21 @@ siga vivo. Todas las suites de la columna «Suite» se han ejecutado en esta ram
 - **OneDrive:** confirmar que el rechazo de `REPARSE_POINT` (T13 M1) no bloquea a usuarios de OneDrive.
 - **IPC desde el iframe:** probar a mano que la preview no llega a `sidecar_info` ni a `abrir_url` (R2-3).
 
+## QA manual del 2026-11-26 (WebView2 158 real, `pnpm tauri dev` manejado por CDP)
+
+| Prueba | Resultado |
+|---|---|
+| Layout 900×600 | Arreglado en `2eaca69`; `layout_b_900x600` y `timeline_900x600` pasan. Falta el vistazo de Marc en la app instalada. |
+| M-4 instancia única | Pasa: la segunda instancia registra «Ya hay otra instancia de SEO Studio abierta.», sale con código 0 y no lanza otro sidecar. Las dos instancias tienen que arrancar con los mismos argumentos de WebView2; si no, la segunda muere al crear el WebView (`0x8007139F`) antes de llegar al mutex. |
+| R2-2 aviso de puertos | Visto con el sidecar real (E2E del 22-11 con los cuatro puertos ocupados por la app de Marc): «No hay preview: los puertos 47810 a 47813 están ocupados por otro programa…», sin `undefined`. |
+| R2-3 IPC desde el iframe | Pasa con matiz: `window.__TAURI_INTERNALS__` **existe** en el iframe (Tauri lo inyecta en todos los marcos), pero `invoke("sidecar_info")` e `invoke("abrir_url")` no reciben respuesta ni dejan rastro en el log de Tauri; `fetch("http://ipc.localhost/…")` lo bloquea la CSP. La barrera es la comprobación de origen de las capabilities (solo `core:default`, sin `remote`). |
+| R2-4 WebRTC y sonda de red | Cerrado (ver «Riesgos residuales aceptados» en la spec). `--force-webrtc-ip-handling-policy` no tiene efecto en WebView2. En el iframe: sin `RTCPeerConnection`, irrecuperable desde un iframe hijo, 0 paquetes. En el documento principal: `fetch`, `<img>` y WebSocket hacia la LAN bloqueados, 0 conexiones TCP; el UDP de STUN sigue saliendo (residual aceptado). |
+| M-5 sockets durante un render | Pasa (Rápido, 153 muestras cada 2 s): escuchas solo en loopback (API, preview 47810–47813, servidor de la composición de HyperFrames y, en desarrollo, Vite en `::1:1420`); ninguna de `chrome-headless-shell`. Salidas: el motor a `api.elevenlabs.io` (catálogo `GET /v1/voices` al abrir el diálogo de render, por `/voz/coste`; sin coste) y `app-ui` (Rust) a `kb.mstne.dev`. Ninguna desde la CLI ni desde el navegador del render. |
+| Clips H.264 | `h264_nvenc`: renders del 22-11 y del 26-11 de `video001` (con clip). `h264_mf`: la segunda pasada con sus argumentos sobre el mismo vídeo de 115 s con clip, 15 s, 12 Mbit/s, fotogramas correctos. |
+| CA8 sin GPU | Parcial: `VIDEO_FORZAR_SIN_GPU=1` solo apaga WebGPU, no los codificadores (el test de CA8 vacía el sondeo con un stub). En este equipo el render sale en Rápido con `h264_nvenc`. La elección de `h264_mf` sin GPU solo se puede ver en un equipo sin GPU. |
+| OneDrive (T13 M1) | **Bloquea**: todos los ficheros de OneDrive llevan `ReparsePoint` (etiqueta de ficheros en la nube), también los descargados y fijados en el equipo (`0x180420`), así que hoy se rechaza cualquier importación desde OneDrive. |
+| R2-1 importación con Rust real | Pendiente de Marc: necesita el diálogo nativo de ficheros. |
+
 ## Condiciones para `VIDEO_ENGINE=1` en el piloto local
 
 1. T0 aprobada, W3.x integradas (incluida W3.2: el build LGPL propio sustituye a BtbN con el SHA fijado;

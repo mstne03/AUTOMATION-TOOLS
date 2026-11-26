@@ -274,6 +274,16 @@ def test_webrtc_sin_fuga_ip_local():
     args = conf["app"]["windows"][0]["additionalBrowserArgs"].split()
     assert "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection" in args  # valores por defecto de Tauri
     assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
+    # R2-4: proxy nulo para el WebView. Sin `--proxy-bypass-list=<-loopback>`: el loopback (API, preview,
+    # ipc.localhost) no pasa por el proxy, y todo lo demás, TCP de WebRTC hacia un TURN incluido, muere.
+    assert "--proxy-server=0.0.0.0:1" in args
+    assert "--disable-quic" in args
+    assert not any(a.startswith("--proxy-bypass-list") for a in args)
+
+
+def test_control_js_retira_webrtc():
+    assert "RTCPeerConnection" in preview.CONTROL_JS
+    assert preview._INYECCION.index("control.js") > 0
 
 
 def test_reserva_cuatro_puertos():

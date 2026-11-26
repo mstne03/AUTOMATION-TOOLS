@@ -79,6 +79,13 @@ _META_CSP = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?Content-Security-Pol
 # cada mensaje: origen = la ventana padre, objeto, tipo de una lista cerrada, `t` finito y acotado.
 CONTROL_JS = r"""(() => {
   "use strict";
+  // R2-4, defensa en profundidad: la composición no tiene por qué usar WebRTC y la CSP no lo gobierna.
+  // Corre antes que la composición (la inyección va tras la <meta> CSP). La barrera es el proxy nulo
+  // del WebView (tauri.conf.json); esto solo quita la API a mano.
+  for (const n of ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "RTCSessionDescription", "RTCIceCandidate"]) {
+    try { delete window[n]; } catch (_) {}
+    try { Object.defineProperty(window, n, { value: undefined, writable: false, configurable: false }); } catch (_) {}
+  }
   const padre = window.parent;
   const responder = (m) => padre.postMessage(m, "*"); // origen opaco: no hay otro destino posible
   const num = (v, min, max) => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : null);

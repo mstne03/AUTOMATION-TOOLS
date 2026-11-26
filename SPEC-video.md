@@ -451,6 +451,15 @@ estado en %LOCALAPPDATA% (escribible por cualquier proceso del usuario: ver «At
 
 **Riesgos residuales aceptados:**
 
+- **WebRTC en el WebView (R2-4, medido el 2026-11-26 con WebView2 158 por CDP):** WebView2 no
+  respeta `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`: el STUN por UDP sale igual.
+  Cierre aplicado: (1) proxy nulo del WebView (`--proxy-server=0.0.0.0:1`, `--disable-quic`, sin
+  quitar el bypass de loopback): HTTP, WebSocket y TCP hacia un TURN no salen (medido: 0 conexiones
+  TCP al sumidero); (2) la preview no tiene WebRTC: `control.js` retira `RTCPeerConnection`,
+  `RTCDataChannel` y afines antes de que corra la composición, y el sandbox (origen opaco, sin
+  `allow-popups`, `frame-src 'none'`) impide recuperarlos desde un iframe hijo (medido: otro origen,
+  0 paquetes). Queda aceptado: UDP de WebRTC desde el documento principal de la app, que es código
+  propio bajo CSP estricta; explotarlo exige antes un XSS en la app.
 - **Proceso de GPU de Chrome sin sandbox** (`--disable-gpu-sandbox`): con el sandbox completo,
   el render se cuelga en 5 de 6 ejecuciones (`video-mcp-server/spikes/INFORME-chromium.md`). El
   renderer, que es quien interpreta el HTML, sí va en Untrusted. Para acotarlo: el render usa
